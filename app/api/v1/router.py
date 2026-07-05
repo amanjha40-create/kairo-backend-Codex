@@ -21,6 +21,7 @@ from app.api.v1.routes import (
     internships,
     passport_shares,
     portfolio,
+    public_passport,
     public_credential_verification,
     public_employer_verification,
     public_profile,
@@ -38,6 +39,7 @@ api_router.include_router(employments.router)
 api_router.include_router(employer_verification.router)
 api_router.include_router(public_employer_verification.router)
 api_router.include_router(public_profile.router)
+api_router.include_router(public_passport.router)
 api_router.include_router(public_vault.router)
 api_router.include_router(credential_verification.router)
 api_router.include_router(public_credential_verification.router)
