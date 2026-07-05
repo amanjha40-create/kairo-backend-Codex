@@ -1,0 +1,772 @@
+{
+  "region": "IN",
+  "metadata": {
+    "po_status": "",
+    "timestamp": "",
+    "matching_algorithm": "",
+    "processing_time_ms": 0,
+    "po_number_in_invoice": "",
+    "requires_manual_review": false
+  },
+  "payable_type": "Invoice",
+  "field_matches": [
+    {
+      "narrative": "Business name similarity for name: 'BRITANNIA INDUSTRIES LTD' ≈ 'BRITANNIA INDUSTRIES LIMITED-BLR-DCW' (score: 0.67)",
+      "confidence": "MEDIUM_CONFIDENCE_MATCH",
+      "match_score": 0.6666666666666667,
+      "source_path": "payable_document.vendor.name",
+      "target_path": "purchase_order.vendor.name",
+      "source_value": "BRITANNIA INDUSTRIES LTD"
+    },
+    {
+      "narrative": "Contact object similarity for contact: field-by-field comparison (score: 0.25)",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.2533333333333333,
+      "source_path": "payable_document.vendor.contact",
+      "target_path": "purchase_order.vendor.contact",
+      "source_value": "name=None role=None address=None primary_email=None primary_phone='080-39400080' other_emails=None other_phones=None contact_type=None contact_status=None department=None whatsapp=None skype_id=None teams_id=None preferred_method=None business_hours=None timezone=None languages=None is_emergency_contact=False escalation_level=None"
+    },
+    {
+      "narrative": "Address object similarity for address: combined address comparison (score: 0.54)",
+      "confidence": "MEDIUM_CONFIDENCE_MATCH",
+      "match_score": 0.5384615384615384,
+      "source_path": "payable_document.vendor.address",
+      "target_path": "purchase_order.vendor.address",
+      "source_value": "type=None address_line_1='Plot No. 35, Bidadi Industrial Area KIADB Road' address_line_2='BIL - BANGALORE DEPOT #2' address_line_3='Ramnagara DT' city='BIDADI' state='Karnataka' postalCode='562112' country='India'"
+    },
+    {
+      "narrative": "Business name similarity for name: 'SUPERMARKET GROCERY SUPPLIES,PRIVATE LIMITED' ≈ 'Supermarket Grocery Supplies Pvt Ltd' (score: 0.80)",
+      "confidence": "MEDIUM_CONFIDENCE_MATCH",
+      "match_score": 0.7954545454545454,
+      "source_path": "payable_document.customer.name",
+      "target_path": "purchase_order.buyer.name",
+      "source_value": "SUPERMARKET GROCERY SUPPLIES,PRIVATE LIMITED"
+    },
+    {
+      "narrative": "Contact object similarity for contact: field-by-field comparison (score: 0.33)",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.3333333333333333,
+      "source_path": "payable_document.customer.contact",
+      "target_path": "purchase_order.buyer.contact",
+      "source_value": "name=None role=None address=None primary_email=None primary_phone=None other_emails=None other_phones=None contact_type=None contact_status=None department=None whatsapp=None skype_id=None teams_id=None preferred_method=None business_hours=None timezone=None languages=None is_emergency_contact=False escalation_level=None"
+    },
+    {
+      "narrative": "Address object similarity for address: combined address comparison (score: 0.14)",
+      "confidence": "NO_MATCH",
+      "match_score": 0.13793103448275867,
+      "source_path": "payable_document.customer.address",
+      "target_path": "purchase_order.buyer.address",
+      "source_value": "type=None address_line_1='SY NO 13/1, AND NO 15/5, ADAKIMARANAHALLI' address_line_2='DASANAPURA HOBLI' address_line_3='MAKALI' city='MAKALI' state='Karnataka' postalCode='562123' country='India'"
+    },
+    {
+      "narrative": "Order reference: match",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "purchase_order.orderId",
+      "target_path": "purchase_order.purchaseOrderId",
+      "source_value": "SGM38162275"
+    },
+    {
+      "narrative": "Invoice date (2026-05-26) is on or after PO date (2026-05-22)",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "issueDate",
+      "target_path": "purchase_order.purchaseOrderDate",
+      "source_value": "2026-05-26"
+    },
+    {
+      "narrative": "LLM description match (score=0.92)",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 0.92,
+      "source_path": "items[1].description",
+      "target_path": "purchase_order.items[4].description",
+      "source_value": "GD CASHEW 82.7G 60 PK Z"
+    },
+    {
+      "narrative": "No available qty (received-invoiced-reserved=-39.0)",
+      "confidence": "NO_MATCH",
+      "match_score": 0,
+      "source_path": "items[1].quantity",
+      "target_path": "purchase_order.items[4].quantity",
+      "source_value": 20
+    },
+    {
+      "narrative": "Matched via adjusted unitPrice: 1008.4 (Computed post-tax unitPrice: 960.38 × (1 + 5.0%) = 1008.4). unitPrice: inv=1008.4, po=16.81",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[1].unitPrice",
+      "target_path": "purchase_order.items[4].unitPrice",
+      "source_value": "960.38"
+    },
+    {
+      "narrative": "Exact UOM match",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[1].uom",
+      "target_path": "purchase_order.items[4].uom",
+      "source_value": "piece"
+    },
+    {
+      "narrative": "totalPrice: inv=20168.07, expected=336.20 [qty(20.0) × po_unitPrice(16.81) = 336.2]",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[1].totalPrice",
+      "target_path": "purchase_order.items[4].totalPrice",
+      "source_value": 20168.07
+    },
+    {
+      "narrative": "HSN 2-digit mismatch: 19053100 vs 19053290",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.4,
+      "source_path": "items[1].hsnSacCode",
+      "target_path": "purchase_order.items[4].hsnSacCode",
+      "source_value": "19053100"
+    },
+    {
+      "narrative": "cgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[1].taxes.cgst.rate",
+      "target_path": "purchase_order.items[4].taxes.cgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "sgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[1].taxes.sgst.rate",
+      "target_path": "purchase_order.items[4].taxes.sgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "LLM description match (score=0.88)",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 0.88,
+      "source_path": "items[2].description",
+      "target_path": "purchase_order.items[0].description",
+      "source_value": "GDCA 30.2+4.3G (34.5G) 180PK"
+    },
+    {
+      "narrative": "No available qty (received-invoiced-reserved=-421.0)",
+      "confidence": "NO_MATCH",
+      "match_score": 0,
+      "source_path": "items[2].quantity",
+      "target_path": "purchase_order.items[0].quantity",
+      "source_value": 211
+    },
+    {
+      "narrative": "Matched via adjusted unitPrice: 756.3 (Computed post-tax unitPrice: 720.29 × (1 + 5.0%) = 756.3). unitPrice: inv=756.3, po=4.2",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[2].unitPrice",
+      "target_path": "purchase_order.items[0].unitPrice",
+      "source_value": "720.29"
+    },
+    {
+      "narrative": "Exact UOM match",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[2].uom",
+      "target_path": "purchase_order.items[0].uom",
+      "source_value": "piece"
+    },
+    {
+      "narrative": "totalPrice: inv=159579.83, expected=886.20 [qty(211.0) × po_unitPrice(4.2) = 886.2]",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[2].totalPrice",
+      "target_path": "purchase_order.items[0].totalPrice",
+      "source_value": 159579.83
+    },
+    {
+      "narrative": "HSN 2-digit mismatch: 19053100 vs 19053290",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.4,
+      "source_path": "items[2].hsnSacCode",
+      "target_path": "purchase_order.items[0].hsnSacCode",
+      "source_value": "19053100"
+    },
+    {
+      "narrative": "cgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[2].taxes.cgst.rate",
+      "target_path": "purchase_order.items[0].taxes.cgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "sgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[2].taxes.sgst.rate",
+      "target_path": "purchase_order.items[0].taxes.sgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "LLM description match (score=0.85)",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 0.85,
+      "source_path": "items[3].description",
+      "target_path": "purchase_order.items[3].description",
+      "source_value": "BOURBON 50+10G 140PK RENOVATIO"
+    },
+    {
+      "narrative": "No available qty (received-invoiced-reserved=-187.0)",
+      "confidence": "NO_MATCH",
+      "match_score": 0,
+      "source_path": "items[3].quantity",
+      "target_path": "purchase_order.items[3].quantity",
+      "source_value": 94
+    },
+    {
+      "narrative": "Matched via adjusted unitPrice: 1176.47 (Computed post-tax unitPrice: 1120.45 × (1 + 5.0%) = 1176.47). unitPrice: inv=1176.47, po=8.4",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[3].unitPrice",
+      "target_path": "purchase_order.items[3].unitPrice",
+      "source_value": "1120.45"
+    },
+    {
+      "narrative": "Exact UOM match",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[3].uom",
+      "target_path": "purchase_order.items[3].uom",
+      "source_value": "piece"
+    },
+    {
+      "narrative": "totalPrice: inv=110588.23, expected=789.60 [qty(94.0) × po_unitPrice(8.4) = 789.6]",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[3].totalPrice",
+      "target_path": "purchase_order.items[3].totalPrice",
+      "source_value": 110588.23
+    },
+    {
+      "narrative": "HSN 2-digit mismatch: 19053100 vs 19053290",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.4,
+      "source_path": "items[3].hsnSacCode",
+      "target_path": "purchase_order.items[3].hsnSacCode",
+      "source_value": "19053100"
+    },
+    {
+      "narrative": "cgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[3].taxes.cgst.rate",
+      "target_path": "purchase_order.items[3].taxes.cgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "sgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[3].taxes.sgst.rate",
+      "target_path": "purchase_order.items[3].taxes.sgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "LLM description match (score=0.82)",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 0.82,
+      "source_path": "items[4].description",
+      "target_path": "purchase_order.items[1].description",
+      "source_value": "MILK BIKIS ATTA 35.5+5G (40.5G)"
+    },
+    {
+      "narrative": "No available qty (received-invoiced-reserved=-583.0)",
+      "confidence": "NO_MATCH",
+      "match_score": 0,
+      "source_path": "items[4].quantity",
+      "target_path": "purchase_order.items[1].quantity",
+      "source_value": 292
+    },
+    {
+      "narrative": "Matched via adjusted unitPrice: 705.88 (Computed post-tax unitPrice: 672.27 × (1 + 5.0%) = 705.88). unitPrice: inv=705.88, po=4.2",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[4].unitPrice",
+      "target_path": "purchase_order.items[1].unitPrice",
+      "source_value": "672.27"
+    },
+    {
+      "narrative": "Exact UOM match",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[4].uom",
+      "target_path": "purchase_order.items[1].uom",
+      "source_value": "piece"
+    },
+    {
+      "narrative": "totalPrice: inv=206117.65, expected=1226.40 [qty(292.0) × po_unitPrice(4.2) = 1226.4]",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[4].totalPrice",
+      "target_path": "purchase_order.items[1].totalPrice",
+      "source_value": 206117.65
+    },
+    {
+      "narrative": "HSN 2-digit mismatch: 19053100 vs 19053290",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.4,
+      "source_path": "items[4].hsnSacCode",
+      "target_path": "purchase_order.items[1].hsnSacCode",
+      "source_value": "19053100"
+    },
+    {
+      "narrative": "cgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[4].taxes.cgst.rate",
+      "target_path": "purchase_order.items[1].taxes.cgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "sgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[4].taxes.sgst.rate",
+      "target_path": "purchase_order.items[1].taxes.sgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "LLM description match (score=0.90)",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 0.9,
+      "source_path": "items[5].description",
+      "target_path": "purchase_order.items[2].description",
+      "source_value": "MILK BIKIS ATTA 71+5G (76G) 96"
+    },
+    {
+      "narrative": "No available qty (received-invoiced-reserved=-333.0)",
+      "confidence": "NO_MATCH",
+      "match_score": 0,
+      "source_path": "items[5].quantity",
+      "target_path": "purchase_order.items[2].quantity",
+      "source_value": 167
+    },
+    {
+      "narrative": "Matched via adjusted unitPrice: 806.73 (Computed post-tax unitPrice: 768.31 × (1 + 5.0%) = 806.73). unitPrice: inv=806.73, po=8.4",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[5].unitPrice",
+      "target_path": "purchase_order.items[2].unitPrice",
+      "source_value": "768.31"
+    },
+    {
+      "narrative": "Exact UOM match",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[5].uom",
+      "target_path": "purchase_order.items[2].uom",
+      "source_value": "piece"
+    },
+    {
+      "narrative": "totalPrice: inv=134722.68, expected=1402.80 [qty(167.0) × po_unitPrice(8.4) = 1402.8]",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "items[5].totalPrice",
+      "target_path": "purchase_order.items[2].totalPrice",
+      "source_value": 134722.68
+    },
+    {
+      "narrative": "HSN 2-digit mismatch: 19053100 vs 19053290",
+      "confidence": "LOW_CONFIDENCE_MATCH",
+      "match_score": 0.4,
+      "source_path": "items[5].hsnSacCode",
+      "target_path": "purchase_order.items[2].hsnSacCode",
+      "source_value": "19053100"
+    },
+    {
+      "narrative": "cgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[5].taxes.cgst.rate",
+      "target_path": "purchase_order.items[2].taxes.cgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "sgst rate: inv=2.5, po=2.5",
+      "confidence": "HIGH_CONFIDENCE_MATCH",
+      "match_score": 1,
+      "source_path": "items[5].taxes.sgst.rate",
+      "target_path": "purchase_order.items[2].taxes.sgst.rate",
+      "source_value": 2.5
+    },
+    {
+      "narrative": "Invoice total (631176.46) vs expected from PO prices (4873.26): diff=626303.20 (+12851.8%) → OVER_INVOICE",
+      "confidence": "NO_MATCH",
+      "match_score": 0.3,
+      "source_path": "totalAmount.validation",
+      "target_path": "computed_from_5_items",
+      "source_value": "631176.46"
+    }
+  ],
+  "overall_score": 0.5999016418720853,
+  "purchase_order": {
+    "buyer": {
+      "id": "bangalore-business",
+      "name": "Supermarket Grocery Supplies Pvt Ltd"
+    },
+    "state": "draft",
+    "vendor": {
+      "id": "EXT6950",
+      "name": "BRITANNIA INDUSTRIES LIMITED-BLR-DCW"
+    },
+    "poSerialNumber": "SGM38162275",
+    "purchaseOrderId": "SGM38162275",
+    "referenceNumber": "SGM38162275",
+    "purchaseOrderDate": "2026-05-22"
+  },
+  "payable_document": {
+    "type": "Invoice",
+    "items": [
+      {
+        "mrp": {
+          "amount": 20,
+          "currency": "INR"
+        },
+        "taxes": {
+          "cgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 480.19,
+              "currency": "INR"
+            },
+            "taxType": "CGST"
+          },
+          "sgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 480.19,
+              "currency": "INR"
+            },
+            "taxType": "SGST"
+          },
+          "totalTax": {
+            "amount": 960.38,
+            "currency": "INR"
+          },
+          "hsnSacCode": "19053100"
+        },
+        "item_id": "9003221",
+        "adjusted": {
+          "unitPricePreTax": {
+            "adjusted_value": 960.38
+          }
+        },
+        "category": "Food",
+        "quantity": 20,
+        "sequence": 1,
+        "unitPrice": {
+          "amount": 960.38,
+          "currency": "INR"
+        },
+        "hsnSacCode": "19053100",
+        "totalPrice": {
+          "amount": 20168.07,
+          "currency": "INR"
+        },
+        "description": "GD CASHEW 82.7G 60 PK Z",
+        "taxableValue": {
+          "amount": 19207.69,
+          "currency": "INR"
+        },
+        "taxApplicable": true
+      },
+      {
+        "mrp": {
+          "amount": 5,
+          "currency": "INR"
+        },
+        "taxes": {
+          "cgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 3799.52,
+              "currency": "INR"
+            },
+            "taxType": "CGST"
+          },
+          "sgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 3799.52,
+              "currency": "INR"
+            },
+            "taxType": "SGST"
+          },
+          "totalTax": {
+            "amount": 7599.04,
+            "currency": "INR"
+          },
+          "hsnSacCode": "19053100"
+        },
+        "item_id": "9003168",
+        "adjusted": {
+          "unitPricePreTax": {
+            "adjusted_value": 720.29
+          }
+        },
+        "category": "Food",
+        "quantity": 211,
+        "sequence": 2,
+        "unitPrice": {
+          "amount": 720.29,
+          "currency": "INR"
+        },
+        "hsnSacCode": "19053100",
+        "totalPrice": {
+          "amount": 159579.83,
+          "currency": "INR"
+        },
+        "description": "GDCA 30.2+4.3G (34.5G) 180PK",
+        "taxableValue": {
+          "amount": 151980.79,
+          "currency": "INR"
+        },
+        "taxApplicable": true
+      },
+      {
+        "mrp": {
+          "amount": 10,
+          "currency": "INR"
+        },
+        "taxes": {
+          "cgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 2633.05,
+              "currency": "INR"
+            },
+            "taxType": "CGST"
+          },
+          "sgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 2633.05,
+              "currency": "INR"
+            },
+            "taxType": "SGST"
+          },
+          "totalTax": {
+            "amount": 5266.1,
+            "currency": "INR"
+          },
+          "hsnSacCode": "19053100"
+        },
+        "item_id": "9001953",
+        "adjusted": {
+          "unitPricePreTax": {
+            "adjusted_value": 1120.45
+          }
+        },
+        "category": "Food",
+        "quantity": 94,
+        "sequence": 3,
+        "unitPrice": {
+          "amount": 1120.45,
+          "currency": "INR"
+        },
+        "hsnSacCode": "19053100",
+        "totalPrice": {
+          "amount": 110588.23,
+          "currency": "INR"
+        },
+        "description": "BOURBON 50+10G 140PK RENOVATIO",
+        "taxableValue": {
+          "amount": 105322.13,
+          "currency": "INR"
+        },
+        "taxApplicable": true
+      },
+      {
+        "mrp": {
+          "amount": 5,
+          "currency": "INR"
+        },
+        "taxes": {
+          "cgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 4907.56,
+              "currency": "INR"
+            },
+            "taxType": "CGST"
+          },
+          "sgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 4907.56,
+              "currency": "INR"
+            },
+            "taxType": "SGST"
+          },
+          "totalTax": {
+            "amount": 9815.12,
+            "currency": "INR"
+          },
+          "hsnSacCode": "19053100"
+        },
+        "item_id": "9003153",
+        "adjusted": {
+          "unitPricePreTax": {
+            "adjusted_value": 672.27
+          }
+        },
+        "category": "Food",
+        "quantity": 292,
+        "sequence": 4,
+        "unitPrice": {
+          "amount": 672.27,
+          "currency": "INR"
+        },
+        "hsnSacCode": "19053100",
+        "totalPrice": {
+          "amount": 206117.65,
+          "currency": "INR"
+        },
+        "description": "MILK BIKIS ATTA 35.5+5G (40.5G)",
+        "taxableValue": {
+          "amount": 196302.53,
+          "currency": "INR"
+        },
+        "taxApplicable": true
+      },
+      {
+        "mrp": {
+          "amount": 10,
+          "currency": "INR"
+        },
+        "taxes": {
+          "cgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 3207.68,
+              "currency": "INR"
+            },
+            "taxType": "CGST"
+          },
+          "sgst": {
+            "rate": 2.5,
+            "amount": {
+              "amount": 3207.68,
+              "currency": "INR"
+            },
+            "taxType": "SGST"
+          },
+          "totalTax": {
+            "amount": 6415.36,
+            "currency": "INR"
+          },
+          "hsnSacCode": "19053100"
+        },
+        "item_id": "9003442",
+        "adjusted": {
+          "unitPricePreTax": {
+            "adjusted_value": 768.31
+          }
+        },
+        "category": "Food",
+        "quantity": 167,
+        "sequence": 5,
+        "unitPrice": {
+          "amount": 768.31,
+          "currency": "INR"
+        },
+        "hsnSacCode": "19053100",
+        "totalPrice": {
+          "amount": 134722.68,
+          "currency": "INR"
+        },
+        "description": "MILK BIKIS ATTA 71+5G (76G) 96",
+        "taxableValue": {
+          "amount": 128307.32,
+          "currency": "INR"
+        },
+        "taxApplicable": true
+      }
+    ],
+    "notes": [
+      "We hereby certify that the goods mentioned in this invoice are warranted to be of the nature and quality which these purport to be.",
+      "We hereby certify that the goods supplied in this invoice are in accordance with the items ordered.",
+      "Goods sold in this bill have suffered tax at our hands.",
+      "Certify that the particulars given above are true and correct and the amount indicated represents the price actually charged and that there is no flow of additional consideration directly or indirectly from the buyer.",
+      "I We hereby certify that our registration Certificate is in force on the date on which the sale of the goods specified in this Bill/Cash memorandum is made by us and that the transaction of sale covered by this Bill/Cash memorandum has been effected by us in the regular course of our business.",
+      "We also accept payment through Debit Card powered by RuPay, (BHIM-UP) and (BHIM-UP) QR Code",
+      "This Tax Invoice may include products reflecting old MRP/Pack i.e. MRP/Pack prevailing prior to the GST rate reduction effective 22nd September 2025. It also includes products reflecting new reduced MRP/Pack i.e. MRP/Pack after considering the GST rate reduction effective 22nd September 2025. While the products with the new reduced MRP/Pack reflects the price reduction, the benefit of GST reduction on the products reflecting old MRP/Pack has been given as a discount which is reflecting the \"GST disc\" column in this Tax Invoice. Accordingly, kindly ensure that effective 22nd September 2025, you issue tax invoices to your customers at the new reduced prices thereby passing on the benefit of GST rate reduction."
+    ],
+    "taxes": [
+      {
+        "cgst": {
+          "rate": 2.5,
+          "amount": {
+            "amount": 15028,
+            "currency": "INR"
+          }
+        },
+        "sgst": {
+          "rate": 2.5,
+          "amount": {
+            "amount": 15028,
+            "currency": "INR"
+          }
+        },
+        "totalTax": {
+          "amount": 30056,
+          "currency": "INR"
+        },
+        "hsnSacCode": "19053100"
+      }
+    ],
+    "status": "Matched_With_Errors",
+    "vendor": {
+      "name": "BRITANNIA INDUSTRIES LTD"
+    },
+    "dueDate": "",
+    "subType": "Goods and Materials",
+    "customer": {
+      "name": "SUPERMARKET GROCERY SUPPLIES,PRIVATE LIMITED"
+    },
+    "subTotal": {
+      "amount": 601120.46,
+      "currency": "INR"
+    },
+    "taxTotal": {
+      "amount": 30056,
+      "currency": "INR"
+    },
+    "issueDate": "2026-05-26",
+    "totalAmount": {
+      "amount": 631176.46,
+      "currency": "INR"
+    },
+    "documentNumber": "TEST2605202601",
+    "purchase_order": {
+      "orderId": "SGM38162275",
+      "orderDate": "2026-05-25T00:00:00",
+      "orderType": "PurchaseOrder"
+    },
+    "taxWithholding": {
+      
+    },
+    "shippingDetails": {
+      "costs": {
+        
+      }
+    },
+    "electronicDetails": {
+      "irn": "1b783ddc97b50fb2ffd762458b4eac6a6c7d4a5058ff4745fcf438f594645ff9"
+    },
+    "external_metadata": {
+      "fc_id": "979",
+      "split": true,
+      "po_number": "",
+      "request_id": "c2bbc206-6e8c-4beb-800c-3e0162a58cf0",
+      "gatepass_id": 571453,
+      "attachment_ref_id": 2646710
+    }
+  },
+  "overall_confidence": "LOW_CONFIDENCE_MATCH"
+}

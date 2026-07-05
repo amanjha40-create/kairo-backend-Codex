@@ -1,0 +1,367 @@
+{
+  "info": {
+    "_postman_id": "kairo-backend-local",
+    "name": "Kairo Backend API",
+    "description": "Local Kairo backend (`/api/v1`). Signup: Register → Verify OTP (check API logs for code in dev) → tokens saved. Login works after verify.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api/v1"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "employment_id",
+      "value": ""
+    },
+    {
+      "key": "signup_session_id",
+      "value": ""
+    },
+    {
+      "key": "otp_code",
+      "value": "000000"
+    },
+    {
+      "key": "email",
+      "value": "you@example.com"
+    },
+    {
+      "key": "password",
+      "value": "your-secure-password"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Live",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health/live"
+          }
+        },
+        {
+          "name": "Health Ready",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health/ready"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register (Send OTP)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('signup_session_id', json.signup_session_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"full_name\": \"Your Name\"\n}"
+            },
+            "url": "{{base_url}}/auth/register"
+          }
+        },
+        {
+          "name": "Signup Verify OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('access_token', json.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', json.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"signup_session_id\": \"{{signup_session_id}}\",\n  \"code\": \"{{otp_code}}\"\n}"
+            },
+            "url": "{{base_url}}/auth/signup/verify"
+          }
+        },
+        {
+          "name": "Signup Resend OTP",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"signup_session_id\": \"{{signup_session_id}}\"\n}"
+            },
+            "url": "{{base_url}}/auth/signup/resend"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('access_token', json.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', json.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": "{{base_url}}/auth/login"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('access_token', json.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', json.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": "{{base_url}}/auth/refresh"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": "{{base_url}}/auth/logout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/users/me"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Employments",
+      "item": [
+        {
+          "name": "Create Employment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('employment_id', pm.response.json().id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_full_name\": \"John Doe\",\n  \"subject_email\": \"john.doe@example.com\",\n  \"employer_legal_name\": \"Acme Corporation Pvt Ltd\",\n  \"employer_trade_name\": \"Acme Corp\",\n  \"job_title\": \"Software Engineer\",\n  \"employment_type\": \"full_time\",\n  \"verification_method\": \"employer_confirmation\",\n  \"start_date\": \"2022-01-15\",\n  \"end_date\": \"2024-06-30\",\n  \"work_location_country\": \"IN\",\n  \"work_location_region\": \"Karnataka\"\n}"
+            },
+            "url": "{{base_url}}/employments/"
+          }
+        },
+        {
+          "name": "List My Employments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/employments/?limit=20&offset=0"
+          }
+        },
+        {
+          "name": "Get Employment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/employments/{{employment_id}}"
+          }
+        },
+        {
+          "name": "Update Employment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"job_title\": \"Senior Software Engineer\"\n}"
+            },
+            "url": "{{base_url}}/employments/{{employment_id}}"
+          }
+        },
+        {
+          "name": "Request Employer Verification",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contact_name\": \"Jane Manager\",\n  \"verifier_email\": \"hr@acme.example.com\",\n  \"relationship\": \"direct manager\"\n}"
+            },
+            "url": "{{base_url}}/employments/{{employment_id}}/employer-verification/request"
+          }
+        },
+        {
+          "name": "Submit Employment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/employments/{{employment_id}}/submit"
+          }
+        },
+        {
+          "name": "Cancel Employment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/employments/{{employment_id}}/cancel"
+          }
+        },
+        {
+          "name": "Delete Employment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/employments/{{employment_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public (employer links)",
+      "item": [
+        {
+          "name": "Employer Confirm (magic link)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/public/employer-verification/{{employer_verification_token}}/confirm"
+          }
+        },
+        {
+          "name": "Employer Decline (magic link)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/public/employer-verification/{{employer_verification_token}}/decline"
+          }
+        }
+      ]
+    }
+  ]
+}

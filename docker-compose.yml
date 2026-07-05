@@ -1,0 +1,70 @@
+services:
+  api:
+    build:
+      context: .
+    image: kairo-backend:local
+    env_file:
+      - .env
+    # Override localhost from .env — inside the container, DB/Redis are sibling services.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://kairo:kairo@postgres:5432/kairo
+      REDIS_URL: redis://redis:6379/0
+    command:
+      - /bin/sh
+      - -c
+      - |
+          set -e
+          alembic upgrade head
+          exec gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000 --workers 2 --timeout 60
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: kairo
+      POSTGRES_USER: kairo
+      POSTGRES_PASSWORD: kairo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kairo -d kairo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  worker:
+    profiles: ["worker"]
+    build:
+      context: .
+    image: kairo-backend:local
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://kairo:kairo@postgres:5432/kairo
+      REDIS_URL: redis://redis:6379/0
+    command: python -m app.workers.sqs_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
