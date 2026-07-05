@@ -19,6 +19,7 @@ from app.api.v1.routes import (
     gig_platforms,
     health,
     internships,
+    passport_shares,
     portfolio,
     public_credential_verification,
     public_employer_verification,
@@ -49,6 +50,7 @@ api_router.include_router(educations.router)
 api_router.include_router(freelance_contracts.router)
 api_router.include_router(internships.router)
 api_router.include_router(gig_platforms.router)
+api_router.include_router(passport_shares.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(certifications.router)
 api_router.include_router(trust_score.router)

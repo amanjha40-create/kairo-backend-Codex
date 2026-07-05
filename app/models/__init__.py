@@ -8,6 +8,7 @@ from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
+from app.models.passport_share_link import PassportShareLink
 from app.models.portfolio import PortfolioItem
 from app.models.education_document import EducationDocument
 from app.models.employer_verification_request import EmployerVerificationRequest
@@ -34,6 +35,7 @@ __all__ = [
     "GigPlatform",
     "Internship",
     "InternshipDocument",
+    "PassportShareLink",
     "PendingSignup",
     "ProfileView",
     "PortfolioItem",
