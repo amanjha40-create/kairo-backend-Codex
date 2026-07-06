@@ -56,7 +56,7 @@ def build_password_reset_email(
     return msg
 
 
-def _send_message_sync(settings: Settings, message: EmailMessage) -> None:
+def send_message_via_smtp(settings: Settings, message: EmailMessage) -> None:
     host = settings.smtp_host
     if not host:
         raise ServiceUnavailableError("Email is not configured")
@@ -99,7 +99,7 @@ class SmtpEmailSender:
             ttl_minutes=ttl_minutes,
         )
         try:
-            await asyncio.to_thread(_send_message_sync, self._settings, message)
+            await asyncio.to_thread(send_message_via_smtp, self._settings, message)
         except ServiceUnavailableError:
             raise
         except smtplib.SMTPException as exc:
@@ -140,7 +140,7 @@ class SmtpEmailSender:
             ttl_minutes=ttl_minutes,
         )
         try:
-            await asyncio.to_thread(_send_message_sync, self._settings, message)
+            await asyncio.to_thread(send_message_via_smtp, self._settings, message)
         except ServiceUnavailableError:
             raise
         except smtplib.SMTPException as exc:
@@ -197,7 +197,7 @@ class SmtpEmailSender:
             expires_hours=ttl_hours,
         )
         try:
-            await asyncio.to_thread(_send_message_sync, self._settings, message)
+            await asyncio.to_thread(send_message_via_smtp, self._settings, message)
         except ServiceUnavailableError:
             raise
         except smtplib.SMTPException as exc:
