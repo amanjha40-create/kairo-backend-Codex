@@ -14,6 +14,10 @@ class PassportShareRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def get_by_id(self, share_id: UUID) -> PassportShareLink | None:
+        stmt = select(PassportShareLink).where(PassportShareLink.id == share_id)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def create(self, link: PassportShareLink) -> PassportShareLink:
         self._session.add(link)
         await self._session.flush()

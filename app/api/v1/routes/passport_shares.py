@@ -8,15 +8,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
-from app.api.dependencies.services import get_passport_share_service
+from app.api.dependencies.services import get_passport_share_service, get_passport_share_view_service
 from app.schemas.pagination import Page, PageParams
 from app.schemas.passport_share import (
+    PassportShareAnalyticsResponse,
     PassportShareCreateRequest,
     PassportShareCreateResponse,
     PassportShareResponse,
     PassportShareUpdateRequest,
 )
 from app.services.passport_share_service import PassportShareService
+from app.services.passport_share_view_service import PassportShareViewService
 
 router = APIRouter(prefix="/passport-shares", tags=["passport-shares"])
 
@@ -71,3 +73,12 @@ async def revoke_passport_share(
     svc: Annotated[PassportShareService, Depends(get_passport_share_service)],
 ) -> PassportShareResponse:
     return await svc.revoke(current.id, share_id)
+
+
+@router.get("/{share_id}/analytics", response_model=PassportShareAnalyticsResponse)
+async def get_passport_share_analytics(
+    share_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[PassportShareViewService, Depends(get_passport_share_view_service)],
+) -> PassportShareAnalyticsResponse:
+    return await svc.get_analytics(owner_user_id=current.id, share_id=share_id)

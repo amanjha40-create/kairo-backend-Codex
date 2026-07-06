@@ -8,6 +8,7 @@ from app.services.employer_verification_service import EmployerVerificationServi
 from app.services.employment_document_service import EmploymentDocumentService
 from app.services.employment_service import EmploymentService
 from app.services.passport_share_service import PassportShareService
+from app.services.passport_share_view_service import PassportShareViewService
 from app.services.public_passport_service import PublicPassportService
 from app.services.trust_score_service import TrustScoreService
 from app.services.user_service import UserService
@@ -24,6 +25,7 @@ __all__ = [
     "EmploymentDocumentService",
     "EmploymentService",
     "PassportShareService",
+    "PassportShareViewService",
     "PublicPassportService",
     "TrustScoreService",
     "UserService",

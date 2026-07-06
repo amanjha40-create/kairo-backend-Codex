@@ -79,3 +79,18 @@ class PassportShareResponse(BaseModel):
 
 class PassportShareCreateResponse(PassportShareResponse):
     share_url: str
+
+
+class PassportShareRecentViewResponse(BaseModel):
+    viewed_at: datetime
+    user_agent: str | None
+    referrer: str | None
+    is_unique_view: bool
+
+
+class PassportShareAnalyticsResponse(BaseModel):
+    share_id: UUID
+    total_views: int
+    unique_views: int
+    last_viewed_at: datetime | None
+    recent_views: list[PassportShareRecentViewResponse]
