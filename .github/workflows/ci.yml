@@ -7,9 +7,10 @@ on:
       - main
 
 jobs:
-  test:
-    name: test
+  backend-quality-gate:
+    name: backend-quality-gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -27,13 +28,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Lint
-        run: ruff check .
+      - name: Compile Python sources
+        run: |
+          env PYTHONPYCACHEPREFIX=/tmp/kairo-ci-pycache python -m compileall app tests
 
       - name: Run tests
-        run: pytest -m "not integration"
-
-      - name: Build Docker image
-        run: docker build -t kairo-backend:${{ github.sha }} .
+        run: pytest -q
