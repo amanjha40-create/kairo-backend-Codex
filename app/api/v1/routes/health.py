@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.health import ping_database
 from app.db.session import get_session
+from app.exceptions import ServiceUnavailableError
 from app.infrastructure.redis import ping_redis
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -33,17 +34,11 @@ async def ready(session: AsyncSession = Depends(get_session)) -> dict:
     try:
         await ping_database(session)
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="database unavailable",
-        ) from exc
+        raise ServiceUnavailableError("database unavailable") from exc
 
     redis_ok = await ping_redis()
     if settings.redis_required_for_ready and not redis_ok:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="redis unavailable",
-        )
+        raise ServiceUnavailableError("redis unavailable")
 
     return {
         "status": "ok",

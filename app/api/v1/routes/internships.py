@@ -34,11 +34,10 @@ async def list_internships(
     svc: Annotated[InternshipService, Depends(get_internship_service)],
 ) -> Page[InternshipResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[InternshipResponse](
+    return Page[InternshipResponse].create(
         items=[InternshipResponse.model_validate(i) for i in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

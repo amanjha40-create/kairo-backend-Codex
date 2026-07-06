@@ -11,6 +11,7 @@ from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
 from app.organization.enums import OrganizationRole
 from app.repositories.organization import OrganizationRepository
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.repositories.user import UserRepository
 from app.schemas.organization import (
     OrganizationCreateRequest,
@@ -51,12 +52,24 @@ class OrganizationService:
         await self._session.refresh(membership)
         return await self._to_organization_response(organization, membership)
 
-    async def list_my_organizations(self, actor_user_id: UUID) -> list[OrganizationResponse]:
+    async def list_my_organizations(
+        self,
+        actor_user_id: UUID,
+        params: ListQueryParams | None = None,
+    ) -> list[OrganizationResponse] | Page[OrganizationResponse]:
         rows = await self._organizations.list_for_user(actor_user_id)
         responses: list[OrganizationResponse] = []
         for organization, membership in rows:
             responses.append(await self._to_organization_response(organization, membership))
-        return responses
+        if params is None:
+            return responses
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=("name", "organization_type", "my_role"),
+            allowed_sort_fields=("name", "created_at", "updated_at", "member_count"),
+            default_sort_by="created_at",
+        )
 
     async def get_organization(self, actor_user_id: UUID, org_public_id: UUID) -> OrganizationResponse:
         organization, membership = await self.require_org_member(actor_user_id, org_public_id)
@@ -93,10 +106,20 @@ class OrganizationService:
         self,
         actor_user_id: UUID,
         org_public_id: UUID,
-    ) -> list[OrganizationMemberResponse]:
+        params: ListQueryParams | None = None,
+    ) -> list[OrganizationMemberResponse] | Page[OrganizationMemberResponse]:
         organization, _ = await self.require_org_member(actor_user_id, org_public_id)
         memberships = await self._organizations.list_members(organization.id)
-        return [self._to_member_response(organization, membership) for membership in memberships]
+        responses = [self._to_member_response(organization, membership) for membership in memberships]
+        if params is None:
+            return responses
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=("user_email", "user_full_name", "role"),
+            allowed_sort_fields=("created_at", "updated_at", "role", "user_email", "user_full_name"),
+            default_sort_by="created_at",
+        )
 
     async def update_member_role(
         self,

@@ -23,6 +23,12 @@ from app.schemas.verification_request import (
 
 class AdminReviewQueueResponse(BaseModel):
     items: list[VerificationRequestResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    offset: int
+    limit: int
 
 
 class AdminReviewAssignRequest(BaseModel):

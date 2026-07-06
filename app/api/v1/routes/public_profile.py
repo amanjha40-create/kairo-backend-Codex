@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.api.dependencies.services import (
     get_user_service,
 )
 from app.db.session import get_session
+from app.exceptions import NotFoundError
 from app.models import User
 from app.schemas.trust_score import TrustScoreResponse
 from app.services import TrustScoreService, UserService
@@ -38,7 +39,7 @@ async def _get_user_by_slug(slug: str, session: AsyncSession) -> User:
     )
     user = (await session.execute(stmt)).scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+        raise NotFoundError("Profile not found")
     return user
 
 

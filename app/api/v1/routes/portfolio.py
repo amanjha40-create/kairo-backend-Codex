@@ -31,11 +31,10 @@ async def list_portfolio(
     svc: Annotated[PortfolioService, Depends(get_portfolio_service)],
 ) -> Page[PortfolioItemResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[PortfolioItemResponse](
+    return Page[PortfolioItemResponse].create(
         items=[PortfolioItemResponse.model_validate(i) for i in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

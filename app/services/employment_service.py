@@ -30,7 +30,7 @@ from app.schemas.employment import (
     EmploymentSubmitResponse,
     EmploymentUpdate,
 )
-from app.schemas.pagination import Page
+from app.schemas.pagination import Page, PageParams
 from app.services.employer_verification_service import EmployerVerificationService
 
 logger = logging.getLogger(__name__)
@@ -220,11 +220,10 @@ class EmploymentService:
             statuses=statuses,
             employer_ilike=employer_ilike,
         )
-        return Page(
+        return Page[EmploymentPublic].create(
             items=[EmploymentPublic.model_validate(r) for r in items],
             total=total,
-            offset=offset,
-            limit=limit,
+            params=PageParams(offset=offset, limit=limit),
         )
 
     async def _assert_no_other_active_pipeline_case(self, owner_user_id: UUID, employment_id: UUID) -> None:

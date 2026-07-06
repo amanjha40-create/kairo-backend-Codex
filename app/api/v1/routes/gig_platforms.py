@@ -27,11 +27,10 @@ async def list_gig_platforms(
     svc: Annotated[GigPlatformService, Depends(get_gig_platform_service)],
 ) -> Page[GigPlatformResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[GigPlatformResponse](
+    return Page[GigPlatformResponse].create(
         items=[GigPlatformResponse.model_validate(i) for i in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

@@ -28,7 +28,7 @@ from app.schemas.employment import (
     EmploymentDocumentResponse,
     EmploymentPublic,
 )
-from app.schemas.pagination import Page
+from app.schemas.pagination import Page, PageParams
 from app.services.verification_queue_service import VerificationQueueService
 
 logger = logging.getLogger(__name__)
@@ -432,11 +432,10 @@ class AdminReviewService:
             limit=limit,
             order=order,
         )
-        return Page(
+        return Page[VerificationAuditEntryPublic].create(
             items=[VerificationAuditEntryPublic.model_validate(r) for r in rows],
             total=total,
-            offset=offset,
-            limit=limit,
+            params=PageParams(offset=offset, limit=limit),
         )
 
 

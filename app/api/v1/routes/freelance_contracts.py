@@ -34,11 +34,10 @@ async def list_freelance_contracts(
     svc: Annotated[FreelanceContractService, Depends(get_freelance_contract_service)],
 ) -> Page[FreelanceContractResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[FreelanceContractResponse](
+    return Page[FreelanceContractResponse].create(
         items=[FreelanceContractResponse.model_validate(i) for i in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

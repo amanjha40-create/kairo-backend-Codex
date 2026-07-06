@@ -28,6 +28,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
 )
+from app.schemas.pagination import ListQueryParams
 from app.schemas.verification_request import VerificationRequestResponse
 from app.services.verification_request_admin_review_service import VerificationRequestAdminReviewService
 
@@ -36,10 +37,11 @@ router = APIRouter(prefix="/admin/verification-requests", tags=["admin-review-wo
 
 @router.get("/queue", response_model=AdminReviewQueueResponse)
 async def get_admin_review_queue(
+    params: Annotated[ListQueryParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_view_cases)],
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> AdminReviewQueueResponse:
-    return await svc.get_queue()
+    return await svc.get_queue(params)
 
 
 @router.get("/{verification_request_public_id}", response_model=AdminReviewDetailResponse)
@@ -114,7 +116,8 @@ async def resolve_admin_review_organization(
 @router.get("/{verification_request_public_id}/timeline", response_model=AdminReviewTimelineResponse)
 async def get_admin_review_timeline(
     verification_request_public_id: UUID,
+    params: Annotated[ListQueryParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_view_cases)],
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> AdminReviewTimelineResponse:
-    return await svc.get_timeline(verification_request_public_id)
+    return await svc.get_timeline(verification_request_public_id, params)

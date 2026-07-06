@@ -22,6 +22,7 @@ from app.repositories.user import UserRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.admin_review_workflow import (
     AdminReviewAssignRequest,
     AdminReviewCorrectionRequest,
@@ -58,14 +59,40 @@ class VerificationRequestAdminReviewService:
         self._reviews = VerificationRequestReviewRepository(session)
         self._workflow = VerificationRequestWorkflowService(self._requests)
 
-    async def get_queue(self) -> AdminReviewQueueResponse:
+    async def get_queue(self, params: ListQueryParams | None = None) -> AdminReviewQueueResponse:
         items = await self._requests.list_by_status(
             [
                 VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
                 VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
             ]
         )
-        return AdminReviewQueueResponse(items=[self._to_request_response(item) for item in items])
+        responses = [self._to_request_response(item) for item in items]
+        page = filter_sort_paginate(
+            responses,
+            params=params or ListQueryParams(),
+            search_fields=(
+                "subject_name",
+                "subject_email",
+                "request_type",
+                "status",
+                "target_organization_name",
+                "target_organization_email",
+            ),
+            allowed_sort_fields=("created_at", "updated_at", "subject_name", "subject_email", "status"),
+            default_sort_by="created_at",
+            force_page_envelope=True,
+        )
+        if not isinstance(page, Page):
+            raise RuntimeError("Admin review queue must return a page envelope")
+        return AdminReviewQueueResponse(
+            items=page.items,
+            total=page.total,
+            page=page.page,
+            page_size=page.page_size,
+            total_pages=page.total_pages,
+            offset=page.offset,
+            limit=page.limit,
+        )
 
     async def get_detail(self, verification_request_public_id: UUID) -> AdminReviewDetailResponse:
         request = await self._get_required_request(verification_request_public_id)
@@ -291,24 +318,46 @@ class VerificationRequestAdminReviewService:
             raise NotFoundError("Verification request not found")
         return self._to_request_response(refreshed)
 
-    async def get_timeline(self, verification_request_public_id: UUID) -> AdminReviewTimelineResponse:
+    async def get_timeline(
+        self,
+        verification_request_public_id: UUID,
+        params: ListQueryParams | None = None,
+    ) -> AdminReviewTimelineResponse:
         request = await self._get_required_request(verification_request_public_id)
         rows = await self._requests.list_timeline(request.id)
+        timeline_items = [
+            VerificationRequestTimelineEventResponse(
+                public_id=row.public_id,
+                event_type=row.event_type,
+                event_source=row.event_source,
+                previous_status=row.previous_status,
+                new_status=row.new_status,
+                metadata=row.metadata_payload,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+        page = filter_sort_paginate(
+            timeline_items,
+            params=params or ListQueryParams(),
+            search_fields=("event_type", "event_source"),
+            status_field=None,
+            allowed_sort_fields=("created_at", "event_type"),
+            default_sort_by="created_at",
+            force_page_envelope=True,
+        )
+        if not isinstance(page, Page):
+            raise RuntimeError("Admin review timeline must return a page envelope")
         return AdminReviewTimelineResponse(
             timeline=VerificationRequestTimelineResponse(
                 verification_request_public_id=request.public_id,
-                items=[
-                    VerificationRequestTimelineEventResponse(
-                        public_id=row.public_id,
-                        event_type=row.event_type,
-                        event_source=row.event_source,
-                        previous_status=row.previous_status,
-                        new_status=row.new_status,
-                        metadata=row.metadata_payload,
-                        created_at=row.created_at,
-                    )
-                    for row in rows
-                ],
+                items=page.items,
+                total=page.total,
+                page=page.page,
+                page_size=page.page_size,
+                total_pages=page.total_pages,
+                offset=page.offset,
+                limit=page.limit,
             )
         )
 
