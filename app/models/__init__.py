@@ -25,6 +25,8 @@ from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
+from app.models.verification_request import VerificationRequest
+from app.models.verification_request_event import VerificationRequestEvent
 from app.models.verification_audit import VerificationAuditEvent
 
 __all__ = [
@@ -53,5 +55,7 @@ __all__ = [
     "User",
     "UserDocument",
     "UserSocialAccount",
+    "VerificationRequest",
+    "VerificationRequestEvent",
     "VerificationAuditEvent",
 ]

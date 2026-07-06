@@ -17,6 +17,7 @@ from app.organization.enums import OrganizationType
 if TYPE_CHECKING:
     from app.models.organization_member import OrganizationMember
     from app.models.trust_invitation import TrustInvitation
+    from app.models.verification_request import VerificationRequest
 
 
 class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -47,6 +48,11 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     trust_invitations: Mapped[list["TrustInvitation"]] = relationship(
         "TrustInvitation",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    verification_requests: Mapped[list["VerificationRequest"]] = relationship(
+        "VerificationRequest",
         back_populates="organization",
         cascade="all, delete-orphan",
     )

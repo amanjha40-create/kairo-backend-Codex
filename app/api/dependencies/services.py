@@ -25,6 +25,7 @@ from app.services import (
     TrustScoreService,
     TrustInvitationService,
     UserService,
+    VerificationRequestService,
     VerificationQueueService,
     VerificationService,
 )
@@ -118,6 +119,12 @@ def get_trust_invitation_service(
     settings: Settings = Depends(get_settings),
 ) -> TrustInvitationService:
     return TrustInvitationService(session, settings)
+
+
+def get_verification_request_service(
+    session: AsyncSession = Depends(get_session),
+) -> VerificationRequestService:
+    return VerificationRequestService(session)
 
 
 def get_passport_share_service(

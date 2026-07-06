@@ -17,6 +17,7 @@ from app.trust_invitations.enums import TrustInvitationStatus
 
 if TYPE_CHECKING:
     from app.models.organization import Organization
+    from app.models.verification_request import VerificationRequest
 
 
 class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -52,6 +53,10 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="trust_invitations")
+    verification_requests: Mapped[list["VerificationRequest"]] = relationship(
+        "VerificationRequest",
+        back_populates="trust_invitation",
+    )
 
     def __repr__(self) -> str:
         return (
