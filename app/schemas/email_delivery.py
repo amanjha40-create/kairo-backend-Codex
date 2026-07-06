@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,3 +33,8 @@ class EmailSendResult(BaseModel):
     provider_message_id: str | None = Field(default=None, max_length=255)
     error_code: str | None = Field(default=None, max_length=100)
     error_message: str | None = None
+
+
+class EmailSendJobPayload(BaseModel):
+    email_delivery_log_public_id: UUID
+    message: RenderedEmailMessage
