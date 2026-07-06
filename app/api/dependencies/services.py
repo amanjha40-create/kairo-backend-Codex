@@ -17,12 +17,15 @@ from app.services import (
     EmployerVerificationService,
     EmploymentDocumentService,
     EmploymentService,
+    OrganizationService,
     PassportEngineService,
     PassportShareService,
     PassportShareViewService,
     PublicPassportService,
     TrustScoreService,
+    TrustInvitationService,
     UserService,
+    VerificationRequestService,
     VerificationQueueService,
     VerificationService,
 )
@@ -105,6 +108,23 @@ def get_education_service(
 
 def get_trust_score_service(session: AsyncSession = Depends(get_session)) -> TrustScoreService:
     return TrustScoreService(session)
+
+
+def get_organization_service(session: AsyncSession = Depends(get_session)) -> OrganizationService:
+    return OrganizationService(session)
+
+
+def get_trust_invitation_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TrustInvitationService:
+    return TrustInvitationService(session, settings)
+
+
+def get_verification_request_service(
+    session: AsyncSession = Depends(get_session),
+) -> VerificationRequestService:
+    return VerificationRequestService(session)
 
 
 def get_passport_share_service(

@@ -21,9 +21,12 @@ from app.api.v1.routes import (
     health,
     internships,
     onboarding,
+    organizations,
     passport,
     passport_shares,
     portfolio,
+    verification_requests,
+    trust_invitations,
     public_passport,
     public_credential_verification,
     public_employer_verification,
@@ -40,6 +43,9 @@ api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
+api_router.include_router(organizations.router)
+api_router.include_router(trust_invitations.org_router)
+api_router.include_router(verification_requests.org_router)
 api_router.include_router(employments.router)
 api_router.include_router(employer_verification.router)
 api_router.include_router(public_employer_verification.router)
@@ -59,6 +65,8 @@ api_router.include_router(internships.router)
 api_router.include_router(gig_platforms.router)
 api_router.include_router(passport.router)
 api_router.include_router(passport_shares.router)
+api_router.include_router(trust_invitations.router)
+api_router.include_router(verification_requests.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(certifications.router)
 api_router.include_router(trust_score.router)

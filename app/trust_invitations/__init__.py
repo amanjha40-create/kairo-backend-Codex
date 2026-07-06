@@ -1,0 +1,1 @@
+"""Trust invitation domain package."""

@@ -15,6 +15,13 @@ from app.employment.enums import (
     VerificationAuditAction,
     VerificationStatus,
 )
+from app.organization.enums import OrganizationRole, OrganizationType
+from app.trust_invitations.enums import TrustInvitationStatus
+from app.verification_requests.enums import (
+    VerificationRequestEventSource,
+    VerificationRequestStatus,
+    VerificationRequestType,
+)
 
 verification_status_enum = ENUM(
     *[m.value for m in VerificationStatus],
@@ -47,6 +54,48 @@ document_extraction_status_enum = ENUM(
 verification_audit_action_enum = ENUM(
     *[m.value for m in VerificationAuditAction],
     name="verification_audit_action_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_type_enum = ENUM(
+    *[m.value for m in OrganizationType],
+    name="organization_type_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_role_enum = ENUM(
+    *[m.value for m in OrganizationRole],
+    name="organization_role_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+trust_invitation_status_enum = ENUM(
+    *[m.value for m in TrustInvitationStatus],
+    name="trust_invitation_status_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+verification_request_type_enum = ENUM(
+    *[m.value for m in VerificationRequestType],
+    name="verification_request_type_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+verification_request_status_enum = ENUM(
+    *[m.value for m in VerificationRequestStatus],
+    name="verification_request_status_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+verification_request_event_source_enum = ENUM(
+    *[m.value for m in VerificationRequestEventSource],
+    name="verification_request_event_source_enum",
     metadata=Base.metadata,
     create_type=False,
 )

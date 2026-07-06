@@ -8,6 +8,8 @@ from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
+from app.models.organization import Organization
+from app.models.organization_member import OrganizationMember
 from app.models.passport_share_link import PassportShareLink
 from app.models.passport_share_view import PassportShareView
 from app.models.password_reset_token import PasswordResetToken
@@ -19,9 +21,12 @@ from app.models.employment_document import EmploymentDocument
 from app.models.pending_signup import PendingSignup
 from app.models.profile_view import ProfileView
 from app.models.refresh_token import RefreshToken
+from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
+from app.models.verification_request import VerificationRequest
+from app.models.verification_request_event import VerificationRequestEvent
 from app.models.verification_audit import VerificationAuditEvent
 
 __all__ = [
@@ -37,6 +42,8 @@ __all__ = [
     "GigPlatform",
     "Internship",
     "InternshipDocument",
+    "Organization",
+    "OrganizationMember",
     "PassportShareLink",
     "PassportShareView",
     "PasswordResetToken",
@@ -44,8 +51,11 @@ __all__ = [
     "ProfileView",
     "PortfolioItem",
     "RefreshToken",
+    "TrustInvitation",
     "User",
     "UserDocument",
     "UserSocialAccount",
+    "VerificationRequest",
+    "VerificationRequestEvent",
     "VerificationAuditEvent",
 ]

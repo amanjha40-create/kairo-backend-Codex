@@ -7,12 +7,16 @@ from app.services.document_upload_service import DocumentUploadService
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.employment_document_service import EmploymentDocumentService
 from app.services.employment_service import EmploymentService
+from app.services.organization_service import OrganizationService
 from app.services.passport_engine_service import PassportEngineService
 from app.services.passport_share_service import PassportShareService
 from app.services.passport_share_view_service import PassportShareViewService
 from app.services.public_passport_service import PublicPassportService
 from app.services.trust_score_service import TrustScoreService
+from app.services.trust_invitation_service import TrustInvitationService
 from app.services.user_service import UserService
+from app.services.verification_request_service import VerificationRequestService
+from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.services.verification_queue_service import VerificationQueueService
 from app.services.verification_service import VerificationService
 
@@ -25,12 +29,16 @@ __all__ = [
     "EmployerVerificationService",
     "EmploymentDocumentService",
     "EmploymentService",
+    "OrganizationService",
     "PassportEngineService",
     "PassportShareService",
     "PassportShareViewService",
     "PublicPassportService",
     "TrustScoreService",
+    "TrustInvitationService",
     "UserService",
+    "VerificationRequestService",
+    "VerificationRequestWorkflowService",
     "VerificationQueueService",
     "VerificationService",
 ]
