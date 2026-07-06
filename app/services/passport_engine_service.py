@@ -9,11 +9,29 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import Certification, Education, Employment, GigPlatform, Internship, PortfolioItem, User, UserDocument
+from app.models import (
+    Certification,
+    Education,
+    Employment,
+    EmploymentDocument,
+    GigPlatform,
+    Internship,
+    PassportShareLink,
+    PassportShareView,
+    PortfolioItem,
+    User,
+    UserDocument,
+    VerificationAuditEvent,
+)
 from app.models.freelance_contract import FreelanceContract
-from app.models.passport_share_link import PassportShareLink
-from app.models.passport_share_view import PassportShareView
 from app.schemas.passport_engine import (
+    DashboardActivePassportShares,
+    DashboardActivityItem,
+    DashboardResponse,
+    DashboardShareAnalyticsItem,
+    DashboardShareSummaryItem,
+    DashboardVaultSummary,
+    OnboardingStatusResponse,
     OwnerPassportResponse,
     PassportMetadata,
     PassportSectionStatusSummary,
@@ -75,6 +93,25 @@ class PassportEngineService:
             ),
             sharing_summary=sharing_summary,
             verification_summary=verification_summary,
+        )
+
+    async def get_dashboard(self, user_id: UUID) -> DashboardResponse:
+        user = await self._get_user(user_id)
+        trust_score = await self._trust.calculate_trust_score(user_id)
+        verification_summary = await self._build_verification_summary(user_id)
+        profile_completion = await self._build_onboarding_status(user)
+        active_passport_shares = await self._build_active_passport_shares(user_id)
+        recent_share_analytics = await self._build_recent_share_analytics(user_id)
+        recent_activity = await self._build_recent_activity(user_id)
+
+        return DashboardResponse(
+            profile_completion=profile_completion,
+            trust_score=trust_score,
+            verification_summary=verification_summary,
+            vault_summary=self._build_vault_summary(verification_summary),
+            active_passport_shares=active_passport_shares,
+            recent_share_analytics=recent_share_analytics,
+            recent_activity=recent_activity,
         )
 
     async def _get_user(self, user_id: UUID) -> User:
@@ -195,3 +232,237 @@ class PassportEngineService:
         statuses = {str(status): int(count) for status, count in rows}
         total = sum(statuses.values())
         return PassportSectionStatusSummary(total=total, statuses=statuses)
+
+    async def _build_onboarding_status(self, user: User) -> OnboardingStatusResponse:
+        work_history_count = await self._count_work_history(user.id)
+        education_count = await self._count_owned(Education, Education.user_id == user.id)
+        supporting_documents_count = await self._count_supporting_documents(user.id)
+
+        requirements: list[tuple[str, bool]] = [
+            ("verify_email", user.email_verified_at is not None),
+            (
+                "complete_profile",
+                all(
+                    [
+                        self._has_value(user.full_name),
+                        self._has_value(user.profile_slug),
+                        self._has_value(user.phone),
+                        self._has_value(user.location),
+                        self._has_value(user.headline),
+                    ]
+                ),
+            ),
+            ("add_employment_or_work_history", work_history_count > 0),
+            ("add_education", education_count > 0),
+            ("add_supporting_documents", supporting_documents_count > 0),
+        ]
+
+        completed_steps = [step for step, done in requirements if done]
+        missing_requirements = [step for step, done in requirements if not done]
+        completion_percentage = int((len(completed_steps) / len(requirements)) * 100)
+
+        return OnboardingStatusResponse(
+            completed_steps=completed_steps,
+            missing_requirements=missing_requirements,
+            next_recommended_step=missing_requirements[0] if missing_requirements else None,
+            completion_percentage=completion_percentage,
+            is_onboarding_complete=(
+                user.employment_onboarding_completed_at is not None or not missing_requirements
+            ),
+        )
+
+    def _build_vault_summary(
+        self,
+        verification_summary: PassportVerificationSummary,
+    ) -> DashboardVaultSummary:
+        employments = verification_summary.employments.total
+        educations = verification_summary.educations.total
+        internships = verification_summary.internships.total
+        freelance = verification_summary.freelance.total
+        gig_platforms = verification_summary.gig_platforms.total
+        portfolio = verification_summary.portfolio.total
+        certifications = verification_summary.certifications.total
+        user_documents = verification_summary.user_documents.total
+
+        return DashboardVaultSummary(
+            total_items=(
+                employments
+                + educations
+                + internships
+                + freelance
+                + gig_platforms
+                + portfolio
+                + certifications
+                + user_documents
+            ),
+            employments=employments,
+            educations=educations,
+            internships=internships,
+            freelance=freelance,
+            gig_platforms=gig_platforms,
+            portfolio=portfolio,
+            certifications=certifications,
+            user_documents=user_documents,
+        )
+
+    async def _build_active_passport_shares(self, user_id: UUID) -> DashboardActivePassportShares:
+        shares = await self._list_shares(user_id)
+        active_items = [
+            DashboardShareSummaryItem(
+                share_id=share.id,
+                label=share.label,
+                state=self._share_state(share),
+                expires_at=share.expires_at,
+                last_viewed_at=share.last_viewed_at,
+                created_at=share.created_at,
+            )
+            for share in shares
+            if self._share_state(share) == "active"
+        ]
+
+        return DashboardActivePassportShares(
+            count=len(active_items),
+            items=active_items[:5],
+        )
+
+    async def _build_recent_share_analytics(self, user_id: UUID) -> list[DashboardShareAnalyticsItem]:
+        shares = await self._list_shares(user_id)
+        viewed = [share for share in shares if share.last_viewed_at is not None]
+        viewed.sort(key=lambda share: share.last_viewed_at or share.created_at, reverse=True)
+
+        items: list[DashboardShareAnalyticsItem] = []
+        for share in viewed[:5]:
+            items.append(
+                DashboardShareAnalyticsItem(
+                    share_id=share.id,
+                    label=share.label,
+                    state=self._share_state(share),
+                    total_views=await self._count_share_views(share.id),
+                    unique_views=await self._count_unique_share_views(share.id),
+                    last_viewed_at=share.last_viewed_at,
+                )
+            )
+
+        return items
+
+    async def _build_recent_activity(self, user_id: UUID) -> list[DashboardActivityItem]:
+        items = await self._build_recent_verification_activity(user_id)
+        items.extend(await self._build_recent_share_activity(user_id))
+        items.sort(key=lambda item: item.occurred_at, reverse=True)
+        return items[:10]
+
+    async def _build_recent_verification_activity(self, user_id: UUID) -> list[DashboardActivityItem]:
+        stmt = (
+            select(VerificationAuditEvent, Employment)
+            .join(Employment, Employment.id == VerificationAuditEvent.employment_id)
+            .where(
+                Employment.created_by_user_id == user_id,
+                Employment.deleted_at.is_(None),
+            )
+            .order_by(VerificationAuditEvent.created_at.desc())
+            .limit(10)
+        )
+        rows = (await self._session.execute(stmt)).all()
+
+        return [
+            DashboardActivityItem(
+                occurred_at=audit_row.created_at,
+                category="verification",
+                action=audit_row.action,
+                title=self._humanize_action(audit_row.action),
+                detail=employment.employer_legal_name,
+                subject_id=employment.id,
+            )
+            for audit_row, employment in rows
+        ]
+
+    async def _build_recent_share_activity(self, user_id: UUID) -> list[DashboardActivityItem]:
+        shares = await self._list_shares(user_id)
+        items: list[DashboardActivityItem] = []
+        for share in shares[:10]:
+            share_label = share.label or "Trust Passport share"
+            items.append(
+                DashboardActivityItem(
+                    occurred_at=share.created_at,
+                    category="passport_share",
+                    action="share_created",
+                    title="Trust Passport share created",
+                    detail=share_label,
+                    subject_id=share.id,
+                )
+            )
+            if share.revoked_at is not None:
+                items.append(
+                    DashboardActivityItem(
+                        occurred_at=share.revoked_at,
+                        category="passport_share",
+                        action="share_revoked",
+                        title="Trust Passport share revoked",
+                        detail=share_label,
+                        subject_id=share.id,
+                    )
+                )
+            if share.last_viewed_at is not None:
+                items.append(
+                    DashboardActivityItem(
+                        occurred_at=share.last_viewed_at,
+                        category="passport_share",
+                        action="share_viewed",
+                        title="Trust Passport share viewed",
+                        detail=share_label,
+                        subject_id=share.id,
+                    )
+                )
+        return items
+
+    async def _list_shares(self, user_id: UUID) -> list[PassportShareLink]:
+        stmt = (
+            select(PassportShareLink)
+            .where(PassportShareLink.owner_user_id == user_id)
+            .order_by(PassportShareLink.created_at.desc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def _count_work_history(self, user_id: UUID) -> int:
+        return (
+            await self._count_owned(Employment, Employment.created_by_user_id == user_id)
+            + await self._count_owned(Internship, Internship.user_id == user_id)
+            + await self._count_owned(FreelanceContract, FreelanceContract.user_id == user_id)
+            + await self._count_owned(GigPlatform, GigPlatform.user_id == user_id)
+        )
+
+    async def _count_supporting_documents(self, user_id: UUID) -> int:
+        return (
+            await self._count_owned(UserDocument, UserDocument.user_id == user_id)
+            + await self._count_employment_documents(user_id)
+        )
+
+    async def _count_owned(self, model, owner_filter) -> int:  # noqa: ANN001
+        stmt = select(func.count()).select_from(model).where(owner_filter, model.deleted_at.is_(None))
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    async def _count_employment_documents(self, user_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(EmploymentDocument)
+            .join(Employment, Employment.id == EmploymentDocument.employment_id)
+            .where(
+                Employment.created_by_user_id == user_id,
+                Employment.deleted_at.is_(None),
+                EmploymentDocument.deleted_at.is_(None),
+            )
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    def _share_state(self, share: PassportShareLink) -> str:
+        if share.revoked_at is not None:
+            return "revoked"
+        if share.expires_at is not None and share.expires_at <= datetime.now(tz=UTC):
+            return "expired"
+        return "active"
+
+    def _humanize_action(self, action: str) -> str:
+        return action.replace("_", " ").strip().title()
+
+    def _has_value(self, value: str | None) -> bool:
+        return bool(value and value.strip())

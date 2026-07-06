@@ -1,7 +1,8 @@
-"""Canonical backend-owned Trust Passport aggregation DTOs."""
+"""Canonical backend-owned Trust Passport, dashboard, and onboarding DTOs."""
 
 from __future__ import annotations
 
+from typing import Literal
 from datetime import datetime
 from uuid import UUID
 
@@ -48,6 +49,68 @@ class PassportSharingSummary(BaseModel):
     unique_views: int
     latest_share_created_at: datetime | None
     last_viewed_at: datetime | None
+
+
+class OnboardingStatusResponse(BaseModel):
+    completed_steps: list[str]
+    missing_requirements: list[str]
+    next_recommended_step: str | None
+    completion_percentage: int
+    is_onboarding_complete: bool
+
+
+class DashboardVaultSummary(BaseModel):
+    total_items: int
+    employments: int
+    educations: int
+    internships: int
+    freelance: int
+    gig_platforms: int
+    portfolio: int
+    certifications: int
+    user_documents: int
+
+
+class DashboardShareSummaryItem(BaseModel):
+    share_id: UUID
+    label: str | None
+    state: str
+    expires_at: datetime | None
+    last_viewed_at: datetime | None
+    created_at: datetime
+
+
+class DashboardActivePassportShares(BaseModel):
+    count: int
+    items: list[DashboardShareSummaryItem]
+
+
+class DashboardShareAnalyticsItem(BaseModel):
+    share_id: UUID
+    label: str | None
+    state: str
+    total_views: int
+    unique_views: int
+    last_viewed_at: datetime | None
+
+
+class DashboardActivityItem(BaseModel):
+    occurred_at: datetime
+    category: Literal["verification", "passport_share"]
+    action: str
+    title: str
+    detail: str | None
+    subject_id: UUID | None
+
+
+class DashboardResponse(BaseModel):
+    profile_completion: OnboardingStatusResponse
+    trust_score: TrustScoreResponse
+    verification_summary: PassportVerificationSummary
+    vault_summary: DashboardVaultSummary
+    active_passport_shares: DashboardActivePassportShares
+    recent_share_analytics: list[DashboardShareAnalyticsItem]
+    recent_activity: list[DashboardActivityItem]
 
 
 class OwnerPassportResponse(BaseModel):

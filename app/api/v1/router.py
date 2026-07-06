@@ -10,6 +10,7 @@ from app.api.v1.routes import (
     auth,
     certifications,
     credential_verification,
+    dashboard,
     documents,
     educations,
     employer_verification,
@@ -36,6 +37,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
+api_router.include_router(dashboard.router)
 api_router.include_router(employments.router)
 api_router.include_router(employer_verification.router)
 api_router.include_router(public_employer_verification.router)
