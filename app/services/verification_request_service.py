@@ -377,7 +377,10 @@ class VerificationRequestService:
             request,
             actor_user_id,
             payload.metadata,
-            allowed_current_statuses={VerificationRequestStatus.ACCEPTED},
+            allowed_current_statuses={
+                VerificationRequestStatus.ACCEPTED,
+                VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+            },
         )
         await self._workflow.transition(
             request,
@@ -402,6 +405,7 @@ class VerificationRequestService:
             payload.metadata,
             allowed_current_statuses={
                 VerificationRequestStatus.ACCEPTED,
+                VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
                 VerificationRequestStatus.AWAITING_INFORMATION,
             },
         )
@@ -428,6 +432,7 @@ class VerificationRequestService:
             payload.metadata,
             allowed_current_statuses={
                 VerificationRequestStatus.ACCEPTED,
+                VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
                 VerificationRequestStatus.AWAITING_INFORMATION,
             },
         )

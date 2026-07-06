@@ -57,6 +57,10 @@ class AdminReviewDecisionRequest(BaseModel):
     decision_summary: str = Field(min_length=1, max_length=5000)
 
 
+class AdminReviewOrganizationResolutionRequest(BaseModel):
+    organization_public_id: UUID
+
+
 class AdminReviewNoteResponse(BaseModel):
     public_id: UUID
     visibility: VerificationReviewNoteVisibility

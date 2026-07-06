@@ -17,6 +17,7 @@ from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
+from app.repositories.organization import OrganizationRepository
 from app.repositories.user import UserRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
@@ -29,6 +30,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewDetailResponse,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
+    AdminReviewOrganizationResolutionRequest,
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
@@ -50,6 +52,7 @@ class VerificationRequestAdminReviewService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._requests = VerificationRequestRepository(session)
+        self._organizations = OrganizationRepository(session)
         self._users = UserRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
@@ -224,6 +227,7 @@ class VerificationRequestAdminReviewService:
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"decision_summary": payload.decision_summary},
         )
+        await self._advance_to_organization_stage(request, actor_user_id=actor_user_id)
         await self._session.commit()
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
@@ -250,6 +254,36 @@ class VerificationRequestAdminReviewService:
             event_type="verification_request_admin_rejected",
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"decision_summary": payload.decision_summary},
+        )
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return self._to_request_response(refreshed)
+
+    async def resolve_organization(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewOrganizationResolutionRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status not in {
+            VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+            VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+        }:
+            raise ConflictError("Verification request is not awaiting organization resolution")
+
+        organization = await self._organizations.get_by_public_id(payload.organization_public_id)
+        if organization is None:
+            raise NotFoundError("Organization not found")
+
+        request.organization_id = organization.id
+        request.target_organization_name = organization.name
+        await self._advance_to_organization_stage(
+            request,
+            actor_user_id=actor_user_id,
+            resolved_organization_public_id=organization.public_id,
         )
         await self._session.commit()
         refreshed = await self._requests.get_by_public_id(request.public_id)
@@ -324,6 +358,38 @@ class VerificationRequestAdminReviewService:
             VerificationRequestReviewStatus.REJECTED,
             VerificationRequestReviewStatus.CANCELLED,
         }
+
+    async def _advance_to_organization_stage(
+        self,
+        request,
+        *,
+        actor_user_id: UUID,
+        resolved_organization_public_id: UUID | None = None,
+    ) -> None:
+        metadata: dict[str, str] = {}
+        if resolved_organization_public_id is not None:
+            metadata["organization_public_id"] = str(resolved_organization_public_id)
+
+        if request.organization_id is None:
+            await self._workflow.transition(
+                request,
+                target_status=VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+                actor_user_id=actor_user_id,
+                event_type="verification_request_organization_resolution_required",
+                event_source=VerificationRequestEventSource.SYSTEM,
+                metadata=metadata,
+            )
+            return
+
+        request.organization_outreach_sent_at = datetime.now(tz=UTC)
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_organization_outreach_initiated",
+            event_source=VerificationRequestEventSource.SYSTEM,
+            metadata=metadata,
+        )
 
     def _to_request_response(self, request) -> VerificationRequestResponse:  # noqa: ANN001
         from app.services.verification_request_service import VerificationRequestService

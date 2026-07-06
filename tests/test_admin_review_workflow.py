@@ -146,12 +146,13 @@ class FakeVerificationRequestAdminReviewService:
         return self._request_response(status=VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS)
 
     async def approve(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
-        return self._request_response(
-            status=VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION
-        )
+        return self._request_response(status=VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION)
 
     async def reject(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.REJECTED)
+
+    async def resolve_organization(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        return self._request_response(status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE)
 
     async def get_timeline(self, verification_request_public_id):  # noqa: ANN001
         return AdminReviewTimelineResponse(
@@ -285,7 +286,28 @@ async def test_approve_returns_approved_for_organization_verification() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["status"] == "approved_for_organization_verification"
+    assert response.json()["status"] == "pending_organization_resolution"
+
+
+@pytest.mark.asyncio
+async def test_resolve_organization_returns_pending_organization_acceptance() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    organization_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{request_public_id}/resolve-organization",
+            json={"organization_public_id": str(organization_public_id)},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending_organization_acceptance"
 
 
 @pytest.mark.asyncio

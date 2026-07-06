@@ -23,6 +23,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewDetailResponse,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
+    AdminReviewOrganizationResolutionRequest,
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
@@ -98,6 +99,16 @@ async def reject_admin_review(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> VerificationRequestResponse:
     return await svc.reject(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post("/{verification_request_public_id}/resolve-organization", response_model=VerificationRequestResponse)
+async def resolve_admin_review_organization(
+    verification_request_public_id: UUID,
+    payload: AdminReviewOrganizationResolutionRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> VerificationRequestResponse:
+    return await svc.resolve_organization(reviewer.id, verification_request_public_id, payload)
 
 
 @router.get("/{verification_request_public_id}/timeline", response_model=AdminReviewTimelineResponse)
