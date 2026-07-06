@@ -15,6 +15,7 @@ from app.services.public_passport_service import PublicPassportService
 from app.services.trust_score_service import TrustScoreService
 from app.services.trust_invitation_service import TrustInvitationService
 from app.services.user_service import UserService
+from app.services.verification_request_admin_review_service import VerificationRequestAdminReviewService
 from app.services.verification_request_service import VerificationRequestService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.services.verification_queue_service import VerificationQueueService
@@ -37,6 +38,7 @@ __all__ = [
     "TrustScoreService",
     "TrustInvitationService",
     "UserService",
+    "VerificationRequestAdminReviewService",
     "VerificationRequestService",
     "VerificationRequestWorkflowService",
     "VerificationQueueService",

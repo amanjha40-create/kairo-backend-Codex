@@ -36,6 +36,15 @@ class VerificationRequestReviewRepository:
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
 
+    async def get_latest_review_for_request(self, verification_request_id: UUID) -> VerificationRequestReview | None:
+        stmt = (
+            select(VerificationRequestReview)
+            .where(VerificationRequestReview.verification_request_id == verification_request_id)
+            .order_by(VerificationRequestReview.review_round.desc(), VerificationRequestReview.created_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def get_next_review_round(self, verification_request_id: UUID) -> int:
         stmt = select(func.max(VerificationRequestReview.review_round)).where(
             VerificationRequestReview.verification_request_id == verification_request_id

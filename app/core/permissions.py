@@ -91,7 +91,6 @@ _HR: frozenset[Permission] = frozenset(
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
         Permission.ADD_REMARK,
-        Permission.ASSIGN_REVIEWER,
         Permission.REVIEW_VERIFICATION,
         Permission.REQUEST_MORE_INFO,
     }

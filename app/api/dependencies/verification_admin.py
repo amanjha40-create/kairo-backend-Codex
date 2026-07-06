@@ -19,11 +19,14 @@ require_view_cases = require_permission(Permission.VIEW_ALL_CASES)
 # Remark only — moderator, hr, admin, superadmin
 require_remark = require_permission(Permission.ADD_REMARK)
 
-# Assign reviewer — hr, admin, superadmin
+# Assign reviewer — admin, superadmin
 require_assign = require_permission(Permission.ASSIGN_REVIEWER)
 
 # Approve / reject — hr, admin, superadmin
 require_reviewer = require_permission(Permission.REVIEW_VERIFICATION)
+
+# Request subject corrections — hr, admin, superadmin
+require_request_more_info = require_permission(Permission.REQUEST_MORE_INFO)
 
 # User management — admin, superadmin
 require_user_manager = require_permission(Permission.MANAGE_USERS)
@@ -41,6 +44,7 @@ __all__ = [
     "CurrentUser",
     "require_assign",
     "require_remark",
+    "require_request_more_info",
     "require_reviewer",
     "require_role_manager",
     "require_user_manager",
