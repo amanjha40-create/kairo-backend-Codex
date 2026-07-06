@@ -1,9 +1,6 @@
 name: cd
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -21,6 +18,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
+        # Manual-only until required GitHub environment variables and secrets
+        # are configured for the production deployment environment.
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}

@@ -18,7 +18,7 @@ os.environ.setdefault(
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("APP_ENV", "test")
 
-from app.config import get_settings, reload_settings  # noqa: E402
+from app.config import reload_settings  # noqa: E402
 
 reload_settings()
 

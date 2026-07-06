@@ -31,6 +31,9 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      - name: Run lint
+        run: ruff check . --select F
+
       - name: Compile Python sources
         run: |
           env PYTHONPYCACHEPREFIX=/tmp/kairo-ci-pycache python -m compileall app tests

@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.admin_review.enums import (
     VerificationRequestReviewStatus,
-    VerificationReviewCorrectionStatus,
     VerificationReviewNoteType,
     VerificationReviewNoteVisibility,
 )

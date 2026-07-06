@@ -14,7 +14,7 @@ from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.schemas.organization import OrganizationMemberResponse, OrganizationResponse
-from app.schemas.pagination import Page, filter_sort_paginate
+from app.schemas.pagination import filter_sort_paginate
 
 
 class FakeOrganizationService:
