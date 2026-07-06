@@ -35,6 +35,27 @@ def build_signup_otp_email(
     return msg
 
 
+def build_password_reset_email(
+    *,
+    app_name: str,
+    to_email: str,
+    from_email: str,
+    reset_token: str,
+    ttl_minutes: int,
+) -> EmailMessage:
+    msg = EmailMessage()
+    msg["Subject"] = f"{app_name} — reset your password"
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg.set_content(
+        f"We received a request to reset your password.\n\n"
+        f"Password reset token: {reset_token}\n\n"
+        f"This token expires in {ttl_minutes} minutes and can only be used once.\n\n"
+        f"If you did not request this, you can ignore this email."
+    )
+    return msg
+
+
 def _send_message_sync(settings: Settings, message: EmailMessage) -> None:
     host = settings.smtp_host
     if not host:
@@ -105,6 +126,47 @@ class SmtpEmailSender:
             "signup_otp_email_sent",
             extra={
                 "event": "signup_otp_email_sent",
+                "to_email_domain": to_email.split("@")[-1] if "@" in to_email else "unknown",
+                "ttl_minutes": ttl_minutes,
+            },
+        )
+
+    async def send_password_reset(self, *, to_email: str, reset_token: str, ttl_minutes: int) -> None:
+        message = build_password_reset_email(
+            app_name=self._settings.app_name,
+            to_email=to_email,
+            from_email=self._settings.email_from,
+            reset_token=reset_token,
+            ttl_minutes=ttl_minutes,
+        )
+        try:
+            await asyncio.to_thread(_send_message_sync, self._settings, message)
+        except ServiceUnavailableError:
+            raise
+        except smtplib.SMTPException as exc:
+            logger.warning(
+                "smtp_send_failed",
+                extra={
+                    "event": "smtp_send_failed",
+                    "error_type": type(exc).__name__,
+                    "to_email_domain": to_email.split("@")[-1] if "@" in to_email else "unknown",
+                },
+            )
+            raise ServiceUnavailableError("Unable to send password reset email") from exc
+        except OSError as exc:
+            logger.warning(
+                "smtp_connect_failed",
+                extra={
+                    "event": "smtp_connect_failed",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise ServiceUnavailableError("Unable to send password reset email") from exc
+
+        logger.info(
+            "password_reset_email_sent",
+            extra={
+                "event": "password_reset_email_sent",
                 "to_email_domain": to_email.split("@")[-1] if "@" in to_email else "unknown",
                 "ttl_minutes": ttl_minutes,
             },

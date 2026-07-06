@@ -10,6 +10,7 @@ from app.api.v1.routes import (
     auth,
     certifications,
     credential_verification,
+    dashboard,
     documents,
     educations,
     employer_verification,
@@ -19,7 +20,11 @@ from app.api.v1.routes import (
     gig_platforms,
     health,
     internships,
+    onboarding,
+    passport,
+    passport_shares,
     portfolio,
+    public_passport,
     public_credential_verification,
     public_employer_verification,
     public_profile,
@@ -33,10 +38,13 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(onboarding.router)
 api_router.include_router(employments.router)
 api_router.include_router(employer_verification.router)
 api_router.include_router(public_employer_verification.router)
 api_router.include_router(public_profile.router)
+api_router.include_router(public_passport.router)
 api_router.include_router(public_vault.router)
 api_router.include_router(credential_verification.router)
 api_router.include_router(public_credential_verification.router)
@@ -49,6 +57,8 @@ api_router.include_router(educations.router)
 api_router.include_router(freelance_contracts.router)
 api_router.include_router(internships.router)
 api_router.include_router(gig_platforms.router)
+api_router.include_router(passport.router)
+api_router.include_router(passport_shares.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(certifications.router)
 api_router.include_router(trust_score.router)

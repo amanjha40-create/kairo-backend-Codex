@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -25,14 +26,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.integrations.email import get_email_sender
-from app.models import PendingSignup, RefreshToken, User
+from app.models import PasswordResetToken, PendingSignup, RefreshToken, User
 from app.models.user_social_account import UserSocialAccount
-from app.repositories import RefreshTokenRepository, UserRepository
+from app.repositories import PasswordResetTokenRepository, RefreshTokenRepository, UserRepository
 from app.repositories.pending_signup import PendingSignupRepository
 from app.repositories.user_social_account import UserSocialAccountRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
     ChangePasswordResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LinkProviderRequest,
     LinkProviderResponse,
     LoginRequest,
@@ -40,6 +43,8 @@ from app.schemas.auth import (
     OAuthCallbackRequest,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     SetPasswordRequest,
     SetPasswordResponse,
     SignupResendRequest,
@@ -49,6 +54,8 @@ from app.schemas.auth import (
     TokenResponse,
     UnlinkProviderResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _make_slug(name: str | None, email: str) -> str:
@@ -80,6 +87,7 @@ class AuthService:
         self._settings = settings
         self._users = UserRepository(session)
         self._pending = PendingSignupRepository(session)
+        self._password_resets = PasswordResetTokenRepository(session)
         self._refresh = RefreshTokenRepository(session)
         self._social = UserSocialAccountRepository(session)
         self._otp = SignupOtpStore(redis, settings)
@@ -209,6 +217,72 @@ class AuthService:
         tokens = await self._issue_tokens(user)
         await self._session.commit()
         return tokens
+
+    async def forgot_password(self, data: ForgotPasswordRequest) -> ForgotPasswordResponse:
+        email = normalize_email(str(data.email))
+        user = await self._users.get_by_email(email)
+        if (
+            user is None
+            or user.deleted_at is not None
+            or not user.is_active
+            or user.email_verified_at is None
+        ):
+            return ForgotPasswordResponse()
+
+        now = datetime.now(tz=UTC)
+        raw_token = generate_opaque_refresh_raw()
+        token_hash = hash_refresh_token(raw_token)
+        expires_at = now + timedelta(minutes=self._settings.password_reset_token_ttl_minutes)
+
+        await self._password_resets.mark_all_active_for_user_used(user.id, used_at=now)
+        await self._password_resets.create(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                used_at=None,
+            )
+        )
+
+        try:
+            await self._email.send_password_reset(
+                to_email=user.email,
+                reset_token=raw_token,
+                ttl_minutes=self._settings.password_reset_token_ttl_minutes,
+            )
+        except Exception as exc:
+            logger.warning(
+                "password_reset_email_send_failed",
+                extra={
+                    "event": "password_reset_email_send_failed",
+                    "user_id": str(user.id),
+                    "to_email_domain": user.email.split("@")[-1] if "@" in user.email else "unknown",
+                    "error_type": type(exc).__name__,
+                },
+            )
+
+        await self._session.commit()
+        return ForgotPasswordResponse()
+
+    async def reset_password(self, data: ResetPasswordRequest) -> ResetPasswordResponse:
+        now = datetime.now(tz=UTC)
+        token = await self._password_resets.get_active_by_hash(
+            hash_refresh_token(data.token.strip()),
+            now=now,
+        )
+        if token is None:
+            raise UnauthorizedError("Invalid or expired password reset token")
+
+        user = await self._users.get_by_id(token.user_id)
+        if user is None or user.deleted_at is not None or not user.is_active:
+            raise UnauthorizedError("Invalid or expired password reset token")
+
+        user.password_hash = hash_password(data.new_password)
+        await self._password_resets.mark_used(token.id, used_at=now)
+        await self._password_resets.mark_all_active_for_user_used(user.id, used_at=now)
+        await self._refresh.revoke_all_for_user(user.id)
+        await self._session.commit()
+        return ResetPasswordResponse()
 
     async def refresh(self, data: RefreshRequest) -> TokenResponse:
         token_hash = hash_refresh_token(data.refresh_token)
