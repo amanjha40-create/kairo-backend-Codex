@@ -6,7 +6,6 @@ import pytest
 
 from app.exceptions import ConflictError
 from app.models.verification_request import VerificationRequest
-from app.repositories.verification_request import VerificationRequestRepository
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
     VerificationRequestEventSource,

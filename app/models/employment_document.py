@@ -16,7 +16,6 @@ from app.db.pg_enums import document_extraction_status_enum, employment_document
 from app.employment.enums import (
     DocumentExtractionStatus,
     DocumentVerificationStatus,
-    EmploymentDocumentType,
 )
 
 if TYPE_CHECKING:
@@ -77,4 +76,3 @@ class EmploymentDocument(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, B
 
     def __repr__(self) -> str:
         return f"EmploymentDocument(id={self.id}, type={self.document_type!r})"
-

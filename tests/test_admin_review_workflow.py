@@ -17,7 +17,6 @@ from app.admin_review.enums import (
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_admin_review_service
 from app.main import app
-from app.schemas.pagination import ListQueryParams
 from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDetailResponse,

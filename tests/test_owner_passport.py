@@ -18,7 +18,6 @@ from app.schemas.passport_engine import (
     PassportSharingSummary,
     PassportVerificationSummary,
 )
-from app.schemas.public_passport import PublicPassportProfile, PublicPassportShareMetadata, PublicPassportVault
 from app.schemas.public_passport import (
     PublicPassportCertification,
     PublicPassportDocument,
@@ -29,8 +28,8 @@ from app.schemas.public_passport import (
     PublicPassportInternship,
     PublicPassportPortfolioItem,
     PublicPassportUserDocument,
+    PublicPassportVault,
 )
-from app.schemas.passport_share import PassportSharePermissions
 from app.schemas.trust_score import TrustScoreComponentBreakdown, TrustScoreResponse
 from app.schemas.user import UserPublic
 

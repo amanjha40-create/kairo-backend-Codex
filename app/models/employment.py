@@ -18,7 +18,6 @@ from app.employment.enums import EmploymentType, VerificationMethod, Verificatio
 if TYPE_CHECKING:
     from app.models.employer_verification_request import EmployerVerificationRequest
     from app.models.employment_document import EmploymentDocument
-    from app.models.user import User
     from app.models.verification_audit import VerificationAuditEvent
 
 
@@ -106,4 +105,3 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     def __repr__(self) -> str:
         return f"Employment(id={self.id}, status={self.verification_status!r})"
-
