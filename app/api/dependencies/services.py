@@ -23,6 +23,7 @@ from app.services import (
     PassportShareViewService,
     PublicPassportService,
     TrustScoreService,
+    TrustInvitationService,
     UserService,
     VerificationQueueService,
     VerificationService,
@@ -110,6 +111,13 @@ def get_trust_score_service(session: AsyncSession = Depends(get_session)) -> Tru
 
 def get_organization_service(session: AsyncSession = Depends(get_session)) -> OrganizationService:
     return OrganizationService(session)
+
+
+def get_trust_invitation_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TrustInvitationService:
+    return TrustInvitationService(session, settings)
 
 
 def get_passport_share_service(

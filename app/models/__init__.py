@@ -21,6 +21,7 @@ from app.models.employment_document import EmploymentDocument
 from app.models.pending_signup import PendingSignup
 from app.models.profile_view import ProfileView
 from app.models.refresh_token import RefreshToken
+from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
@@ -48,6 +49,7 @@ __all__ = [
     "ProfileView",
     "PortfolioItem",
     "RefreshToken",
+    "TrustInvitation",
     "User",
     "UserDocument",
     "UserSocialAccount",

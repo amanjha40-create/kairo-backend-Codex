@@ -10,6 +10,7 @@ from app.repositories.password_reset_token import PasswordResetTokenRepository
 from app.repositories.passport_share import PassportShareRepository
 from app.repositories.passport_share_view import PassportShareViewRepository
 from app.repositories.refresh_token import RefreshTokenRepository
+from app.repositories.trust_invitation import TrustInvitationRepository
 from app.repositories.user import UserRepository
 from app.repositories.verification import VerificationRepository
 from app.repositories.verification_audit import VerificationAuditRepository
@@ -27,6 +28,7 @@ __all__ = [
     "PassportShareViewRepository",
     "RefreshTokenRepository",
     "SortOrder",
+    "TrustInvitationRepository",
     "UserRepository",
     "VerificationAuditRepository",
     "VerificationRepository",

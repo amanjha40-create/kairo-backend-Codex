@@ -16,6 +16,7 @@ from app.employment.enums import (
     VerificationStatus,
 )
 from app.organization.enums import OrganizationRole, OrganizationType
+from app.trust_invitations.enums import TrustInvitationStatus
 
 verification_status_enum = ENUM(
     *[m.value for m in VerificationStatus],
@@ -62,6 +63,13 @@ organization_type_enum = ENUM(
 organization_role_enum = ENUM(
     *[m.value for m in OrganizationRole],
     name="organization_role_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+trust_invitation_status_enum = ENUM(
+    *[m.value for m in TrustInvitationStatus],
+    name="trust_invitation_status_enum",
     metadata=Base.metadata,
     create_type=False,
 )
