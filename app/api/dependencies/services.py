@@ -17,6 +17,7 @@ from app.services import (
     EmployerVerificationService,
     EmploymentDocumentService,
     EmploymentService,
+    OrganizationService,
     PassportEngineService,
     PassportShareService,
     PassportShareViewService,
@@ -105,6 +106,10 @@ def get_education_service(
 
 def get_trust_score_service(session: AsyncSession = Depends(get_session)) -> TrustScoreService:
     return TrustScoreService(session)
+
+
+def get_organization_service(session: AsyncSession = Depends(get_session)) -> OrganizationService:
+    return OrganizationService(session)
 
 
 def get_passport_share_service(

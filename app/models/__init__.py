@@ -8,6 +8,8 @@ from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
+from app.models.organization import Organization
+from app.models.organization_member import OrganizationMember
 from app.models.passport_share_link import PassportShareLink
 from app.models.passport_share_view import PassportShareView
 from app.models.password_reset_token import PasswordResetToken
@@ -37,6 +39,8 @@ __all__ = [
     "GigPlatform",
     "Internship",
     "InternshipDocument",
+    "Organization",
+    "OrganizationMember",
     "PassportShareLink",
     "PassportShareView",
     "PasswordResetToken",

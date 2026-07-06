@@ -15,6 +15,7 @@ from app.employment.enums import (
     VerificationAuditAction,
     VerificationStatus,
 )
+from app.organization.enums import OrganizationRole, OrganizationType
 
 verification_status_enum = ENUM(
     *[m.value for m in VerificationStatus],
@@ -47,6 +48,20 @@ document_extraction_status_enum = ENUM(
 verification_audit_action_enum = ENUM(
     *[m.value for m in VerificationAuditAction],
     name="verification_audit_action_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_type_enum = ENUM(
+    *[m.value for m in OrganizationType],
+    name="organization_type_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_role_enum = ENUM(
+    *[m.value for m in OrganizationRole],
+    name="organization_role_enum",
     metadata=Base.metadata,
     create_type=False,
 )

@@ -21,6 +21,7 @@ from app.api.v1.routes import (
     health,
     internships,
     onboarding,
+    organizations,
     passport,
     passport_shares,
     portfolio,
@@ -40,6 +41,7 @@ api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
+api_router.include_router(organizations.router)
 api_router.include_router(employments.router)
 api_router.include_router(employer_verification.router)
 api_router.include_router(public_employer_verification.router)
