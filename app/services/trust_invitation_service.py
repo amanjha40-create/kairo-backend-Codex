@@ -14,6 +14,7 @@ from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.trust_invitation import TrustInvitation
 from app.organization.enums import OrganizationRole
 from app.repositories.trust_invitation import TrustInvitationRepository
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
     TrustInvitationCreateRequest,
@@ -67,10 +68,20 @@ class TrustInvitationService:
         self,
         actor_user_id: UUID,
         org_public_id: UUID,
-    ) -> list[TrustInvitationResponse]:
+        params: ListQueryParams | None = None,
+    ) -> list[TrustInvitationResponse] | Page[TrustInvitationResponse]:
         organization, _ = await self._organizations.require_org_member(actor_user_id, org_public_id)
         invitations = await self._repo.list_for_organization(organization.id)
-        return [self._to_response(invitation) for invitation in invitations]
+        responses = [self._to_response(invitation) for invitation in invitations]
+        if params is None:
+            return responses
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=("subject_name", "subject_email", "status"),
+            allowed_sort_fields=("created_at", "updated_at", "expires_at", "subject_name", "subject_email", "status"),
+            default_sort_by="created_at",
+        )
 
     async def get_public_by_token(self, raw_token: str) -> TrustInvitationPublicLookupResponse:
         invitation = await self._resolve_active_token(raw_token)

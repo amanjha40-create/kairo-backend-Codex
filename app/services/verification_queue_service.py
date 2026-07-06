@@ -23,7 +23,7 @@ from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
 from app.repositories.verification import VerificationRepository
 from app.schemas.employment import EmploymentPublic
-from app.schemas.pagination import Page
+from app.schemas.pagination import Page, PageParams
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +77,10 @@ class VerificationQueueService:
             created_after=created_after,
             created_before=created_before,
         )
-        return Page(
+        return Page[EmploymentPublic].create(
             items=[EmploymentPublic.model_validate(r) for r in rows],
             total=total,
-            offset=offset,
-            limit=limit,
+            params=PageParams(offset=offset, limit=limit),
         )
 
     async def list_pending_verifications(
@@ -104,11 +103,10 @@ class VerificationQueueService:
             submitted_after=submitted_after,
             submitted_before=submitted_before,
         )
-        return Page(
+        return Page[EmploymentPublic].create(
             items=[EmploymentPublic.model_validate(r) for r in rows],
             total=total,
-            offset=offset,
-            limit=limit,
+            params=PageParams(offset=offset, limit=limit),
         )
 
     async def get_timeline_for_viewer(
@@ -133,7 +131,11 @@ class VerificationQueueService:
             limit=limit,
         )
         items = [from_audit_row(r) for r in rows]
-        return Page(items=items, total=total, offset=offset, limit=limit)
+        return Page[VerificationTimelineEvent].create(
+            items=items,
+            total=total,
+            params=PageParams(offset=offset, limit=limit),
+        )
 
     async def prepare_ai_extraction_pipeline(
         self,

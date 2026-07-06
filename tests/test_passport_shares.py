@@ -87,6 +87,9 @@ async def test_list_passport_shares_omits_share_url() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 1
+    assert body["page"] == 1
+    assert body["page_size"] == 20
+    assert body["total_pages"] == 1
     assert "share_url" not in body["items"][0]
 
 

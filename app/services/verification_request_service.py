@@ -20,6 +20,7 @@ from app.repositories.user_document import UserDocumentRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
     VerificationRequestActionPayload,
@@ -149,18 +150,29 @@ class VerificationRequestService:
             raise NotFoundError("Verification request not found")
         return self._to_response(refreshed)
 
-    async def list_mine(self, actor_user_id: UUID) -> list[VerificationRequestResponse]:
+    async def list_mine(
+        self,
+        actor_user_id: UUID,
+        params: ListQueryParams | None = None,
+    ) -> list[VerificationRequestResponse] | Page[VerificationRequestResponse]:
         items = await self._requests.list_for_subject(actor_user_id)
-        return [self._to_response(item) for item in items]
+        responses = [self._to_response(item) for item in items]
+        if params is None:
+            return responses
+        return self._filter_request_responses(responses, params)
 
     async def list_for_organization(
         self,
         actor_user_id: UUID,
         organization_public_id: UUID,
-    ) -> list[VerificationRequestResponse]:
+        params: ListQueryParams | None = None,
+    ) -> list[VerificationRequestResponse] | Page[VerificationRequestResponse]:
         organization = await self._require_organization_member(actor_user_id, organization_public_id)
         items = await self._requests.list_for_organization(organization.id)
-        return [self._to_response(item) for item in items]
+        responses = [self._to_response(item) for item in items]
+        if params is None:
+            return responses
+        return self._filter_request_responses(responses, params)
 
     async def get_detail(
         self,
@@ -210,10 +222,20 @@ class VerificationRequestService:
         actor_user_id: UUID,
         actor_email: str,
         verification_request_public_id: UUID,
-    ) -> list[VerificationRequestEvidenceResponse]:
+        params: ListQueryParams | None = None,
+    ) -> list[VerificationRequestEvidenceResponse] | Page[VerificationRequestEvidenceResponse]:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
         items = await self._evidence.list_for_request(request.id)
-        return [self._to_evidence_response(item) for item in items]
+        responses = [self._to_evidence_response(item) for item in items]
+        if params is None:
+            return responses
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=("evidence_type", "field_key", "status"),
+            allowed_sort_fields=("created_at", "updated_at", "evidence_type", "field_key", "status"),
+            default_sort_by="created_at",
+        )
 
     async def add_evidence(
         self,
@@ -332,11 +354,21 @@ class VerificationRequestService:
         actor_user_id: UUID,
         actor_email: str,
         verification_request_public_id: UUID,
-    ) -> list[VerificationRequestCorrectionResponse]:
+        params: ListQueryParams | None = None,
+    ) -> list[VerificationRequestCorrectionResponse] | Page[VerificationRequestCorrectionResponse]:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
         review_ids = [review.id for review in await self._reviews.list_reviews_for_request(request.id)]
         corrections = await self._reviews.list_open_corrections_for_request(review_ids)
-        return [self._to_correction_response(item) for item in corrections]
+        responses = [self._to_correction_response(item) for item in corrections]
+        if params is None:
+            return responses
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=("field_key", "request_text", "status"),
+            allowed_sort_fields=("created_at", "updated_at", "field_key", "status"),
+            default_sort_by="created_at",
+        )
 
     async def resubmit(
         self,
@@ -468,6 +500,7 @@ class VerificationRequestService:
         actor_user_id: UUID,
         actor_email: str,
         verification_request_public_id: UUID,
+        params: ListQueryParams | None = None,
     ) -> VerificationRequestTimelineResponse:
         request = await self._get_accessible_request(
             actor_user_id=actor_user_id,
@@ -475,20 +508,39 @@ class VerificationRequestService:
             verification_request_public_id=verification_request_public_id,
         )
         rows = await self._requests.list_timeline(request.id)
+        timeline_items = [
+            VerificationRequestTimelineEventResponse(
+                public_id=row.public_id,
+                event_type=row.event_type,
+                event_source=row.event_source,
+                previous_status=row.previous_status,
+                new_status=row.new_status,
+                metadata=row.metadata_payload,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+        effective_params = params or ListQueryParams()
+        page = filter_sort_paginate(
+            timeline_items,
+            params=effective_params,
+            search_fields=("event_type", "event_source"),
+            status_field=None,
+            allowed_sort_fields=("created_at", "event_type"),
+            default_sort_by="created_at",
+            force_page_envelope=True,
+        )
+        if not isinstance(page, Page):
+            raise RuntimeError("Timeline pagination must return a page envelope")
         return VerificationRequestTimelineResponse(
             verification_request_public_id=request.public_id,
-            items=[
-                VerificationRequestTimelineEventResponse(
-                    public_id=row.public_id,
-                    event_type=row.event_type,
-                    event_source=row.event_source,
-                    previous_status=row.previous_status,
-                    new_status=row.new_status,
-                    metadata=row.metadata_payload,
-                    created_at=row.created_at,
-                )
-                for row in rows
-            ],
+            items=page.items,
+            total=page.total,
+            page=page.page,
+            page_size=page.page_size,
+            total_pages=page.total_pages,
+            offset=page.offset,
+            limit=page.limit,
         )
 
     async def _commit_and_reload(self, request_public_id: UUID) -> VerificationRequestResponse:
@@ -676,6 +728,33 @@ class VerificationRequestService:
             status=correction.status,
             created_at=correction.created_at,
             updated_at=correction.updated_at,
+        )
+
+    def _filter_request_responses(
+        self,
+        responses: list[VerificationRequestResponse],
+        params: ListQueryParams,
+    ) -> list[VerificationRequestResponse] | Page[VerificationRequestResponse]:
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=(
+                "subject_name",
+                "subject_email",
+                "request_type",
+                "status",
+                "target_organization_name",
+                "target_organization_email",
+            ),
+            allowed_sort_fields=(
+                "created_at",
+                "updated_at",
+                "subject_name",
+                "subject_email",
+                "request_type",
+                "status",
+            ),
+            default_sort_by="created_at",
         )
 
     def _merge_note_metadata(self, payload: VerificationRequestActionPayload) -> dict[str, object]:

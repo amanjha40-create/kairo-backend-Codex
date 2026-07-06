@@ -12,6 +12,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_trust_invitation_service
 from app.exceptions import ForbiddenError, NotFoundError
 from app.main import app
+from app.schemas.pagination import filter_sort_paginate
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
     TrustInvitationCreateResponse,
@@ -49,10 +50,19 @@ class FakeTrustInvitationService:
             invitation_url="https://api.example.com/api/v1/trust-invitations/raw-token",
         )
 
-    async def list_for_organization(self, actor_user_id, org_public_id):  # noqa: ANN001
+    async def list_for_organization(self, actor_user_id, org_public_id, params=None):  # noqa: ANN001
         if org_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
             raise NotFoundError("Organization not found")
-        return [self._response(), self._response(TrustInvitationStatus.ACCEPTED)]
+        items = [self._response(), self._response(TrustInvitationStatus.ACCEPTED)]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("subject_name", "subject_email", "status"),
+                allowed_sort_fields=("created_at", "updated_at", "expires_at", "subject_name", "subject_email", "status"),
+                default_sort_by="created_at",
+            )
+        return items
 
     async def get_public_by_token(self, raw_token: str) -> TrustInvitationPublicLookupResponse:
         if raw_token in {"unknown-token", "accepted-token", "expired-token", "cancelled-token"}:
@@ -130,6 +140,25 @@ async def test_list_trust_invitations_omits_url() -> None:
     body = response.json()
     assert len(body) == 2
     assert "invitation_url" not in body[0]
+
+
+@pytest.mark.asyncio
+async def test_list_trust_invitations_supports_paginated_mode() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/organizations/{org_public_id}/trust-invitations?paginate=true&page=1&page_size=1"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert len(body["items"]) == 1
 
 
 @pytest.mark.asyncio

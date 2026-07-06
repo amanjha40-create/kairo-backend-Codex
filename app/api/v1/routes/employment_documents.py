@@ -93,4 +93,4 @@ async def list_documents(
     svc: Annotated[EmploymentDocumentService, Depends(get_employment_document_service)],
 ) -> Page[EmploymentDocumentPublic]:
     items, total = await svc.list_for_employment_owned(current.id, employment_id, offset=page.offset, limit=page.limit)
-    return Page(items=items, total=total, offset=page.offset, limit=page.limit)
+    return Page[EmploymentDocumentPublic].create(items=items, total=total, params=page)

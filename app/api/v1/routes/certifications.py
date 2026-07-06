@@ -31,9 +31,10 @@ async def list_certifications(
     svc: Annotated[CertificationService, Depends(get_certification_service)],
 ) -> Page[CertificationResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[CertificationResponse](
+    return Page[CertificationResponse].create(
         items=[CertificationResponse.model_validate(i) for i in items],
-        total=total, offset=page.offset, limit=page.limit,
+        total=total,
+        params=page,
     )
 
 

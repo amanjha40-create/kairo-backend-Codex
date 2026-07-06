@@ -145,3 +145,9 @@ class VerificationRequestTimelineEventResponse(BaseModel):
 class VerificationRequestTimelineResponse(BaseModel):
     verification_request_public_id: UUID
     items: list[VerificationRequestTimelineEventResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    offset: int
+    limit: int

@@ -35,11 +35,10 @@ async def list_my_educations(
     svc: Annotated[EducationService, Depends(get_education_service)],
 ) -> Page[EducationResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[EducationResponse](
+    return Page[EducationResponse].create(
         items=[EducationResponse.model_validate(e) for e in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 
@@ -109,11 +108,10 @@ async def list_education_documents(
     items, total = await svc.list_documents(
         current.id, education_id, offset=page.offset, limit=page.limit,
     )
-    return Page[EducationDocumentResponse](
+    return Page[EducationDocumentResponse].create(
         items=[EducationDocumentResponse.model_validate(d) for d in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

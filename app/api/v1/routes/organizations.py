@@ -16,6 +16,7 @@ from app.schemas.organization import (
     OrganizationMemberUpdateRequest,
     OrganizationResponse,
 )
+from app.schemas.pagination import ListQueryParams, Page
 from app.services.organization_service import OrganizationService
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -30,12 +31,13 @@ async def create_organization(
     return await svc.create_organization(current.id, payload)
 
 
-@router.get("/me", response_model=list[OrganizationResponse])
+@router.get("/me", response_model=Page[OrganizationResponse] | list[OrganizationResponse])
 async def list_my_organizations(
+    params: Annotated[ListQueryParams, Depends()],
     current: Annotated[CurrentUser, Depends(get_current_user)],
     svc: Annotated[OrganizationService, Depends(get_organization_service)],
-) -> list[OrganizationResponse]:
-    return await svc.list_my_organizations(current.id)
+) -> Page[OrganizationResponse] | list[OrganizationResponse]:
+    return await svc.list_my_organizations(current.id, params)
 
 
 @router.get("/{org_public_id}", response_model=OrganizationResponse)
@@ -57,13 +59,14 @@ async def add_organization_member(
     return await svc.add_member(current.id, org_public_id, payload)
 
 
-@router.get("/{org_public_id}/members", response_model=list[OrganizationMemberResponse])
+@router.get("/{org_public_id}/members", response_model=Page[OrganizationMemberResponse] | list[OrganizationMemberResponse])
 async def list_organization_members(
     org_public_id: UUID,
+    params: Annotated[ListQueryParams, Depends()],
     current: Annotated[CurrentUser, Depends(get_current_user)],
     svc: Annotated[OrganizationService, Depends(get_organization_service)],
-) -> list[OrganizationMemberResponse]:
-    return await svc.list_members(current.id, org_public_id)
+) -> Page[OrganizationMemberResponse] | list[OrganizationMemberResponse]:
+    return await svc.list_members(current.id, org_public_id, params)
 
 
 @router.patch("/{org_public_id}/members/{member_public_id}", response_model=OrganizationMemberResponse)

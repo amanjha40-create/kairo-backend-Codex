@@ -17,6 +17,7 @@ from app.admin_review.enums import (
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_admin_review_service
 from app.main import app
+from app.schemas.pagination import ListQueryParams
 from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDetailResponse,
@@ -114,8 +115,16 @@ class FakeVerificationRequestAdminReviewService:
             updated_at=self._now,
         )
 
-    async def get_queue(self) -> AdminReviewQueueResponse:
-        return AdminReviewQueueResponse(items=[self._request_response()])
+    async def get_queue(self, params=None) -> AdminReviewQueueResponse:
+        return AdminReviewQueueResponse(
+            items=[self._request_response()],
+            total=1,
+            page=1,
+            page_size=1,
+            total_pages=1,
+            offset=0,
+            limit=1,
+        )
 
     async def get_detail(self, verification_request_public_id):  # noqa: ANN001
         return AdminReviewDetailResponse(
@@ -154,7 +163,7 @@ class FakeVerificationRequestAdminReviewService:
     async def resolve_organization(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE)
 
-    async def get_timeline(self, verification_request_public_id):  # noqa: ANN001
+    async def get_timeline(self, verification_request_public_id, params=None):  # noqa: ANN001
         return AdminReviewTimelineResponse(
             timeline=VerificationRequestTimelineResponse(
                 verification_request_public_id=self._request_public_id,
@@ -169,6 +178,12 @@ class FakeVerificationRequestAdminReviewService:
                         created_at=self._now,
                     )
                 ],
+                total=1,
+                page=1,
+                page_size=1,
+                total_pages=1,
+                offset=0,
+                limit=1,
             )
         )
 
@@ -198,6 +213,7 @@ async def test_admin_review_queue_is_available_to_hr() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert len(response.json()["items"]) == 1
+    assert response.json()["total"] == 1
 
 
 @pytest.mark.asyncio

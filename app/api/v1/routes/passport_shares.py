@@ -39,11 +39,10 @@ async def list_passport_shares(
     svc: Annotated[PassportShareService, Depends(get_passport_share_service)],
 ) -> Page[PassportShareResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[PassportShareResponse](
+    return Page[PassportShareResponse].create(
         items=items,
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

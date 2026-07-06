@@ -30,11 +30,10 @@ async def list_my_user_documents(
     svc: Annotated[UserDocumentService, Depends(get_user_document_service)],
 ) -> Page[UserDocumentResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
-    return Page[UserDocumentResponse](
+    return Page[UserDocumentResponse].create(
         items=[UserDocumentResponse.model_validate(d) for d in items],
         total=total,
-        offset=page.offset,
-        limit=page.limit,
+        params=page,
     )
 
 

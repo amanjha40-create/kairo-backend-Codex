@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_trust_invitation_service
+from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
     TrustInvitationCreateRequest,
@@ -33,13 +34,14 @@ async def create_trust_invitation(
     return await svc.create(current.id, org_public_id, payload)
 
 
-@org_router.get("", response_model=list[TrustInvitationResponse])
+@org_router.get("", response_model=Page[TrustInvitationResponse] | list[TrustInvitationResponse])
 async def list_trust_invitations(
     org_public_id: UUID,
+    params: Annotated[ListQueryParams, Depends()],
     current: Annotated[CurrentUser, Depends(get_current_user)],
     svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
-) -> list[TrustInvitationResponse]:
-    return await svc.list_for_organization(current.id, org_public_id)
+) -> Page[TrustInvitationResponse] | list[TrustInvitationResponse]:
+    return await svc.list_for_organization(current.id, org_public_id, params)
 
 
 @router.get("/trust-invitations/{token}", response_model=TrustInvitationPublicLookupResponse)

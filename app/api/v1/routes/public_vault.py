@@ -10,12 +10,13 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
+from app.exceptions import NotFoundError
 from app.models import User
 from app.models.employment import Employment
 from app.models.employment_document import EmploymentDocument
@@ -104,7 +105,7 @@ async def _resolve_user(slug: str, session: AsyncSession) -> User:
     )
     user = (await session.execute(stmt)).scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+        raise NotFoundError("Profile not found")
     return user
 
 
