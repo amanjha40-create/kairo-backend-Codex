@@ -90,3 +90,42 @@ async def test_invalid_transition_is_rejected() -> None:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata={},
         )
+
+
+@pytest.mark.asyncio
+async def test_admin_review_transition_is_allowed() -> None:
+    repo = FakeVerificationRequestRepository()
+    workflow = VerificationRequestWorkflowService(repo)  # type: ignore[arg-type]
+    request = _build_request(VerificationRequestStatus.PENDING_ADMIN_REVIEW)
+
+    event = await workflow.transition(
+        request,
+        target_status=VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+        actor_user_id=None,
+        event_type="verification_request_corrections_requested",
+        event_source=VerificationRequestEventSource.ADMIN,
+        metadata={"field_key": "employment.start_date"},
+    )
+
+    assert request.status == VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS
+    assert event.previous_status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+    assert event.new_status == VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS
+
+
+@pytest.mark.asyncio
+async def test_record_action_preserves_status() -> None:
+    repo = FakeVerificationRequestRepository()
+    workflow = VerificationRequestWorkflowService(repo)  # type: ignore[arg-type]
+    request = _build_request(VerificationRequestStatus.PENDING_ADMIN_REVIEW)
+
+    event = await workflow.record_action(
+        request,
+        actor_user_id=None,
+        event_type="verification_request_review_assigned",
+        event_source=VerificationRequestEventSource.ADMIN,
+        metadata={"review_round": 1},
+    )
+
+    assert request.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+    assert event.previous_status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+    assert event.new_status == VerificationRequestStatus.PENDING_ADMIN_REVIEW

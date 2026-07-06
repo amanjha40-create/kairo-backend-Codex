@@ -45,6 +45,32 @@ class VerificationRequestRepository:
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
 
+    async def list_for_subject(self, subject_user_id: UUID) -> list[VerificationRequest]:
+        stmt = (
+            select(VerificationRequest)
+            .options(
+                joinedload(VerificationRequest.organization),
+                joinedload(VerificationRequest.trust_invitation),
+            )
+            .where(VerificationRequest.subject_user_id == subject_user_id)
+            .order_by(VerificationRequest.created_at.desc())
+        )
+        rows = await self._session.execute(stmt)
+        return list(rows.scalars().all())
+
+    async def list_by_status(self, statuses: list[str]) -> list[VerificationRequest]:
+        stmt = (
+            select(VerificationRequest)
+            .options(
+                joinedload(VerificationRequest.organization),
+                joinedload(VerificationRequest.trust_invitation),
+            )
+            .where(VerificationRequest.status.in_(statuses))
+            .order_by(VerificationRequest.created_at.asc())
+        )
+        rows = await self._session.execute(stmt)
+        return list(rows.scalars().all())
+
     async def append_event(self, event: VerificationRequestEvent) -> VerificationRequestEvent:
         self._session.add(event)
         await self._session.flush()

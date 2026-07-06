@@ -12,7 +12,9 @@ from app.repositories.passport_share_view import PassportShareViewRepository
 from app.repositories.refresh_token import RefreshTokenRepository
 from app.repositories.trust_invitation import TrustInvitationRepository
 from app.repositories.user import UserRepository
+from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request import VerificationRequestRepository
+from app.repositories.verification_request_review import VerificationRequestReviewRepository
 from app.repositories.verification import VerificationRepository
 from app.repositories.verification_audit import VerificationAuditRepository
 
@@ -31,7 +33,9 @@ __all__ = [
     "SortOrder",
     "TrustInvitationRepository",
     "UserRepository",
+    "VerificationRequestEvidenceRepository",
     "VerificationRequestRepository",
+    "VerificationRequestReviewRepository",
     "VerificationAuditRepository",
     "VerificationRepository",
 ]
