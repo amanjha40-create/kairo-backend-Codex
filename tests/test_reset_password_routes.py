@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies.services import get_auth_service
+from app.infrastructure.redis.deps import get_redis
 from app.main import app
 from app.schemas.auth import ForgotPasswordResponse, ResetPasswordResponse
 
@@ -24,10 +25,19 @@ class FakeAuthService:
         return ResetPasswordResponse()
 
 
+class FakeRedis:
+    async def eval(self, *args, **kwargs) -> int:  # noqa: ANN002, ANN003
+        return 1
+
+    async def ttl(self, *args, **kwargs) -> int:  # noqa: ANN002, ANN003
+        return 60
+
+
 @pytest.mark.asyncio
 async def test_forgot_password_returns_generic_response() -> None:
     fake = FakeAuthService()
     app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -46,6 +56,7 @@ async def test_forgot_password_returns_generic_response() -> None:
 async def test_reset_password_accepts_valid_payload() -> None:
     fake = FakeAuthService()
     app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
