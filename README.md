@@ -71,6 +71,12 @@ This repository currently supports production hardening on the existing FastAPI 
    pytest -m "not integration"
    ```
 
+   Docker Compose local development images install `requirements-dev.txt`, so the same test command also works inside the API container:
+
+   ```bash
+   docker compose exec -T api pytest -m "not integration"
+   ```
+
 6. Full stack with Compose (runs migrations then Gunicorn):
 
    ```bash
