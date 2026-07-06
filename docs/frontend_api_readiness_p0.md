@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document maps the current FastAPI backend surface to the investor-MVP frontend path.
+This document maps the current FastAPI backend surface to the current frontend integration path.
 
 Goal:
 - identify which frontend mock-backed areas can already switch to real APIs
@@ -89,7 +89,7 @@ Returned payload includes:
 - `vault`
 - `share`
 
-This is the recommended public-facing endpoint for the frontend investor demo.
+This is the recommended public-facing endpoint for Trust Passport platform readiness and frontend cutover.
 
 ## Analytics endpoint available
 
@@ -116,7 +116,7 @@ The following gaps still remain for a clean full-frontend cutover:
 3. No onboarding progress/completion breakdown endpoint.
    There is a completion flag endpoint, but no backend-authored progress meter for adaptive onboarding screens.
 
-4. No resume/KYC/DigiLocker endpoints in the current P0 path.
+4. No resume/KYC/DigiLocker endpoints in the current frontend integration path.
    These remain blockers for those specific frontend flows, but they are out of scope for this sprint.
 
 5. No QR/PDF export endpoint for Trust Passport shares.
@@ -124,7 +124,7 @@ The following gaps still remain for a clean full-frontend cutover:
 6. No delete endpoint for share links.
    Current lifecycle is create, update, list, inspect, revoke.
 
-7. No dashboard aggregation endpoint for investor-demo summary cards.
+7. No dashboard aggregation endpoint for backend-owned frontend summary cards.
 
 ## Response shape risks
 
@@ -163,7 +163,7 @@ Frontend integration should account for the following current contracts:
 7. Legacy public routes still exist:
    - `/api/v1/public/profile/{slug}`
    - `/api/v1/public/vault/{slug}`
-   These should not be the default integration path for the investor demo because `/api/v1/public/passport/{token}` is now the authoritative product contract.
+   These should not be the default integration path for frontend cutover because `/api/v1/public/passport/{token}` is now the authoritative production backend contract.
 
 8. File upload flows are two-step flows.
    Most document APIs expect:
