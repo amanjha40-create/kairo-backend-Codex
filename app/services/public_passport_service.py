@@ -52,7 +52,7 @@ class PublicPassportService:
         if permissions.show_trust_score:
             trust_score = await self._trust.calculate_trust_score(link.owner_user_id)
 
-        vault = await self._build_vault(link.owner_user_id, permissions)
+        vault = await self.build_vault_for_user(link.owner_user_id, permissions)
         return PublicPassportResponse(
             profile=PublicPassportProfile(
                 full_name=profile.full_name,
@@ -82,7 +82,7 @@ class PublicPassportService:
             raise NotFoundError("Trust Passport not found")
         return link
 
-    async def _build_vault(
+    async def build_vault_for_user(
         self,
         user_id,
         permissions: PassportSharePermissions,
