@@ -14,6 +14,7 @@ from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.schemas.organization import OrganizationMemberResponse, OrganizationResponse
+from app.schemas.pagination import Page, filter_sort_paginate
 
 
 class FakeOrganizationService:
@@ -48,8 +49,17 @@ class FakeOrganizationService:
     async def create_organization(self, actor_user_id, payload):  # noqa: ANN001
         return self._organization()
 
-    async def list_my_organizations(self, actor_user_id):  # noqa: ANN001
-        return [self._organization()]
+    async def list_my_organizations(self, actor_user_id, params=None):  # noqa: ANN001
+        items = [self._organization()]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("name", "organization_type", "my_role"),
+                allowed_sort_fields=("name", "created_at", "updated_at", "member_count"),
+                default_sort_by="created_at",
+            )
+        return items
 
     async def get_organization(self, actor_user_id, org_public_id: UUID):  # noqa: ANN001
         if org_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
@@ -63,8 +73,17 @@ class FakeOrganizationService:
             raise ForbiddenError("Only organization owners or admins can manage members")
         return self._member(payload.role)
 
-    async def list_members(self, actor_user_id, org_public_id):  # noqa: ANN001
-        return [self._member(OrganizationRole.OWNER), self._member(OrganizationRole.REVIEWER)]
+    async def list_members(self, actor_user_id, org_public_id, params=None):  # noqa: ANN001
+        items = [self._member(OrganizationRole.OWNER), self._member(OrganizationRole.REVIEWER)]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("user_email", "user_full_name", "role"),
+                allowed_sort_fields=("created_at", "updated_at", "role", "user_email", "user_full_name"),
+                default_sort_by="created_at",
+            )
+        return items
 
     async def update_member_role(self, actor_user_id, org_public_id, member_public_id: UUID, payload):  # noqa: ANN001
         if member_public_id == UUID("00000000-0000-0000-0000-00000000eeee"):
@@ -116,6 +135,23 @@ async def test_list_my_organizations_returns_memberships() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_my_organizations_supports_paginated_mode() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/organizations/me?paginate=true&page=1&page_size=10")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["page"] == 1
+    assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_add_member_returns_created_member() -> None:
     app.dependency_overrides[get_current_user] = _override_current_user
     app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
@@ -151,6 +187,26 @@ async def test_list_members_returns_memberships() -> None:
     assert len(body) == 2
     assert body[0]["role"] == "owner"
     assert body[1]["role"] == "reviewer"
+
+
+@pytest.mark.asyncio
+async def test_list_members_supports_paginated_mode() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/organizations/{org_public_id}/members?paginate=true&page=1&page_size=1"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert body["page_size"] == 1
+    assert len(body["items"]) == 1
 
 
 @pytest.mark.asyncio

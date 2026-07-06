@@ -13,6 +13,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
+from app.schemas.pagination import filter_sort_paginate
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
     VerificationRequestEvidenceResponse,
@@ -66,11 +67,29 @@ class FakeSubjectVerificationRequestService:
     async def create_subject_request(self, actor_user_id, payload):  # noqa: ANN001
         return self._request_response()
 
-    async def list_mine(self, actor_user_id):  # noqa: ANN001
-        return [self._request_response()]
+    async def list_mine(self, actor_user_id, params=None):  # noqa: ANN001
+        items = [self._request_response()]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("subject_name", "subject_email", "request_type", "status"),
+                allowed_sort_fields=("created_at", "updated_at", "subject_name", "subject_email", "request_type", "status"),
+                default_sort_by="created_at",
+            )
+        return items
 
-    async def list_evidence(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
-        return [self._evidence_response()]
+    async def list_evidence(self, actor_user_id, actor_email, verification_request_public_id, params=None):  # noqa: ANN001
+        items = [self._evidence_response()]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("evidence_type", "field_key", "status"),
+                allowed_sort_fields=("created_at", "updated_at", "evidence_type", "field_key", "status"),
+                default_sort_by="created_at",
+            )
+        return items
 
     async def add_evidence(self, actor_user_id, actor_email, verification_request_public_id, payload):  # noqa: ANN001
         return self._evidence_response()
@@ -83,8 +102,8 @@ class FakeSubjectVerificationRequestService:
             raise ConflictError("Add at least one evidence item before submitting for review")
         return self._request_response(status=VerificationRequestStatus.PENDING_ADMIN_REVIEW)
 
-    async def list_corrections(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
-        return [
+    async def list_corrections(self, actor_user_id, actor_email, verification_request_public_id, params=None):  # noqa: ANN001
+        items = [
             VerificationRequestCorrectionResponse(
                 public_id=self._correction_public_id,
                 evidence_public_id=self._evidence_public_id,
@@ -96,6 +115,15 @@ class FakeSubjectVerificationRequestService:
                 updated_at=self._now,
             )
         ]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("field_key", "request_text", "status"),
+                allowed_sort_fields=("created_at", "updated_at", "field_key", "status"),
+                default_sort_by="created_at",
+            )
+        return items
 
     async def resubmit(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
         if verification_request_public_id == UUID("00000000-0000-0000-0000-00000000bbbb"):
@@ -165,6 +193,21 @@ async def test_list_my_verification_requests() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_my_verification_requests_supports_paginated_mode() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeSubjectVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/verification-requests/me?paginate=true&page=1&page_size=10")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert len(response.json()["items"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_add_evidence() -> None:
     app.dependency_overrides[get_current_user] = _override_current_user
     app.dependency_overrides[get_verification_request_service] = lambda: FakeSubjectVerificationRequestService()
@@ -227,6 +270,24 @@ async def test_list_corrections() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()[0]["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_list_corrections_supports_paginated_mode() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeSubjectVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/verification-requests/{request_public_id}/corrections?paginate=true&page=1&page_size=10"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["status"] == "open"
 
 
 @pytest.mark.asyncio

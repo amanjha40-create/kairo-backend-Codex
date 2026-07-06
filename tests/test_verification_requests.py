@@ -12,6 +12,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
+from app.schemas.pagination import filter_sort_paginate
 from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
@@ -53,10 +54,24 @@ class FakeVerificationRequestService:
     async def create(self, actor_user_id, organization_public_id, payload):  # noqa: ANN001
         return self._response()
 
-    async def list_for_organization(self, actor_user_id, organization_public_id):  # noqa: ANN001
+    async def list_for_organization(self, actor_user_id, organization_public_id, params=None):  # noqa: ANN001
         if organization_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
             raise NotFoundError("Organization not found")
-        return [self._response(), self._response(VerificationRequestStatus.ACCEPTED)]
+        items = [self._response(), self._response(VerificationRequestStatus.ACCEPTED)]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=(
+                    "subject_name",
+                    "subject_email",
+                    "request_type",
+                    "status",
+                ),
+                allowed_sort_fields=("created_at", "updated_at", "subject_name", "subject_email", "request_type", "status"),
+                default_sort_by="created_at",
+            )
+        return items
 
     async def get_detail(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
         if verification_request_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
@@ -86,7 +101,7 @@ class FakeVerificationRequestService:
     async def cancel(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._response(VerificationRequestStatus.CANCELLED)
 
-    async def get_timeline(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
+    async def get_timeline(self, actor_user_id, actor_email, verification_request_public_id, params=None):  # noqa: ANN001
         return VerificationRequestTimelineResponse(
             verification_request_public_id=self._request_public_id,
             items=[
@@ -109,6 +124,12 @@ class FakeVerificationRequestService:
                     created_at=self._now,
                 ),
             ],
+            total=2,
+            page=1,
+            page_size=2,
+            total_pages=1,
+            offset=0,
+            limit=2,
         )
 
 
@@ -159,6 +180,24 @@ async def test_list_verification_requests_returns_items() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert len(response.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_verification_requests_supports_paginated_mode() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/organizations/{org_public_id}/verification-requests?paginate=true&page=1&page_size=1"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+    assert len(response.json()["items"]) == 1
 
 
 @pytest.mark.asyncio
@@ -301,3 +340,4 @@ async def test_subject_can_view_own_timeline() -> None:
     body = response.json()
     assert len(body["items"]) == 2
     assert body["items"][0]["event_type"] == "verification_request_created"
+    assert body["total"] == 2
