@@ -9,6 +9,7 @@ import pytest
 from app.config import Settings
 from app.schemas.email_delivery import EmailSendJobPayload, RenderedEmailMessage
 from app.services.job_dispatcher import JobDispatcher
+from app.workers.registry import registered_types
 
 
 def _settings(**overrides: object) -> Settings:
@@ -18,6 +19,10 @@ def _settings(**overrides: object) -> Settings:
     }
     base.update(overrides)
     return Settings(**base)
+
+
+def test_job_dispatcher_import_registers_email_handler() -> None:
+    assert "email.send" in registered_types()
 
 
 class FakeSession:

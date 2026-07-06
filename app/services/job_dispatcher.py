@@ -14,6 +14,8 @@ from app.infrastructure.sqs import SqsJobEnvelope, send_json_message
 from app.schemas.email_delivery import EmailSendJobPayload
 from app.workers.registry import HandlerFn, get_handler
 
+import app.workers.handlers  # noqa: F401 - ensure handler registration for inline dispatch
+
 
 AsyncSessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 PublisherFn = Callable[[SqsJobEnvelope], Awaitable[str]]
