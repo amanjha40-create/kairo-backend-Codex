@@ -8,8 +8,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
+    VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
 )
@@ -40,16 +42,92 @@ class VerificationRequestActionPayload(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SubjectVerificationRequestCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    organization_public_id: UUID | None = None
+    target_organization_name: str | None = Field(default=None, min_length=1, max_length=255)
+    target_organization_email: EmailStr | None = None
+    request_type: VerificationRequestType
+    due_date: date | None = None
+    trust_context: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "SubjectVerificationRequestCreateRequest":
+        if (
+            self.organization_public_id is None
+            and self.target_organization_name is None
+            and self.target_organization_email is None
+        ):
+            raise ValueError("Provide organization_public_id or target organization details")
+        return self
+
+
+class VerificationRequestEvidenceCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    evidence_type: str = Field(min_length=1, max_length=64)
+    field_key: str = Field(min_length=1, max_length=128)
+    document_id: UUID | None = None
+    value: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "VerificationRequestEvidenceCreateRequest":
+        if self.document_id is None and self.value is None:
+            raise ValueError("Provide document_id or value")
+        return self
+
+
+class VerificationRequestEvidenceUpdateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    evidence_type: str | None = Field(default=None, min_length=1, max_length=64)
+    field_key: str | None = Field(default=None, min_length=1, max_length=128)
+    document_id: UUID | None = None
+    value: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "VerificationRequestEvidenceUpdateRequest":
+        if self.evidence_type is None and self.field_key is None and self.document_id is None and self.value is None:
+            raise ValueError("Provide at least one field to update")
+        return self
+
+
 class VerificationRequestResponse(BaseModel):
     public_id: UUID
-    organization_public_id: UUID
+    origin_type: VerificationRequestOriginType | None = None
+    organization_public_id: UUID | None = None
     trust_invitation_public_id: UUID | None
     subject_name: str
     subject_email: EmailStr
+    target_organization_name: str | None = None
+    target_organization_email: EmailStr | None = None
     request_type: VerificationRequestType
     status: VerificationRequestStatus
     due_date: date | None
     trust_context: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class VerificationRequestEvidenceResponse(BaseModel):
+    public_id: UUID
+    evidence_type: str
+    field_key: str
+    document_id: UUID | None
+    value: dict[str, Any] | None
+    status: VerificationRequestEvidenceStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class VerificationRequestCorrectionResponse(BaseModel):
+    public_id: UUID
+    evidence_public_id: UUID | None
+    field_key: str
+    request_text: str
+    guidance: dict[str, Any]
+    status: VerificationReviewCorrectionStatus
     created_at: datetime
     updated_at: datetime
 

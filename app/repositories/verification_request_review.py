@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.admin_review.enums import VerificationReviewCorrectionStatus
 from app.models.verification_request_review import VerificationRequestReview
@@ -67,6 +68,7 @@ class VerificationRequestReviewRepository:
     ) -> list[VerificationReviewCorrection]:
         stmt = (
             select(VerificationReviewCorrection)
+            .options(joinedload(VerificationReviewCorrection.evidence_item))
             .where(VerificationReviewCorrection.verification_request_review_id == verification_request_review_id)
             .order_by(VerificationReviewCorrection.created_at.asc())
         )
@@ -81,6 +83,7 @@ class VerificationRequestReviewRepository:
             return []
         stmt = (
             select(VerificationReviewCorrection)
+            .options(joinedload(VerificationReviewCorrection.evidence_item))
             .where(
                 VerificationReviewCorrection.verification_request_review_id.in_(verification_request_review_ids),
                 VerificationReviewCorrection.status == VerificationReviewCorrectionStatus.OPEN,
