@@ -58,6 +58,35 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128)
 
 
+class ForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str = "If an account exists for that email, a password reset email has been sent."
+
+
+class ResetPasswordRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    token: str = Field(..., min_length=20, max_length=512)
+    new_password: str = Field(..., min_length=12, max_length=128)
+    confirm_password: str = Field(..., min_length=12, max_length=128)
+
+    @field_validator("confirm_password")
+    @classmethod
+    def passwords_match(cls, v: str, info) -> str:
+        if "new_password" in info.data and v != info.data["new_password"]:
+            raise ValueError("Passwords do not match")
+        return v
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str = "Password reset successful."
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=10)
 

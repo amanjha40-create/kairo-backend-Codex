@@ -12,6 +12,8 @@ from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
     ChangePasswordRequest,
     ChangePasswordResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LinkProviderRequest,
     LinkProviderResponse,
     LoginRequest,
@@ -19,6 +21,8 @@ from app.schemas.auth import (
     OAuthCallbackRequest,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     SetPasswordRequest,
     SetPasswordResponse,
     SignupResendRequest,
@@ -102,6 +106,33 @@ async def login(
     auth: AuthService = Depends(get_auth_service),
 ) -> TokenResponse:
     return await auth.login(payload)
+
+
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request a password reset token",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> ForgotPasswordResponse:
+    return await auth.forgot_password(payload)
+
+
+@router.post(
+    "/reset-password",
+    response_model=ResetPasswordResponse,
+    summary="Reset password using a one-time token",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> ResetPasswordResponse:
+    return await auth.reset_password(payload)
 
 
 # ---------------------------------------------------------------------------

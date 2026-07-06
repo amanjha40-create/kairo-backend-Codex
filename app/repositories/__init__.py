@@ -5,6 +5,7 @@ from app.repositories.base import BaseRepository
 from app.repositories.criteria import EmploymentDocumentSortField, EmploymentSortField, SortOrder
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
+from app.repositories.password_reset_token import PasswordResetTokenRepository
 from app.repositories.passport_share import PassportShareRepository
 from app.repositories.passport_share_view import PassportShareViewRepository
 from app.repositories.refresh_token import RefreshTokenRepository
@@ -19,6 +20,7 @@ __all__ = [
     "EmploymentDocumentSortField",
     "EmploymentRepository",
     "EmploymentSortField",
+    "PasswordResetTokenRepository",
     "PassportShareRepository",
     "PassportShareViewRepository",
     "RefreshTokenRepository",

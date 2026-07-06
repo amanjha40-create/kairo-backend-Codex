@@ -50,6 +50,13 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
             .values(revoked_at=datetime.now(tz=UTC)),
         )
 
+    async def revoke_all_for_user(self, user_id: UUID) -> None:
+        await self._session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(tz=UTC)),
+        )
+
     async def delete_expired_before(self, cutoff: datetime) -> int:
         """Remove rows with `expires_at` strictly before `cutoff` (e.g. scheduled cleanup)."""
 

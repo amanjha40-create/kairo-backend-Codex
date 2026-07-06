@@ -167,6 +167,12 @@ class Settings(BaseSettings):
         le=168,
         validation_alias=AliasChoices("SIGNUP_PENDING_TTL_HOURS"),
     )
+    password_reset_token_ttl_minutes: int = Field(
+        default=30,
+        ge=5,
+        le=1440,
+        validation_alias=AliasChoices("PASSWORD_RESET_TOKEN_TTL_MINUTES"),
+    )
     email_from: str = Field(
         default="noreply@kairo.app",
         validation_alias=AliasChoices("EMAIL_FROM"),
