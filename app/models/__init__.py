@@ -6,6 +6,7 @@ from app.models.education import Education
 from app.models.freelance_contract import FreelanceContract
 from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
+from app.models.email_delivery_log import EmailDeliveryLog
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
 from app.models.organization import Organization
@@ -38,6 +39,7 @@ __all__ = [
     "CredentialVerificationRequest",
     "Education",
     "EducationDocument",
+    "EmailDeliveryLog",
     "EmployerVerificationRequest",
     "Employment",
     "EmploymentDocument",
