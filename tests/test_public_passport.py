@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.dependencies.services import get_public_passport_service
+from app.api.dependencies.services import get_passport_share_view_service, get_public_passport_service
 from app.exceptions import NotFoundError
 from app.main import app
 from app.schemas.passport_share import PassportSharePermissions
@@ -152,9 +152,19 @@ class FakePublicPassportService:
         )
 
 
+class FakePassportShareViewService:
+    def __init__(self) -> None:
+        self.record_calls: list[dict[str, object]] = []
+
+    async def record_successful_view(self, **kwargs) -> None:  # noqa: ANN003
+        self.record_calls.append(kwargs)
+
+
 @pytest.mark.asyncio
 async def test_get_public_passport_returns_backend_authoritative_payload() -> None:
+    fake_view_service = FakePassportShareViewService()
     app.dependency_overrides[get_public_passport_service] = lambda: FakePublicPassportService()
+    app.dependency_overrides[get_passport_share_view_service] = lambda: fake_view_service
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -163,6 +173,7 @@ async def test_get_public_passport_returns_backend_authoritative_payload() -> No
     app.dependency_overrides.clear()
     assert response.status_code == 200
     body = response.json()
+    assert len(fake_view_service.record_calls) == 1
     assert body["profile"]["full_name"] == "Investor Demo"
     assert body["trust_score"]["overall"] == 75
     assert body["vault"]["employments"][0]["employer_legal_name"] is None
@@ -171,7 +182,9 @@ async def test_get_public_passport_returns_backend_authoritative_payload() -> No
 
 @pytest.mark.asyncio
 async def test_get_public_passport_fails_closed_for_missing_token() -> None:
+    fake_view_service = FakePassportShareViewService()
     app.dependency_overrides[get_public_passport_service] = lambda: FakePublicPassportService()
+    app.dependency_overrides[get_passport_share_view_service] = lambda: fake_view_service
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -179,5 +192,6 @@ async def test_get_public_passport_fails_closed_for_missing_token() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 404
+    assert fake_view_service.record_calls == []
     body = response.json()
     assert body["error"]["message"] == "Trust Passport not found"
