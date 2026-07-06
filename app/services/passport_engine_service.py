@@ -114,6 +114,10 @@ class PassportEngineService:
             recent_activity=recent_activity,
         )
 
+    async def get_onboarding_status(self, user_id: UUID) -> OnboardingStatusResponse:
+        user = await self._get_user(user_id)
+        return await self._build_onboarding_status(user)
+
     async def _get_user(self, user_id: UUID) -> User:
         stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))
         user = (await self._session.execute(stmt)).scalar_one()
