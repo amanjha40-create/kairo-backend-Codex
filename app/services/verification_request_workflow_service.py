@@ -21,6 +21,7 @@ class VerificationRequestWorkflowService:
     VALID_TRANSITIONS: dict[VerificationRequestStatus, set[VerificationRequestStatus]] = {
         VerificationRequestStatus.DRAFT: {
             VerificationRequestStatus.PENDING_SUBJECT_ACCEPTANCE,
+            VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
             VerificationRequestStatus.CANCELLED,
         },
         VerificationRequestStatus.PENDING_SUBJECT_ACCEPTANCE: {
@@ -30,7 +31,47 @@ class VerificationRequestWorkflowService:
             VerificationRequestStatus.EXPIRED,
         },
         VerificationRequestStatus.ACCEPTED: {
+            VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
             VerificationRequestStatus.IN_PROGRESS,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION: {
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.PENDING_ADMIN_REVIEW: {
+            VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+            VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS: {
+            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+            VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.EXPIRED,
+        },
+        VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW: {
+            VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+            VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION: {
+            VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+            VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION: {
+            VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE: {
+            VerificationRequestStatus.IN_PROGRESS,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.EXPIRED,
             VerificationRequestStatus.CANCELLED,
         },
         VerificationRequestStatus.IN_PROGRESS: {
@@ -94,6 +135,27 @@ class VerificationRequestWorkflowService:
                 event_source=event_source,
                 previous_status=current_status,
                 new_status=target_status,
+                metadata_payload=metadata or {},
+            )
+        )
+
+    async def record_action(
+        self,
+        request: VerificationRequest,
+        *,
+        actor_user_id: UUID | None,
+        event_type: str,
+        event_source: VerificationRequestEventSource,
+        metadata: dict[str, Any] | None = None,
+    ) -> VerificationRequestEvent:
+        return await self._repo.append_event(
+            VerificationRequestEvent(
+                verification_request_id=request.id,
+                actor_user_id=actor_user_id,
+                event_type=event_type,
+                event_source=event_source,
+                previous_status=request.status,
+                new_status=request.status,
                 metadata_payload=metadata or {},
             )
         )

@@ -25,9 +25,13 @@ from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
+from app.models.verification_request_evidence import VerificationRequestEvidence
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
+from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_audit import VerificationAuditEvent
+from app.models.verification_review_correction import VerificationReviewCorrection
+from app.models.verification_review_note import VerificationReviewNote
 
 __all__ = [
     "Certification",
@@ -55,7 +59,11 @@ __all__ = [
     "User",
     "UserDocument",
     "UserSocialAccount",
+    "VerificationRequestEvidence",
     "VerificationRequest",
     "VerificationRequestEvent",
+    "VerificationRequestReview",
     "VerificationAuditEvent",
+    "VerificationReviewCorrection",
+    "VerificationReviewNote",
 ]

@@ -15,8 +15,8 @@ class Role(StrEnum):
     USER = "user"           # Applicant — manages own cases
     SUPPORT = "support"     # Read-only view of all cases (customer support)
     MODERATOR = "moderator" # View all cases + add remarks; cannot approve/reject
-    HR = "hr"               # Full reviewer — approve / reject / assign
-    ADMIN = "admin"         # HR powers + user management
+    HR = "hr"               # Admin reviewer — approve / reject / request corrections
+    ADMIN = "admin"         # Admin manager — reviewer powers + assignment + user management
     SUPERADMIN = "superadmin"  # All permissions including role assignment
 
 

@@ -18,10 +18,26 @@ class VerificationRequestType(StrEnum):
     CUSTOM = "custom"
 
 
+class VerificationRequestOriginType(StrEnum):
+    TRUST_INVITATION = "trust_invitation"
+    SUBJECT_INITIATED = "subject_initiated"
+    ORGANIZATION_CREATED = "organization_created"
+    ADMIN_CREATED = "admin_created"
+    API = "api"
+    SYSTEM = "system"
+
+
 class VerificationRequestStatus(StrEnum):
     DRAFT = "draft"
     PENDING_SUBJECT_ACCEPTANCE = "pending_subject_acceptance"
     ACCEPTED = "accepted"
+    PENDING_SUBJECT_SUBMISSION = "pending_subject_submission"
+    PENDING_ADMIN_REVIEW = "pending_admin_review"
+    AWAITING_SUBJECT_CORRECTIONS = "awaiting_subject_corrections"
+    PENDING_ADMIN_RE_REVIEW = "pending_admin_re_review"
+    APPROVED_FOR_ORGANIZATION_VERIFICATION = "approved_for_organization_verification"
+    PENDING_ORGANIZATION_RESOLUTION = "pending_organization_resolution"
+    PENDING_ORGANIZATION_ACCEPTANCE = "pending_organization_acceptance"
     IN_PROGRESS = "in_progress"
     AWAITING_INFORMATION = "awaiting_information"
     VERIFIED = "verified"
