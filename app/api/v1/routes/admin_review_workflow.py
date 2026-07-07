@@ -7,7 +7,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies.services import get_verification_request_admin_review_service
+from app.api.dependencies.services import (
+    get_trust_registry_resolution_service,
+    get_verification_request_admin_review_service,
+)
 from app.api.dependencies.verification_admin import (
     CurrentUser,
     require_assign,
@@ -29,7 +32,14 @@ from app.schemas.admin_review_workflow import (
     AdminReviewWorkflowEnvelope,
 )
 from app.schemas.pagination import ListQueryParams
+from app.schemas.trust_registry import (
+    TrustRegistryCreateAndResolveRequest,
+    TrustRegistryDeferResolutionRequest,
+    TrustRegistryResolutionRequest,
+    TrustRegistryVerificationRequestResolutionResponse,
+)
 from app.schemas.verification_request import VerificationRequestResponse
+from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
 from app.services.verification_request_admin_review_service import VerificationRequestAdminReviewService
 
 router = APIRouter(prefix="/admin/verification-requests", tags=["admin-review-workflow"])
@@ -111,6 +121,45 @@ async def resolve_admin_review_organization(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> VerificationRequestResponse:
     return await svc.resolve_organization(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/resolve-registry",
+    response_model=TrustRegistryVerificationRequestResolutionResponse,
+)
+async def resolve_admin_review_registry_record(
+    verification_request_public_id: UUID,
+    payload: TrustRegistryResolutionRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
+) -> TrustRegistryVerificationRequestResolutionResponse:
+    return await svc.resolve_verification_request(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/create-registry-record",
+    response_model=TrustRegistryVerificationRequestResolutionResponse,
+)
+async def create_admin_review_registry_record(
+    verification_request_public_id: UUID,
+    payload: TrustRegistryCreateAndResolveRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
+) -> TrustRegistryVerificationRequestResolutionResponse:
+    return await svc.create_record_and_resolve_verification_request(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/defer-registry-resolution",
+    response_model=TrustRegistryVerificationRequestResolutionResponse,
+)
+async def defer_admin_review_registry_resolution(
+    verification_request_public_id: UUID,
+    payload: TrustRegistryDeferResolutionRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
+) -> TrustRegistryVerificationRequestResolutionResponse:
+    return await svc.defer_verification_request_resolution(reviewer.id, verification_request_public_id, payload)
 
 
 @router.get("/{verification_request_public_id}/timeline", response_model=AdminReviewTimelineResponse)
