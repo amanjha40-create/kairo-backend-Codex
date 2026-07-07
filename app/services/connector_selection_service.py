@@ -16,7 +16,7 @@ class ConnectorSelectionService:
 
     async def select_for_request(self, request: VerificationRequest) -> VerificationConnector:
         connectors = await self._registry.list_enabled_connectors()
-        capability = request.request_type.value
+        capability = self._normalize_capability(request.request_type)
         registry_type = request.registry_record.organization_type if request.registry_record is not None else None
 
         matches = [
@@ -53,3 +53,7 @@ class ConnectorSelectionService:
             return False
         supported_types = {value.strip().lower() for value in connector.supported_registry_types}
         return registry_type.strip().lower() in supported_types
+
+    def _normalize_capability(self, value: object) -> str:
+        raw = getattr(value, "value", value)
+        return str(raw).strip().lower()

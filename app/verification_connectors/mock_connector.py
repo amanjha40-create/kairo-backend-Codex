@@ -37,12 +37,13 @@ class MockVerificationConnector:
         mode = self._resolve_mode(context)
         if mode == "unavailable":
             raise ServiceUnavailableError("Mock connector is unavailable")
+        request_type = self._request_type(context)
         if mode == "failed":
             return VerificationConnectorResult(
                 status="failed",
                 confidence=25,
                 normalized_data={
-                    "request_type": context.verification_request.request_type.value,
+                    "request_type": request_type,
                     "match": False,
                     "outcome": "not_verified",
                 },
@@ -64,7 +65,7 @@ class MockVerificationConnector:
             status="verified",
             confidence=95,
             normalized_data={
-                "request_type": context.verification_request.request_type.value,
+                "request_type": request_type,
                 "match": True,
                 "outcome": "verified",
             },
@@ -92,3 +93,7 @@ class MockVerificationConnector:
         if normalized in {"unavailable", "down", "offline"}:
             return "unavailable"
         return "success"
+
+    def _request_type(self, context: VerificationConnectorExecutionContext) -> str:
+        raw = getattr(context.verification_request.request_type, "value", context.verification_request.request_type)
+        return str(raw).strip().lower()
