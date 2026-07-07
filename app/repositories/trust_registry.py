@@ -36,27 +36,46 @@ class TrustRegistryRepository:
                 selectinload(TrustRegistryRecord.identifiers),
                 selectinload(TrustRegistryRecord.capabilities).joinedload(TrustRegistryRecordCapability.capability),
             )
-            .where(TrustRegistryRecord.public_id == public_id)
+            .where(TrustRegistryRecord.public_id == public_id, TrustRegistryRecord.deleted_at.is_(None))
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id(self, record_id: UUID) -> TrustRegistryRecord | None:
-        stmt = select(TrustRegistryRecord).where(TrustRegistryRecord.id == record_id)
+        stmt = select(TrustRegistryRecord).where(TrustRegistryRecord.id == record_id, TrustRegistryRecord.deleted_at.is_(None))
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_registry_code(self, registry_code: str) -> TrustRegistryRecord | None:
-        stmt = select(TrustRegistryRecord).where(TrustRegistryRecord.registry_code == registry_code)
+        stmt = select(TrustRegistryRecord).where(
+            TrustRegistryRecord.registry_code == registry_code,
+            TrustRegistryRecord.deleted_at.is_(None),
+        )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def count(self) -> int:
-        stmt = select(func.count()).select_from(TrustRegistryRecord)
+        stmt = select(func.count()).select_from(TrustRegistryRecord).where(TrustRegistryRecord.deleted_at.is_(None))
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def list_all(self) -> list[TrustRegistryRecord]:
+        stmt = (
+            select(TrustRegistryRecord)
+            .options(
+                selectinload(TrustRegistryRecord.domains),
+                selectinload(TrustRegistryRecord.aliases),
+                selectinload(TrustRegistryRecord.identifiers),
+                selectinload(TrustRegistryRecord.capabilities).joinedload(TrustRegistryRecordCapability.capability),
+            )
+            .where(TrustRegistryRecord.deleted_at.is_(None))
+            .order_by(TrustRegistryRecord.created_at.desc())
+        )
+        rows = await self._session.execute(stmt)
+        return list(rows.scalars().all())
 
     async def search_by_name(self, query: str) -> list[TrustRegistryRecord]:
         needle = f"%{query.strip().lower()}%"
         stmt = (
             select(TrustRegistryRecord)
             .where(
+                TrustRegistryRecord.deleted_at.is_(None),
                 or_(
                     func.lower(TrustRegistryRecord.legal_name).like(needle),
                     func.lower(TrustRegistryRecord.display_name).like(needle),
@@ -103,7 +122,10 @@ class TrustRegistryDomainRepository:
         stmt = (
             select(TrustRegistryDomain)
             .options(joinedload(TrustRegistryDomain.registry_record))
-            .where(func.lower(TrustRegistryDomain.domain) == domain.strip().lower())
+            .where(
+                func.lower(TrustRegistryDomain.domain) == domain.strip().lower(),
+                TrustRegistryDomain.deleted_at.is_(None),
+            )
         )
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
@@ -122,7 +144,10 @@ class TrustRegistryAliasRepository:
         stmt = (
             select(TrustRegistryAlias)
             .options(joinedload(TrustRegistryAlias.registry_record))
-            .where(func.lower(TrustRegistryAlias.alias_name) == alias_name.strip().lower())
+            .where(
+                func.lower(TrustRegistryAlias.alias_name) == alias_name.strip().lower(),
+                TrustRegistryAlias.deleted_at.is_(None),
+            )
         )
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
@@ -152,6 +177,7 @@ class TrustRegistryIdentifierRepository:
             .where(
                 TrustRegistryIdentifier.identifier_type == identifier_type,
                 TrustRegistryIdentifier.identifier_value == identifier_value,
+                TrustRegistryIdentifier.deleted_at.is_(None),
             )
         )
         rows = await self._session.execute(stmt)
@@ -186,4 +212,3 @@ class TrustRegistryMergeHistoryRepository:
         self._session.add(merge_event)
         await self._session.flush()
         return merge_event
-

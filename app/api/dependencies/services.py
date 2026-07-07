@@ -24,6 +24,9 @@ from app.services import (
     PublicPassportService,
     TrustScoreService,
     TrustInvitationService,
+    TrustRegistryResolutionService,
+    TrustRegistrySearchService,
+    TrustRegistryService,
     UserService,
     VerificationRequestAdminReviewService,
     VerificationRequestService,
@@ -120,6 +123,20 @@ def get_trust_invitation_service(
     settings: Settings = Depends(get_settings),
 ) -> TrustInvitationService:
     return TrustInvitationService(session, settings)
+
+
+def get_trust_registry_service(session: AsyncSession = Depends(get_session)) -> TrustRegistryService:
+    return TrustRegistryService(session)
+
+
+def get_trust_registry_search_service(session: AsyncSession = Depends(get_session)) -> TrustRegistrySearchService:
+    return TrustRegistrySearchService(session)
+
+
+def get_trust_registry_resolution_service(
+    session: AsyncSession = Depends(get_session),
+) -> TrustRegistryResolutionService:
+    return TrustRegistryResolutionService(session)
 
 
 def get_verification_request_service(

@@ -89,6 +89,8 @@ class TrustRegistryCapabilityCreateRequest(BaseModel):
 
 class TrustRegistryRecordCapabilityCreateRequest(BaseModel):
     capability_key: str = Field(min_length=1, max_length=64)
+    display_name: str | None = Field(default=None, max_length=128)
+    description: str | None = None
     status: TrustRegistryCapabilityStatus = TrustRegistryCapabilityStatus.ACTIVE
     source_type: TrustRegistrySourceType
     source_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -301,3 +303,20 @@ class TrustRegistryLookupResponse(BaseModel):
     matches: list[TrustRegistryRecordResponse]
     match_reason: str
 
+
+class TrustRegistryOrganizationResolutionResponse(BaseModel):
+    organization_public_id: UUID
+    registry_record_public_id: UUID | None
+    resolution_state: TrustRegistryResolutionState
+    resolution_method: str | None
+    resolution_confidence: float | None
+    resolution_metadata: dict[str, Any]
+
+
+class TrustRegistryVerificationRequestResolutionResponse(BaseModel):
+    verification_request_public_id: UUID
+    registry_record_public_id: UUID | None
+    resolution_state: TrustRegistryResolutionState
+    resolution_method: str | None
+    resolution_confidence: float | None
+    resolution_metadata: dict[str, Any]
