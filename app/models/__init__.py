@@ -9,6 +9,10 @@ from app.models.gig_platform import GigPlatform
 from app.models.email_delivery_log import EmailDeliveryLog
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
+from app.models.notification import Notification
+from app.models.notification_delivery import NotificationDelivery
+from app.models.notification_event import NotificationEvent
+from app.models.notification_preference import NotificationPreference
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
 from app.models.passport_share_link import PassportShareLink
@@ -58,6 +62,10 @@ __all__ = [
     "GigPlatform",
     "Internship",
     "InternshipDocument",
+    "Notification",
+    "NotificationDelivery",
+    "NotificationEvent",
+    "NotificationPreference",
     "Organization",
     "OrganizationMember",
     "PassportShareLink",
