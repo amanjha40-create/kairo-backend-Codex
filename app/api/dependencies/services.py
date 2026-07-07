@@ -23,6 +23,7 @@ from app.services import (
     EmploymentService,
     NotificationChannelRegistry,
     NotificationDispatcher,
+    NotificationEmailChannel,
     NotificationPreferenceService,
     NotificationService,
     NotificationTemplateResolver,
@@ -144,23 +145,44 @@ def get_notification_template_resolver() -> NotificationTemplateResolver:
     return NotificationTemplateResolver()
 
 
-def get_notification_channel_registry() -> NotificationChannelRegistry:
-    return NotificationChannelRegistry()
+def get_notification_channel_registry(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> NotificationChannelRegistry:
+    return NotificationChannelRegistry(
+        handlers=(
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
+    )
 
 
-def get_notification_dispatcher() -> NotificationDispatcher:
-    return NotificationDispatcher(NotificationChannelRegistry())
+def get_notification_dispatcher(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> NotificationDispatcher:
+    registry = NotificationChannelRegistry(
+        handlers=(
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
+    )
+    return NotificationDispatcher(registry)
 
 
 def get_notification_service(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> NotificationService:
     preferences = NotificationPreferenceService(session)
     template_resolver = NotificationTemplateResolver()
-    registry = NotificationChannelRegistry()
+    registry = NotificationChannelRegistry(
+        handlers=(
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
+    )
     dispatcher = NotificationDispatcher(registry)
     return NotificationService(
         session,
+        settings=settings,
         preferences=preferences,
         template_resolver=template_resolver,
         channel_registry=registry,

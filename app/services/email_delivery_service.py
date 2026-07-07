@@ -81,4 +81,5 @@ class EmailDeliveryService:
                 },
             )
 
+        await self._session.refresh(log)
         return log

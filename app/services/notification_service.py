@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, get_settings
 from app.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
@@ -28,8 +29,10 @@ from app.schemas.notification import (
 )
 from app.services.notification_channel_registry import NotificationChannelRegistry
 from app.services.notification_dispatcher import NotificationDispatcher
+from app.services.notification_email_channel import NotificationEmailChannel
 from app.services.notification_preference_service import NotificationPreferenceService
 from app.services.notification_template_resolver import NotificationTemplateResolver
+from app.services.email_delivery_service import EmailDeliveryService
 
 
 class NotificationService:
@@ -38,6 +41,7 @@ class NotificationService:
     def __init__(
         self,
         session: AsyncSession,
+        settings: Settings | None = None,
         *,
         preferences: NotificationPreferenceService | None = None,
         template_resolver: NotificationTemplateResolver | None = None,
@@ -45,12 +49,17 @@ class NotificationService:
         dispatcher: NotificationDispatcher | None = None,
     ) -> None:
         self._session = session
+        self._settings = settings or get_settings()
         self._notifications = NotificationRepository(session)
         self._deliveries = NotificationDeliveryRepository(session)
         self._events = NotificationEventRepository(session)
         self._preferences = preferences or NotificationPreferenceService(session)
         self._template_resolver = template_resolver or NotificationTemplateResolver()
-        self._channel_registry = channel_registry or NotificationChannelRegistry()
+        self._channel_registry = channel_registry or NotificationChannelRegistry(
+            handlers=(
+                NotificationEmailChannel(EmailDeliveryService(session, self._settings)),
+            ),
+        )
         self._dispatcher = dispatcher or NotificationDispatcher(self._channel_registry)
 
     async def create_and_dispatch(

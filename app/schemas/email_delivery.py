@@ -17,6 +17,15 @@ class TrustInvitationEmailTemplateData(BaseModel):
     expires_at_iso: str = Field(min_length=1, max_length=64)
 
 
+class VerificationCompletedEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    subject_name: str = Field(min_length=1, max_length=255)
+    organization_name: str = Field(min_length=1, max_length=255)
+    request_type: str = Field(min_length=1, max_length=64)
+    completed_at_iso: str = Field(min_length=1, max_length=64)
+
+
 class RenderedEmailMessage(BaseModel):
     template_key: str = Field(min_length=1, max_length=100)
     template_version: str = Field(min_length=1, max_length=32)
