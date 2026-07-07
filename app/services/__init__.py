@@ -8,6 +8,7 @@ from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
 from app.services.connector_selection_service import ConnectorSelectionService
 from app.services.document_upload_service import DocumentUploadService
+from app.services.email_delivery_service import EmailDeliveryService
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.employment_document_service import EmploymentDocumentService
 from app.services.employment_service import EmploymentService
@@ -44,6 +45,7 @@ __all__ = [
     "ConnectorSelectionService",
     "CredentialVerificationService",
     "DocumentUploadService",
+    "EmailDeliveryService",
     "EmployerVerificationService",
     "EmploymentDocumentService",
     "EmploymentService",

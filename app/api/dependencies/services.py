@@ -18,6 +18,7 @@ from app.services import (
     ConnectorSelectionService,
     CredentialVerificationService,
     DocumentUploadService,
+    EmailDeliveryService,
     EmployerVerificationService,
     EmploymentDocumentService,
     EmploymentService,
