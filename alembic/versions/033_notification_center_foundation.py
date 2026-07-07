@@ -1,7 +1,7 @@
 """Notification Center platform foundation.
 
-Revision ID: 033_notification_center_foundation
-Revises: 032_verification_connector_framework
+Revision ID: 033
+Revises: 032
 Create Date: 2026-07-07 10:15:00.000000
 """
 
@@ -12,8 +12,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "033_notification_center_foundation"
-down_revision = "032_verification_connector_framework"
+revision = "033"
+down_revision = "032"
 branch_labels = None
 depends_on = None
 
