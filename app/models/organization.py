@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, text
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +17,7 @@ from app.organization.enums import OrganizationType
 
 if TYPE_CHECKING:
     from app.models.organization_member import OrganizationMember
+    from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.trust_invitation import TrustInvitation
     from app.models.verification_request import VerificationRequest
 
@@ -40,6 +42,26 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=list,
         server_default=text("'[]'::jsonb"),
     )
+    registry_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("trust_registry_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    registry_resolution_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    registry_resolution_confidence: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    registry_resolution_metadata: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    registry_resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    registry_resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     members: Mapped[list["OrganizationMember"]] = relationship(
         "OrganizationMember",
@@ -56,6 +78,7 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="organization",
         cascade="all, delete-orphan",
     )
+    registry_record: Mapped["TrustRegistryRecord | None"] = relationship("TrustRegistryRecord", back_populates="organizations")
 
     def __repr__(self) -> str:
         return f"Organization(id={self.id}, public_id={self.public_id}, name={self.name!r})"

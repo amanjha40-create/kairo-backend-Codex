@@ -23,6 +23,14 @@ from app.models.pending_signup import PendingSignup
 from app.models.profile_view import ProfileView
 from app.models.refresh_token import RefreshToken
 from app.models.trust_invitation import TrustInvitation
+from app.models.trust_registry_alias import TrustRegistryAlias
+from app.models.trust_registry_capability import TrustRegistryCapability
+from app.models.trust_registry_domain import TrustRegistryDomain
+from app.models.trust_registry_identifier import TrustRegistryIdentifier
+from app.models.trust_registry_merge_history import TrustRegistryMergeHistory
+from app.models.trust_registry_record import TrustRegistryRecord
+from app.models.trust_registry_record_capability import TrustRegistryRecordCapability
+from app.models.trust_registry_relationship import TrustRegistryRelationship
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
@@ -58,6 +66,14 @@ __all__ = [
     "PortfolioItem",
     "RefreshToken",
     "TrustInvitation",
+    "TrustRegistryAlias",
+    "TrustRegistryCapability",
+    "TrustRegistryDomain",
+    "TrustRegistryIdentifier",
+    "TrustRegistryMergeHistory",
+    "TrustRegistryRecord",
+    "TrustRegistryRecordCapability",
+    "TrustRegistryRelationship",
     "User",
     "UserDocument",
     "UserSocialAccount",

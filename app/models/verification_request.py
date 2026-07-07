@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, text
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +25,7 @@ from app.verification_requests.enums import (
 
 if TYPE_CHECKING:
     from app.models.organization import Organization
+    from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.trust_invitation import TrustInvitation
     from app.models.verification_request_evidence import VerificationRequestEvidence
     from app.models.verification_request_event import VerificationRequestEvent
@@ -99,9 +100,36 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     organization_outreach_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_subject_resubmitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    registry_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("trust_registry_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    registry_resolution_state: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="unresolved",
+        server_default="unresolved",
+    )
+    registry_resolution_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    registry_resolution_confidence: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    registry_resolution_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    registry_resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    registry_resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     organization: Mapped["Organization | None"] = relationship("Organization", back_populates="verification_requests")
     trust_invitation: Mapped["TrustInvitation | None"] = relationship("TrustInvitation", back_populates="verification_requests")
+    registry_record: Mapped["TrustRegistryRecord | None"] = relationship("TrustRegistryRecord", back_populates="verification_requests")
     evidence_items: Mapped[list["VerificationRequestEvidence"]] = relationship(
         "VerificationRequestEvidence",
         back_populates="verification_request",
