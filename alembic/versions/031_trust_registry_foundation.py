@@ -111,13 +111,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_record_capabilities_registry_record_id_trust_registry_records"),
+            name="fk_trr_caps_record",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["capability_id"],
             ["trust_registry_capabilities.id"],
-            name=op.f("fk_trust_registry_record_capabilities_capability_id_trust_registry_capabilities"),
+            name="fk_trr_caps_capability",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_trust_registry_record_capabilities")),
@@ -125,7 +125,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "registry_record_id",
             "capability_id",
-            name="uq_trust_registry_record_capabilities_registry_record_id_capability_id",
+            name="uq_trr_caps_record_capability",
         ),
     )
     op.create_index(
@@ -163,7 +163,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_identifiers_registry_record_id_trust_registry_records"),
+            name="fk_trr_ids_record",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -207,7 +207,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_domains_registry_record_id_trust_registry_records"),
+            name="fk_trr_domains_record",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -239,7 +239,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_aliases_registry_record_id_trust_registry_records"),
+            name="fk_trr_aliases_record",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -275,13 +275,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["parent_registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_relationships_parent_registry_record_id_trust_registry_records"),
+            name="fk_trr_rels_parent",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["child_registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_relationships_child_registry_record_id_trust_registry_records"),
+            name="fk_trr_rels_child",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -329,13 +329,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["source_registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_merge_history_source_registry_record_id_trust_registry_records"),
+            name="fk_trr_merge_source",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
             ["target_registry_record_id"],
             ["trust_registry_records.id"],
-            name=op.f("fk_trust_registry_merge_history_target_registry_record_id_trust_registry_records"),
+            name="fk_trr_merge_target",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
@@ -417,7 +417,7 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_foreign_key(
-        op.f("fk_verification_requests_registry_record_id_trust_registry_records"),
+        "fk_ver_req_registry_record",
         "verification_requests",
         "trust_registry_records",
         ["registry_record_id"],
@@ -436,7 +436,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint(op.f("fk_verification_requests_registry_resolved_by_user_id_users"), "verification_requests", type_="foreignkey")
-    op.drop_constraint(op.f("fk_verification_requests_registry_record_id_trust_registry_records"), "verification_requests", type_="foreignkey")
+    op.drop_constraint("fk_ver_req_registry_record", "verification_requests", type_="foreignkey")
     op.drop_index(op.f("ix_verification_requests_registry_record_id"), table_name="verification_requests")
     op.drop_column("verification_requests", "registry_resolved_by_user_id")
     op.drop_column("verification_requests", "registry_resolved_at")

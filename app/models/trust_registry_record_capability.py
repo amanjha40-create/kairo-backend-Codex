@@ -25,7 +25,7 @@ class TrustRegistryRecordCapability(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "registry_record_id",
             "capability_id",
-            name="uq_trust_registry_record_capabilities_registry_record_id_capability_id",
+            name="uq_trr_caps_record_capability",
         ),
     )
 
@@ -53,4 +53,3 @@ class TrustRegistryRecordCapability(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     registry_record: Mapped["TrustRegistryRecord"] = relationship("TrustRegistryRecord", back_populates="capabilities")
     capability: Mapped["TrustRegistryCapability"] = relationship("TrustRegistryCapability", back_populates="registry_records")
-
