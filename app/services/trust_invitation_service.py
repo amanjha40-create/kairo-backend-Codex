@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import UTC, datetime
 from uuid import UUID
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.tokens import hash_refresh_token
 from app.config import Settings
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.integrations.email.templates import EmailTemplateKey
 from app.models.trust_invitation import TrustInvitation
 from app.organization.enums import OrganizationRole
 from app.repositories.trust_invitation import TrustInvitationRepository
@@ -22,18 +24,30 @@ from app.schemas.trust_invitation import (
     TrustInvitationPublicLookupResponse,
     TrustInvitationResponse,
 )
+from app.services.email_delivery_service import EmailDeliveryService
 from app.services.organization_service import OrganizationService
 from app.trust_invitations.enums import TrustInvitationStatus
+
+logger = logging.getLogger(__name__)
 
 
 class TrustInvitationService:
     """Organization-issued trust invitations with public token resolution."""
 
-    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        *,
+        repo: TrustInvitationRepository | None = None,
+        organizations: OrganizationService | None = None,
+        email_delivery: EmailDeliveryService | None = None,
+    ) -> None:
         self._session = session
         self._settings = settings
-        self._repo = TrustInvitationRepository(session)
-        self._organizations = OrganizationService(session)
+        self._repo = repo or TrustInvitationRepository(session)
+        self._organizations = organizations or OrganizationService(session)
+        self._email_delivery = email_delivery or EmailDeliveryService(session, settings)
 
     async def create(
         self,
@@ -59,9 +73,30 @@ class TrustInvitationService:
         if refreshed is None:
             raise NotFoundError("Trust invitation not found")
         response = self._to_response(refreshed)
+        invitation_url = self._build_invitation_url(raw_token)
+        try:
+            await self._email_delivery.queue_template_email(
+                template_key=EmailTemplateKey.TRUST_INVITATION.value,
+                to_email=refreshed.subject_email,
+                template_data={
+                    "organization_name": refreshed.organization.name,
+                    "subject_name": refreshed.subject_name,
+                    "invitation_url": invitation_url,
+                    "expires_at_iso": refreshed.expires_at.isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "trust_invitation_email_delivery_failed",
+                extra={
+                    "event": "trust_invitation_email_delivery_failed",
+                    "invitation_public_id": str(refreshed.public_id),
+                    "error_type": type(exc).__name__,
+                },
+            )
         return TrustInvitationCreateResponse(
             **response.model_dump(),
-            invitation_url=self._build_invitation_url(raw_token),
+            invitation_url=invitation_url,
         )
 
     async def list_for_organization(

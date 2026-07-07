@@ -1,6 +1,23 @@
 """Outbound email integrations."""
 
+from app.integrations.email.renderer import EmailTemplateRenderer
+from app.integrations.email.providers import (
+    ConsoleEmailProvider,
+    EmailProvider,
+    SmtpEmailProvider,
+    get_email_provider,
+)
 from app.integrations.email.sender import ConsoleEmailSender, EmailSender, get_email_sender
 from app.integrations.email.smtp import SmtpEmailSender
 
-__all__ = ["ConsoleEmailSender", "EmailSender", "SmtpEmailSender", "get_email_sender"]
+__all__ = [
+    "ConsoleEmailProvider",
+    "ConsoleEmailSender",
+    "EmailProvider",
+    "EmailSender",
+    "EmailTemplateRenderer",
+    "SmtpEmailProvider",
+    "SmtpEmailSender",
+    "get_email_provider",
+    "get_email_sender",
+]

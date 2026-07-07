@@ -3,6 +3,7 @@
 from app.repositories.admin import AdminRepository
 from app.repositories.base import BaseRepository
 from app.repositories.criteria import EmploymentDocumentSortField, EmploymentSortField, SortOrder
+from app.repositories.email_delivery_log import EmailDeliveryLogRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
 from app.repositories.organization import OrganizationRepository
@@ -21,6 +22,7 @@ from app.repositories.verification_audit import VerificationAuditRepository
 __all__ = [
     "AdminRepository",
     "BaseRepository",
+    "EmailDeliveryLogRepository",
     "EmploymentDocumentRepository",
     "EmploymentDocumentSortField",
     "EmploymentRepository",

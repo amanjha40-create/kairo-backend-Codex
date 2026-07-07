@@ -182,6 +182,16 @@ class Settings(BaseSettings):
         description="console | smtp — smtp sends real mail via SMTP_HOST",
         validation_alias=AliasChoices("EMAIL_BACKEND"),
     )
+    email_send_enabled: bool = Field(
+        default=False,
+        description="If false, providers must not attempt real external email delivery.",
+        validation_alias=AliasChoices("EMAIL_SEND_ENABLED"),
+    )
+    email_dev_log_secrets: bool = Field(
+        default=False,
+        description="Local debugging only — allows console provider to include secrets in logs outside production.",
+        validation_alias=AliasChoices("EMAIL_DEV_LOG_SECRETS"),
+    )
     smtp_host: str | None = Field(default=None, validation_alias=AliasChoices("SMTP_HOST"))
     smtp_port: int = Field(default=587, ge=1, le=65535, validation_alias=AliasChoices("SMTP_PORT"))
     smtp_user: str | None = Field(default=None, validation_alias=AliasChoices("SMTP_USER"))
@@ -238,6 +248,11 @@ class Settings(BaseSettings):
         ge=1,
         le=10,
         validation_alias=AliasChoices("SQS_MAX_MESSAGES_PER_POLL"),
+    )
+    job_backend: str = Field(
+        default="inline",
+        description="inline | sqs — inline is the safe local-development default.",
+        validation_alias=AliasChoices("JOB_BACKEND"),
     )
 
     # --- Object storage (employment evidence) ---
@@ -335,6 +350,11 @@ class Settings(BaseSettings):
     def normalize_email_backend(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("job_backend")
+    @classmethod
+    def normalize_job_backend(cls, v: str) -> str:
+        return v.strip().lower()
+
     @field_validator("trusted_hosts", mode="before")
     @classmethod
     def parse_trusted_hosts(cls, v: object) -> list[str]:
@@ -430,6 +450,10 @@ class Settings(BaseSettings):
             if self.smtp_use_ssl and self.smtp_use_tls:
                 msg = "Set only one of SMTP_USE_SSL (465) or SMTP_USE_TLS (587), not both."
                 raise ValueError(msg)
+
+        if self.job_backend not in {"inline", "sqs"}:
+            msg = "JOB_BACKEND must be one of: inline, sqs."
+            raise ValueError(msg)
 
         return self
 
