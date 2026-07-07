@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -120,7 +121,7 @@ class FakeNotificationService:
 
 
 async def _allow_admin():  # noqa: D401
-    return None
+    return SimpleNamespace(id=uuid4())
 
 
 @pytest.mark.asyncio
