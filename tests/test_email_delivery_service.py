@@ -28,6 +28,9 @@ class FakeSession:
     async def commit(self) -> None:
         self.committed = True
 
+    async def refresh(self, obj) -> None:  # noqa: ANN001
+        return None
+
 
 class FakeEmailDeliveryLogRepository:
     def __init__(self) -> None:

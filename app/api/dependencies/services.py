@@ -18,9 +18,16 @@ from app.services import (
     ConnectorSelectionService,
     CredentialVerificationService,
     DocumentUploadService,
+    EmailDeliveryService,
     EmployerVerificationService,
     EmploymentDocumentService,
     EmploymentService,
+    NotificationChannelRegistry,
+    NotificationDispatcher,
+    NotificationEmailChannel,
+    NotificationPreferenceService,
+    NotificationService,
+    NotificationTemplateResolver,
     OrganizationService,
     PassportEngineService,
     PassportShareService,
@@ -127,6 +134,61 @@ def get_trust_invitation_service(
     settings: Settings = Depends(get_settings),
 ) -> TrustInvitationService:
     return TrustInvitationService(session, settings)
+
+
+def get_notification_preference_service(
+    session: AsyncSession = Depends(get_session),
+) -> NotificationPreferenceService:
+    return NotificationPreferenceService(session)
+
+
+def get_notification_template_resolver() -> NotificationTemplateResolver:
+    return NotificationTemplateResolver()
+
+
+def get_notification_channel_registry(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> NotificationChannelRegistry:
+    return NotificationChannelRegistry(
+        handlers=(
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
+    )
+
+
+def get_notification_dispatcher(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> NotificationDispatcher:
+    registry = NotificationChannelRegistry(
+        handlers=(
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
+    )
+    return NotificationDispatcher(registry)
+
+
+def get_notification_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> NotificationService:
+    preferences = NotificationPreferenceService(session)
+    template_resolver = NotificationTemplateResolver()
+    registry = NotificationChannelRegistry(
+        handlers=(
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
+    )
+    dispatcher = NotificationDispatcher(registry)
+    return NotificationService(
+        session,
+        settings=settings,
+        preferences=preferences,
+        template_resolver=template_resolver,
+        channel_registry=registry,
+        dispatcher=dispatcher,
+    )
 
 
 def get_trust_registry_service(session: AsyncSession = Depends(get_session)) -> TrustRegistryService:

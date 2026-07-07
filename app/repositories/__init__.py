@@ -6,6 +6,12 @@ from app.repositories.criteria import EmploymentDocumentSortField, EmploymentSor
 from app.repositories.email_delivery_log import EmailDeliveryLogRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
+from app.repositories.notification import (
+    NotificationDeliveryRepository,
+    NotificationEventRepository,
+    NotificationPreferenceRepository,
+    NotificationRepository,
+)
 from app.repositories.organization import OrganizationRepository
 from app.repositories.password_reset_token import PasswordResetTokenRepository
 from app.repositories.passport_share import PassportShareRepository
@@ -28,6 +34,10 @@ __all__ = [
     "EmploymentDocumentSortField",
     "EmploymentRepository",
     "EmploymentSortField",
+    "NotificationDeliveryRepository",
+    "NotificationEventRepository",
+    "NotificationPreferenceRepository",
+    "NotificationRepository",
     "OrganizationRepository",
     "PasswordResetTokenRepository",
     "PassportShareRepository",

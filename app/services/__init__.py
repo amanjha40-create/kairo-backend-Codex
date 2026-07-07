@@ -8,9 +8,16 @@ from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
 from app.services.connector_selection_service import ConnectorSelectionService
 from app.services.document_upload_service import DocumentUploadService
+from app.services.email_delivery_service import EmailDeliveryService
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.employment_document_service import EmploymentDocumentService
 from app.services.employment_service import EmploymentService
+from app.services.notification_channel_registry import NotificationChannelRegistry
+from app.services.notification_dispatcher import NotificationDispatcher
+from app.services.notification_email_channel import NotificationEmailChannel
+from app.services.notification_preference_service import NotificationPreferenceService
+from app.services.notification_service import NotificationService
+from app.services.notification_template_resolver import NotificationTemplateResolver
 from app.services.organization_service import OrganizationService
 from app.services.passport_engine_service import PassportEngineService
 from app.services.passport_share_service import PassportShareService
@@ -38,9 +45,16 @@ __all__ = [
     "ConnectorSelectionService",
     "CredentialVerificationService",
     "DocumentUploadService",
+    "EmailDeliveryService",
     "EmployerVerificationService",
     "EmploymentDocumentService",
     "EmploymentService",
+    "NotificationChannelRegistry",
+    "NotificationDispatcher",
+    "NotificationEmailChannel",
+    "NotificationPreferenceService",
+    "NotificationService",
+    "NotificationTemplateResolver",
     "OrganizationService",
     "PassportEngineService",
     "PassportShareService",
