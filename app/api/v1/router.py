@@ -28,6 +28,7 @@ from app.api.v1.routes import (
     portfolio,
     verification_requests,
     trust_invitations,
+    trust_registry,
     public_passport,
     public_credential_verification,
     public_employer_verification,
@@ -60,6 +61,8 @@ api_router.include_router(employment_documents.router)
 api_router.include_router(admin_review.router)
 api_router.include_router(admin_review_workflow.router)
 api_router.include_router(admin_verification.router)
+api_router.include_router(trust_registry.admin_router)
+api_router.include_router(trust_registry.internal_router)
 api_router.include_router(user_documents.router)
 api_router.include_router(educations.router)
 api_router.include_router(freelance_contracts.router)
