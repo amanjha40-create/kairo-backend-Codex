@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.config import Settings
+from app.notifications.contracts import NotificationRequest
 from app.organization.enums import OrganizationRole
 from app.schemas.trust_invitation import TrustInvitationCreateRequest
 from app.services.trust_invitation_service import TrustInvitationService
@@ -74,19 +75,19 @@ class FakeOrganizationService:
         return self.organization, membership
 
 
-class FakeEmailDeliveryService:
+class FakeNotificationService:
     def __init__(self, *, should_raise: bool = False) -> None:
         self.should_raise = should_raise
         self.calls: list[dict[str, object]] = []
 
-    async def queue_template_email(self, **kwargs):  # noqa: ANN003
-        self.calls.append(kwargs)
+    async def create_and_dispatch(self, request: NotificationRequest, *, actor_user_id=None):  # noqa: ANN001
+        self.calls.append({"request": request, "actor_user_id": actor_user_id})
         if self.should_raise:
-            raise RuntimeError("email down")
+            raise RuntimeError("notifications down")
 
 
 @pytest.mark.asyncio
-async def test_create_trust_invitation_queues_email_without_changing_response_shape() -> None:
+async def test_create_trust_invitation_dispatches_notification_without_changing_response_shape() -> None:
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
@@ -94,13 +95,13 @@ async def test_create_trust_invitation_queues_email_without_changing_response_sh
         name="Kairo Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
-    email_delivery = FakeEmailDeliveryService()
+    notifications = FakeNotificationService()
     service = TrustInvitationService(
         session,  # type: ignore[arg-type]
         _settings(),
         repo=repo,  # type: ignore[arg-type]
         organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
-        email_delivery=email_delivery,  # type: ignore[arg-type]
+        notifications=notifications,  # type: ignore[arg-type]
     )
 
     response = await service.create(
@@ -116,12 +117,16 @@ async def test_create_trust_invitation_queues_email_without_changing_response_sh
     assert response.invitation_url.startswith("https://api.example.com/api/v1/trust-invitations/")
     assert response.subject_email == "aman3@test.com"
     assert response.status == TrustInvitationStatus.PENDING
-    assert len(email_delivery.calls) == 1
-    assert email_delivery.calls[0]["template_key"] == "trust_invitation"
+    assert len(notifications.calls) == 1
+    request = notifications.calls[0]["request"]
+    assert isinstance(request, NotificationRequest)
+    assert request.event_type == "trust_invitation_created"
+    assert request.recipient_email == "aman3@test.com"
+    assert request.payload["invitation_url"] == response.invitation_url
 
 
 @pytest.mark.asyncio
-async def test_create_trust_invitation_survives_email_delivery_failure() -> None:
+async def test_create_trust_invitation_survives_notification_delivery_failure() -> None:
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
@@ -129,13 +134,13 @@ async def test_create_trust_invitation_survives_email_delivery_failure() -> None
         name="Kairo Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
-    email_delivery = FakeEmailDeliveryService(should_raise=True)
+    notifications = FakeNotificationService(should_raise=True)
     service = TrustInvitationService(
         session,  # type: ignore[arg-type]
         _settings(),
         repo=repo,  # type: ignore[arg-type]
         organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
-        email_delivery=email_delivery,  # type: ignore[arg-type]
+        notifications=notifications,  # type: ignore[arg-type]
     )
 
     response = await service.create(

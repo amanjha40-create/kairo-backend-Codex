@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.tokens import hash_refresh_token
 from app.config import Settings
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.integrations.email.templates import EmailTemplateKey
 from app.models.trust_invitation import TrustInvitation
+from app.notifications.contracts import NotificationRequest
 from app.organization.enums import OrganizationRole
 from app.repositories.trust_invitation import TrustInvitationRepository
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
@@ -24,7 +24,7 @@ from app.schemas.trust_invitation import (
     TrustInvitationPublicLookupResponse,
     TrustInvitationResponse,
 )
-from app.services.email_delivery_service import EmailDeliveryService
+from app.services.notification_service import NotificationService
 from app.services.organization_service import OrganizationService
 from app.trust_invitations.enums import TrustInvitationStatus
 
@@ -41,13 +41,13 @@ class TrustInvitationService:
         *,
         repo: TrustInvitationRepository | None = None,
         organizations: OrganizationService | None = None,
-        email_delivery: EmailDeliveryService | None = None,
+        notifications: NotificationService | None = None,
     ) -> None:
         self._session = session
         self._settings = settings
         self._repo = repo or TrustInvitationRepository(session)
         self._organizations = organizations or OrganizationService(session)
-        self._email_delivery = email_delivery or EmailDeliveryService(session, settings)
+        self._notifications = notifications or NotificationService(session, settings)
 
     async def create(
         self,
@@ -75,21 +75,28 @@ class TrustInvitationService:
         response = self._to_response(refreshed)
         invitation_url = self._build_invitation_url(raw_token)
         try:
-            await self._email_delivery.queue_template_email(
-                template_key=EmailTemplateKey.TRUST_INVITATION.value,
-                to_email=refreshed.subject_email,
-                template_data={
-                    "organization_name": refreshed.organization.name,
-                    "subject_name": refreshed.subject_name,
-                    "invitation_url": invitation_url,
-                    "expires_at_iso": refreshed.expires_at.isoformat(),
-                },
+            await self._notifications.create_and_dispatch(
+                NotificationRequest(
+                    event_type="trust_invitation_created",
+                    recipient_email=refreshed.subject_email,
+                    payload={
+                        "organization_name": refreshed.organization.name,
+                        "subject_name": refreshed.subject_name,
+                        "invitation_url": invitation_url,
+                        "expires_at_iso": refreshed.expires_at.isoformat(),
+                    },
+                    metadata={
+                        "trust_invitation_public_id": str(refreshed.public_id),
+                        "organization_public_id": str(refreshed.organization.public_id),
+                    },
+                ),
+                actor_user_id=actor_user_id,
             )
         except Exception as exc:
             logger.warning(
-                "trust_invitation_email_delivery_failed",
+                "trust_invitation_notification_delivery_failed",
                 extra={
-                    "event": "trust_invitation_email_delivery_failed",
+                    "event": "trust_invitation_notification_delivery_failed",
                     "invitation_public_id": str(refreshed.public_id),
                     "error_type": type(exc).__name__,
                 },
