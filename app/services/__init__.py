@@ -3,6 +3,10 @@
 from app.auth.service import AuthService
 from app.services.admin_verification_service import AdminReviewService, AdminVerificationService
 from app.services.credential_verification_service import CredentialVerificationService
+from app.services.connector_execution_service import ConnectorExecutionService
+from app.services.connector_registry_service import ConnectorRegistryService
+from app.services.connector_result_normalizer import ConnectorResultNormalizer
+from app.services.connector_selection_service import ConnectorSelectionService
 from app.services.document_upload_service import DocumentUploadService
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.employment_document_service import EmploymentDocumentService
@@ -28,6 +32,10 @@ __all__ = [
     "AdminReviewService",
     "AdminVerificationService",
     "AuthService",
+    "ConnectorExecutionService",
+    "ConnectorRegistryService",
+    "ConnectorResultNormalizer",
+    "ConnectorSelectionService",
     "CredentialVerificationService",
     "DocumentUploadService",
     "EmployerVerificationService",

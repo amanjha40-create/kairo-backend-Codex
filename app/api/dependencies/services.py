@@ -12,6 +12,10 @@ from app.infrastructure.redis.deps import get_redis
 from app.services import (
     AdminVerificationService,
     AuthService,
+    ConnectorExecutionService,
+    ConnectorRegistryService,
+    ConnectorResultNormalizer,
+    ConnectorSelectionService,
     CredentialVerificationService,
     DocumentUploadService,
     EmployerVerificationService,
@@ -143,6 +147,31 @@ def get_verification_request_service(
     session: AsyncSession = Depends(get_session),
 ) -> VerificationRequestService:
     return VerificationRequestService(session)
+
+
+def get_connector_registry_service(
+    session: AsyncSession = Depends(get_session),
+) -> ConnectorRegistryService:
+    return ConnectorRegistryService(session)
+
+
+def get_connector_selection_service(
+    session: AsyncSession = Depends(get_session),
+) -> ConnectorSelectionService:
+    registry = ConnectorRegistryService(session)
+    return ConnectorSelectionService(registry)
+
+
+def get_connector_result_normalizer() -> ConnectorResultNormalizer:
+    return ConnectorResultNormalizer()
+
+
+def get_connector_execution_service(
+    session: AsyncSession = Depends(get_session),
+) -> ConnectorExecutionService:
+    registry = ConnectorRegistryService(session)
+    normalizer = ConnectorResultNormalizer()
+    return ConnectorExecutionService(session, registry, normalizer)
 
 
 def get_verification_request_admin_review_service(

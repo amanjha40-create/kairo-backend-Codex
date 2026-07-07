@@ -26,6 +26,7 @@ class VerificationRequestRepository:
             select(VerificationRequest)
             .options(
                 joinedload(VerificationRequest.organization),
+                joinedload(VerificationRequest.registry_record),
                 joinedload(VerificationRequest.trust_invitation),
             )
             .where(VerificationRequest.public_id == request_public_id)
@@ -37,6 +38,7 @@ class VerificationRequestRepository:
             select(VerificationRequest)
             .options(
                 joinedload(VerificationRequest.organization),
+                joinedload(VerificationRequest.registry_record),
                 joinedload(VerificationRequest.trust_invitation),
             )
             .where(VerificationRequest.organization_id == organization_id)
@@ -50,6 +52,7 @@ class VerificationRequestRepository:
             select(VerificationRequest)
             .options(
                 joinedload(VerificationRequest.organization),
+                joinedload(VerificationRequest.registry_record),
                 joinedload(VerificationRequest.trust_invitation),
             )
             .where(VerificationRequest.subject_user_id == subject_user_id)
@@ -63,6 +66,7 @@ class VerificationRequestRepository:
             select(VerificationRequest)
             .options(
                 joinedload(VerificationRequest.organization),
+                joinedload(VerificationRequest.registry_record),
                 joinedload(VerificationRequest.trust_invitation),
             )
             .where(VerificationRequest.status.in_(statuses))

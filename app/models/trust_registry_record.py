@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.models.trust_registry_merge_history import TrustRegistryMergeHistory
     from app.models.trust_registry_record_capability import TrustRegistryRecordCapability
     from app.models.trust_registry_relationship import TrustRegistryRelationship
+    from app.models.verification_connector_run import VerificationConnectorRun
     from app.models.verification_request import VerificationRequest
 
 
@@ -78,6 +79,10 @@ class TrustRegistryRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     organizations: Mapped[list["Organization"]] = relationship("Organization", back_populates="registry_record")
     verification_requests: Mapped[list["VerificationRequest"]] = relationship(
         "VerificationRequest",
+        back_populates="registry_record",
+    )
+    connector_runs: Mapped[list["VerificationConnectorRun"]] = relationship(
+        "VerificationConnectorRun",
         back_populates="registry_record",
     )
     capabilities: Mapped[list["TrustRegistryRecordCapability"]] = relationship(

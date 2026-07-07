@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
-from app.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
@@ -33,7 +33,12 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
+from app.services.connector_execution_service import ConnectorExecutionService
+from app.services.connector_registry_service import ConnectorRegistryService
+from app.services.connector_result_normalizer import ConnectorResultNormalizer
+from app.services.connector_selection_service import ConnectorSelectionService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.verification_connectors.enums import VerificationConnectorResultStatus
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestOriginType,
@@ -54,6 +59,14 @@ class VerificationRequestService:
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
         self._workflow = VerificationRequestWorkflowService(self._requests)
+        self._connector_registry = ConnectorRegistryService(session)
+        self._connector_selector = ConnectorSelectionService(self._connector_registry)
+        self._connector_normalizer = ConnectorResultNormalizer()
+        self._connector_executor = ConnectorExecutionService(
+            session,
+            self._connector_registry,
+            self._connector_normalizer,
+        )
 
     async def create(
         self,
@@ -431,6 +444,7 @@ class VerificationRequestService:
         payload: VerificationRequestActionPayload,
     ) -> VerificationRequestResponse:
         request = await self._require_manageable_request(actor_user_id, verification_request_public_id)
+        connector = await self._connector_selector.select_for_request(request)
         await self._transition_to_in_progress_if_needed(
             request,
             actor_user_id,
@@ -441,14 +455,87 @@ class VerificationRequestService:
                 VerificationRequestStatus.AWAITING_INFORMATION,
             },
         )
-        await self._workflow.transition(
+        await self._workflow.record_action(
             request,
-            target_status=VerificationRequestStatus.VERIFIED,
             actor_user_id=actor_user_id,
-            event_type="verification_request_verified",
-            event_source=VerificationRequestEventSource.ORGANIZATION,
-            metadata=self._merge_note_metadata(payload),
+            event_type="verification_connector_selected",
+            event_source=VerificationRequestEventSource.SYSTEM,
+            metadata={
+                "connector_key": connector.connector_key,
+                "connector_public_id": str(connector.public_id),
+            },
         )
+        try:
+            run, result = await self._connector_executor.execute(
+                connector=connector,
+                request=request,
+                actor_user_id=actor_user_id,
+                metadata=payload.metadata,
+            )
+        except ServiceUnavailableError:
+            await self._workflow.record_action(
+                request,
+                actor_user_id=actor_user_id,
+                event_type="verification_connector_run_unavailable",
+                event_source=VerificationRequestEventSource.SYSTEM,
+                metadata={
+                    "connector_key": connector.connector_key,
+                },
+            )
+            await self._session.commit()
+            raise
+        except Exception:
+            await self._workflow.record_action(
+                request,
+                actor_user_id=actor_user_id,
+                event_type="verification_connector_run_failed",
+                event_source=VerificationRequestEventSource.SYSTEM,
+                metadata={
+                    "connector_key": connector.connector_key,
+                },
+            )
+            await self._session.commit()
+            raise
+
+        connector_metadata = {
+            "connector_key": connector.connector_key,
+            "connector_public_id": str(connector.public_id),
+            "connector_run_public_id": str(run.public_id),
+            "connector_result_status": result.status,
+            "connector_confidence": result.confidence,
+        }
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_connector_run_completed",
+            event_source=VerificationRequestEventSource.SYSTEM,
+            metadata=connector_metadata,
+        )
+        final_metadata = {
+            **self._merge_note_metadata(payload),
+            **connector_metadata,
+        }
+        if result.status == VerificationConnectorResultStatus.VERIFIED.value:
+            await self._workflow.transition(
+                request,
+                target_status=VerificationRequestStatus.VERIFIED,
+                actor_user_id=actor_user_id,
+                event_type="verification_request_verified",
+                event_source=VerificationRequestEventSource.ORGANIZATION,
+                metadata=final_metadata,
+            )
+        elif result.status == VerificationConnectorResultStatus.FAILED.value:
+            await self._workflow.transition(
+                request,
+                target_status=VerificationRequestStatus.REJECTED,
+                actor_user_id=actor_user_id,
+                event_type="verification_request_rejected",
+                event_source=VerificationRequestEventSource.ORGANIZATION,
+                metadata=final_metadata,
+            )
+        else:
+            await self._session.commit()
+            raise ServiceUnavailableError("Verification connector is unavailable")
         return await self._commit_and_reload(request.public_id)
 
     async def reject(
