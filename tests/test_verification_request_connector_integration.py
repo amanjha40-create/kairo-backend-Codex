@@ -9,6 +9,7 @@ import pytest
 
 from app.exceptions import ServiceUnavailableError
 from app.models.organization import Organization
+from app.notifications.contracts import NotificationRequest
 from app.models.verification_connector import VerificationConnector
 from app.models.verification_connector_run import VerificationConnectorRun
 from app.models.verification_request import VerificationRequest
@@ -152,6 +153,17 @@ class FakeExecutor:
         return self.outcome
 
 
+class FakeNotificationService:
+    def __init__(self, *, should_raise: bool = False) -> None:
+        self.should_raise = should_raise
+        self.calls: list[NotificationRequest] = []
+
+    async def create_and_dispatch(self, request: NotificationRequest, *, actor_user_id=None):  # noqa: ANN001
+        self.calls.append(request)
+        if self.should_raise:
+            raise RuntimeError("notification failure")
+
+
 @pytest.mark.asyncio
 async def test_verify_uses_connector_and_marks_request_verified() -> None:
     session = FakeSession()
@@ -168,7 +180,8 @@ async def test_verify_uses_connector_and_marks_request_verified() -> None:
         occurred_at=datetime.now(tz=UTC),
         completed_at=datetime.now(tz=UTC),
     )
-    service = VerificationRequestService(session=session)  # type: ignore[arg-type]
+    notifications = FakeNotificationService()
+    service = VerificationRequestService(session=session, notifications=notifications)  # type: ignore[arg-type]
     service._workflow = FakeWorkflow()  # type: ignore[assignment]
     service._connector_selector = FakeSelector(connector)  # type: ignore[assignment]
     service._connector_executor = FakeExecutor((run, result))  # type: ignore[assignment]
@@ -196,6 +209,9 @@ async def test_verify_uses_connector_and_marks_request_verified() -> None:
     assert service._connector_selector.called is True  # type: ignore[attr-defined]
     assert service._connector_executor.called is True  # type: ignore[attr-defined]
     assert response.status == VerificationRequestStatus.VERIFIED
+    assert len(notifications.calls) == 1
+    assert notifications.calls[0].event_type == "verification_completed"
+    assert notifications.calls[0].recipient_email == "aman3@test.com"
     assert any(event[0] == "verification_connector_selected" for event in service._workflow.events)  # type: ignore[attr-defined]
     assert any(event[0] == "verification_request_verified" for event in service._workflow.events)  # type: ignore[attr-defined]
 
@@ -216,7 +232,8 @@ async def test_verify_marks_request_rejected_for_negative_connector_result() -> 
         occurred_at=datetime.now(tz=UTC),
         completed_at=datetime.now(tz=UTC),
     )
-    service = VerificationRequestService(session=session)  # type: ignore[arg-type]
+    notifications = FakeNotificationService()
+    service = VerificationRequestService(session=session, notifications=notifications)  # type: ignore[arg-type]
     service._workflow = FakeWorkflow()  # type: ignore[assignment]
     service._connector_selector = FakeSelector(connector)  # type: ignore[assignment]
     service._connector_executor = FakeExecutor((run, result))  # type: ignore[assignment]
@@ -242,6 +259,7 @@ async def test_verify_marks_request_rejected_for_negative_connector_result() -> 
     )
 
     assert response.status == VerificationRequestStatus.REJECTED
+    assert notifications.calls == []
     assert any(event[0] == "verification_request_rejected" for event in service._workflow.events)  # type: ignore[attr-defined]
 
 
@@ -250,7 +268,8 @@ async def test_verify_preserves_fail_closed_behavior_for_unavailable_connector()
     session = FakeSession()
     request = _build_request()
     connector = _build_connector()
-    service = VerificationRequestService(session=session)  # type: ignore[arg-type]
+    notifications = FakeNotificationService()
+    service = VerificationRequestService(session=session, notifications=notifications)  # type: ignore[arg-type]
     service._workflow = FakeWorkflow()  # type: ignore[assignment]
     service._connector_selector = FakeSelector(connector)  # type: ignore[assignment]
     service._connector_executor = FakeExecutor(ServiceUnavailableError("mock unavailable"))  # type: ignore[assignment]
@@ -273,4 +292,51 @@ async def test_verify_preserves_fail_closed_behavior_for_unavailable_connector()
         )
 
     assert session.commit_count == 1
+    assert notifications.calls == []
     assert any(event[0] == "verification_connector_run_unavailable" for event in service._workflow.events)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_verify_survives_notification_delivery_failure() -> None:
+    session = FakeSession()
+    request = _build_request()
+    connector = _build_connector()
+    run = _build_run()
+    result = VerificationConnectorResult(
+        status="verified",
+        confidence=91,
+        normalized_data={},
+        raw_metadata={},
+        evidence_references=[],
+        errors=[],
+        occurred_at=datetime.now(tz=UTC),
+        completed_at=datetime.now(tz=UTC),
+    )
+    notifications = FakeNotificationService(should_raise=True)
+    service = VerificationRequestService(session=session, notifications=notifications)  # type: ignore[arg-type]
+    service._workflow = FakeWorkflow()  # type: ignore[assignment]
+    service._connector_selector = FakeSelector(connector)  # type: ignore[assignment]
+    service._connector_executor = FakeExecutor((run, result))  # type: ignore[assignment]
+
+    async def _require_manageable_request(actor_user_id: UUID, verification_request_public_id: UUID) -> VerificationRequest:  # noqa: ARG001
+        return request
+
+    async def _transition_to_in_progress_if_needed(req, actor_user_id, metadata, *, allowed_current_statuses):  # noqa: ANN001
+        if req.status in allowed_current_statuses:
+            req.status = VerificationRequestStatus.IN_PROGRESS
+
+    async def _commit_and_reload(request_public_id: UUID) -> VerificationRequestResponse:  # noqa: ARG001
+        return _to_response(request)
+
+    service._require_manageable_request = _require_manageable_request  # type: ignore[assignment]
+    service._transition_to_in_progress_if_needed = _transition_to_in_progress_if_needed  # type: ignore[assignment]
+    service._commit_and_reload = _commit_and_reload  # type: ignore[assignment]
+
+    response = await service.verify(
+        actor_user_id=uuid4(),
+        verification_request_public_id=request.public_id,
+        payload=VerificationRequestActionPayload(note="Verified", metadata={}),
+    )
+
+    assert response.status == VerificationRequestStatus.VERIFIED
+    assert len(notifications.calls) == 1

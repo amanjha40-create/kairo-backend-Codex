@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_evidence import VerificationRequestEvidence
+from app.notifications.contracts import NotificationRequest
 from app.repositories.organization import OrganizationRepository
 from app.repositories.trust_invitation import TrustInvitationRepository
 from app.repositories.user import UserRepository
@@ -33,6 +35,7 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
+from app.services.notification_service import NotificationService
 from app.services.connector_execution_service import ConnectorExecutionService
 from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
@@ -45,11 +48,18 @@ from app.verification_requests.enums import (
     VerificationRequestStatus,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class VerificationRequestService:
     """Canonical request management and authorization for verification workflows."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        notifications: NotificationService | None = None,
+    ) -> None:
         self._session = session
         self._requests = VerificationRequestRepository(session)
         self._organizations = OrganizationRepository(session)
@@ -67,6 +77,7 @@ class VerificationRequestService:
             self._connector_registry,
             self._connector_normalizer,
         )
+        self._notifications = notifications or NotificationService(session)
 
     async def create(
         self,
@@ -524,6 +535,37 @@ class VerificationRequestService:
                 event_source=VerificationRequestEventSource.ORGANIZATION,
                 metadata=final_metadata,
             )
+            try:
+                await self._notifications.create_and_dispatch(
+                    NotificationRequest(
+                        event_type="verification_completed",
+                        recipient_user_id=request.subject_user_id,
+                        recipient_email=request.subject_email,
+                        payload={
+                            "subject_name": request.subject_name,
+                            "organization_name": self._organization_name(request),
+                            "request_type": request.request_type.value,
+                            "completed_at_iso": datetime.now(tz=UTC).isoformat(),
+                        },
+                        metadata={
+                            "verification_request_public_id": str(request.public_id),
+                            "organization_public_id": str(request.organization.public_id)
+                            if request.organization is not None
+                            else None,
+                            "connector_run_public_id": str(run.public_id),
+                        },
+                    ),
+                    actor_user_id=actor_user_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "verification_completion_notification_failed",
+                    extra={
+                        "event": "verification_completion_notification_failed",
+                        "verification_request_public_id": str(request.public_id),
+                        "error_type": type(exc).__name__,
+                    },
+                )
         elif result.status == VerificationConnectorResultStatus.FAILED.value:
             await self._workflow.transition(
                 request,
@@ -852,6 +894,13 @@ class VerificationRequestService:
 
     def _normalize_email(self, email: str) -> str:
         return email.strip().lower()
+
+    def _organization_name(self, request: VerificationRequest) -> str:
+        if request.organization is not None:
+            return request.organization.name
+        if request.target_organization_name:
+            return request.target_organization_name
+        return "the requested organization"
 
     def _subject_name(self, subject: User) -> str:
         if subject.full_name:
