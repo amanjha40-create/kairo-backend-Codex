@@ -21,6 +21,11 @@ from app.services import (
     EmployerVerificationService,
     EmploymentDocumentService,
     EmploymentService,
+    NotificationChannelRegistry,
+    NotificationDispatcher,
+    NotificationPreferenceService,
+    NotificationService,
+    NotificationTemplateResolver,
     OrganizationService,
     PassportEngineService,
     PassportShareService,
@@ -127,6 +132,40 @@ def get_trust_invitation_service(
     settings: Settings = Depends(get_settings),
 ) -> TrustInvitationService:
     return TrustInvitationService(session, settings)
+
+
+def get_notification_preference_service(
+    session: AsyncSession = Depends(get_session),
+) -> NotificationPreferenceService:
+    return NotificationPreferenceService(session)
+
+
+def get_notification_template_resolver() -> NotificationTemplateResolver:
+    return NotificationTemplateResolver()
+
+
+def get_notification_channel_registry() -> NotificationChannelRegistry:
+    return NotificationChannelRegistry()
+
+
+def get_notification_dispatcher() -> NotificationDispatcher:
+    return NotificationDispatcher(NotificationChannelRegistry())
+
+
+def get_notification_service(
+    session: AsyncSession = Depends(get_session),
+) -> NotificationService:
+    preferences = NotificationPreferenceService(session)
+    template_resolver = NotificationTemplateResolver()
+    registry = NotificationChannelRegistry()
+    dispatcher = NotificationDispatcher(registry)
+    return NotificationService(
+        session,
+        preferences=preferences,
+        template_resolver=template_resolver,
+        channel_registry=registry,
+        dispatcher=dispatcher,
+    )
 
 
 def get_trust_registry_service(session: AsyncSession = Depends(get_session)) -> TrustRegistryService:
