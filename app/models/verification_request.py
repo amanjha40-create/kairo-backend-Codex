@@ -24,6 +24,7 @@ from app.verification_requests.enums import (
 )
 
 if TYPE_CHECKING:
+    from app.models.verification_connector_run import VerificationConnectorRun
     from app.models.organization import Organization
     from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.trust_invitation import TrustInvitation
@@ -147,6 +148,12 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="verification_request",
         cascade="all, delete-orphan",
         order_by="VerificationRequestReview.created_at.asc()",
+    )
+    connector_runs: Mapped[list["VerificationConnectorRun"]] = relationship(
+        "VerificationConnectorRun",
+        back_populates="verification_request",
+        cascade="all, delete-orphan",
+        order_by="VerificationConnectorRun.started_at.desc()",
     )
 
     def __repr__(self) -> str:

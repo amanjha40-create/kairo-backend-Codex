@@ -34,6 +34,8 @@ from app.models.trust_registry_relationship import TrustRegistryRelationship
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
+from app.models.verification_connector import VerificationConnector
+from app.models.verification_connector_run import VerificationConnectorRun
 from app.models.verification_request_evidence import VerificationRequestEvidence
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
@@ -77,6 +79,8 @@ __all__ = [
     "User",
     "UserDocument",
     "UserSocialAccount",
+    "VerificationConnector",
+    "VerificationConnectorRun",
     "VerificationRequestEvidence",
     "VerificationRequest",
     "VerificationRequestEvent",
