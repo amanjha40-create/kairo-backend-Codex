@@ -76,6 +76,7 @@ class VerificationConnectorRunRepository:
         stmt = (
             select(VerificationConnectorRun)
             .options(
+                joinedload(VerificationConnectorRun.connector),
                 joinedload(VerificationConnectorRun.verification_request),
                 joinedload(VerificationConnectorRun.registry_record),
             )

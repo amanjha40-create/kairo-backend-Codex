@@ -35,6 +35,7 @@ from app.api.v1.routes import (
     public_profile,
     public_vault,
     trust_score,
+    verification_connectors,
     user_documents,
     users,
 )
@@ -61,6 +62,7 @@ api_router.include_router(employment_documents.router)
 api_router.include_router(admin_review.router)
 api_router.include_router(admin_review_workflow.router)
 api_router.include_router(admin_verification.router)
+api_router.include_router(verification_connectors.admin_router)
 api_router.include_router(trust_registry.admin_router)
 api_router.include_router(trust_registry.internal_router)
 api_router.include_router(user_documents.router)
