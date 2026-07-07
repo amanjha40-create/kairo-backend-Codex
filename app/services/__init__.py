@@ -14,6 +14,9 @@ from app.services.passport_share_view_service import PassportShareViewService
 from app.services.public_passport_service import PublicPassportService
 from app.services.trust_score_service import TrustScoreService
 from app.services.trust_invitation_service import TrustInvitationService
+from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
+from app.services.trust_registry_search_service import TrustRegistrySearchService
+from app.services.trust_registry_service import TrustRegistryService
 from app.services.user_service import UserService
 from app.services.verification_request_admin_review_service import VerificationRequestAdminReviewService
 from app.services.verification_request_service import VerificationRequestService
@@ -37,6 +40,9 @@ __all__ = [
     "PublicPassportService",
     "TrustScoreService",
     "TrustInvitationService",
+    "TrustRegistryResolutionService",
+    "TrustRegistrySearchService",
+    "TrustRegistryService",
     "UserService",
     "VerificationRequestAdminReviewService",
     "VerificationRequestService",
