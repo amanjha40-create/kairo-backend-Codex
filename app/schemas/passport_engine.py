@@ -52,6 +52,10 @@ class PassportSharingSummary(BaseModel):
 
 
 class OnboardingStatusResponse(BaseModel):
+    current_step: Literal["verify_identity", "complete_profile", "complete"]
+    email_verified: bool
+    phone_verified: bool
+    passport_ready: bool
     completed_steps: list[str]
     missing_requirements: list[str]
     next_recommended_step: str | None

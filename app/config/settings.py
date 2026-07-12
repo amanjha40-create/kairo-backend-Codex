@@ -167,6 +167,21 @@ class Settings(BaseSettings):
         le=168,
         validation_alias=AliasChoices("SIGNUP_PENDING_TTL_HOURS"),
     )
+    phone_default_country_code: str = Field(
+        default="+91",
+        description="Used only when a signup phone number omits the leading +country code.",
+        validation_alias=AliasChoices("PHONE_DEFAULT_COUNTRY_CODE"),
+    )
+    phone_otp_backend: str = Field(
+        default="console",
+        description="console | real_provider_placeholder — console logs OTPs locally and is never valid for production.",
+        validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
+    )
+    phone_otp_enabled: bool = Field(
+        default=True,
+        description="Enables staged phone OTP verification during signup.",
+        validation_alias=AliasChoices("PHONE_OTP_ENABLED"),
+    )
     password_reset_token_ttl_minutes: int = Field(
         default=30,
         ge=5,
@@ -355,6 +370,11 @@ class Settings(BaseSettings):
     def normalize_job_backend(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("phone_otp_backend")
+    @classmethod
+    def normalize_phone_otp_backend(cls, v: str) -> str:
+        return v.strip().lower()
+
     @field_validator("trusted_hosts", mode="before")
     @classmethod
     def parse_trusted_hosts(cls, v: object) -> list[str]:
@@ -442,6 +462,9 @@ class Settings(BaseSettings):
             if self.email_backend == "console":
                 msg = "EMAIL_BACKEND must be smtp in APP_ENV=production."
                 raise ValueError(msg)
+            if self.phone_otp_enabled and self.phone_otp_backend == "console":
+                msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
+                raise ValueError(msg)
 
         if self.email_backend == "smtp":
             if not self.smtp_host:
@@ -450,6 +473,10 @@ class Settings(BaseSettings):
             if self.smtp_use_ssl and self.smtp_use_tls:
                 msg = "Set only one of SMTP_USE_SSL (465) or SMTP_USE_TLS (587), not both."
                 raise ValueError(msg)
+
+        if self.phone_otp_backend not in {"console", "real_provider_placeholder"}:
+            msg = "PHONE_OTP_BACKEND must be one of: console, real_provider_placeholder."
+            raise ValueError(msg)
 
         if self.job_backend not in {"inline", "sqs"}:
             msg = "JOB_BACKEND must be one of: inline, sqs."

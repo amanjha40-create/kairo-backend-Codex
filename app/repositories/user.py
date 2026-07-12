@@ -33,6 +33,11 @@ class UserRepository(BaseRepository[User]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_phone(self, phone: str) -> User | None:
+        stmt = select(User).where(User.phone == phone, User.deleted_at.is_(None))
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_non_deleted(
         self,
         *,

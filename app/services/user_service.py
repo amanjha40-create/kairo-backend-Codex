@@ -8,8 +8,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.phone_utils import normalize_phone
 from app.config import Settings
-from app.exceptions import NotFoundError, ValidationAppError
+from app.exceptions import ConflictError, NotFoundError, ValidationAppError
 from app.infrastructure.s3.paths import build_user_avatar_key
 from app.infrastructure.s3.presign import generate_presigned_get_url, generate_presigned_put_url
 from app.repositories import UserRepository
@@ -50,8 +51,20 @@ class UserService:
             raise NotFoundError("User not found")
 
         changes = data.model_dump(exclude_unset=True)
+        if "phone" in changes and changes["phone"]:
+            normalized_phone = normalize_phone(changes["phone"], self._settings)
+            existing = await self._users.get_by_phone(normalized_phone)
+            if existing is not None and existing.id != user.id:
+                raise ConflictError("Phone number is already in use")
+            if normalized_phone != user.phone:
+                user.phone_verified_at = None
+            changes["phone"] = normalized_phone
+
         for field, value in changes.items():
             setattr(user, field, value)
+
+        if self._is_minimum_onboarding_complete(user) and user.employment_onboarding_completed_at is None:
+            user.employment_onboarding_completed_at = datetime.now(timezone.utc)
 
         await self._session.commit()
         await self._session.refresh(user)
@@ -117,4 +130,18 @@ class UserService:
             upload_url=upload_url,
             avatar_url=avatar_url,
             expires_in_seconds=300,
+        )
+
+    def _is_minimum_onboarding_complete(self, user) -> bool:  # noqa: ANN001
+        return all(
+            [
+                bool(user.email_verified_at),
+                bool(user.phone_verified_at),
+                bool((user.full_name or "").strip()),
+                bool((user.phone or "").strip()),
+                bool((user.headline or "").strip()),
+                bool((user.current_role or "").strip()),
+                bool((user.industry or "").strip()),
+                user.years_of_experience is not None,
+            ]
         )

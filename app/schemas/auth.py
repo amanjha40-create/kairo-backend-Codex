@@ -11,17 +11,39 @@ class RegisterRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     email: EmailStr
+    phone: str = Field(..., min_length=8, max_length=32)
     password: str = Field(..., min_length=12, max_length=128, description="Minimum length enforced server-side")
     full_name: str | None = Field(None, max_length=255)
 
 
 class SignupStartResponse(BaseModel):
-    """OTP sent — complete signup via verify endpoint before tokens are issued."""
+    """Staged signup created — verify both channels before tokens are issued."""
 
     signup_session_id: UUID
     email_masked: str
+    phone_masked: str
+    email_verified: bool = False
+    phone_verified: bool = False
+    email_resend_after_seconds: int
+    phone_resend_after_seconds: int
+    expires_in_seconds: int
+    message: str = "Signup session created"
+
+
+class SignupChannelRequest(BaseModel):
+    signup_session_id: UUID
+
+
+class SignupChannelSendResponse(BaseModel):
+    signup_session_id: UUID
+    channel: str
+    verified: bool
+    email_verified: bool
+    phone_verified: bool
     resend_after_seconds: int
     expires_in_seconds: int
+    email_masked: str | None = None
+    phone_masked: str | None = None
     message: str = "Verification code sent"
 
 
@@ -38,6 +60,19 @@ class SignupVerifyRequest(BaseModel):
             msg = "code must be a 6-digit number"
             raise ValueError(msg)
         return v
+
+
+class SignupChannelVerifyResponse(BaseModel):
+    signup_session_id: UUID
+    channel: str
+    verified: bool = True
+    email_verified: bool
+    phone_verified: bool
+    message: str
+
+
+class SignupCompleteRequest(BaseModel):
+    signup_session_id: UUID
 
 
 class SignupResendRequest(BaseModel):
