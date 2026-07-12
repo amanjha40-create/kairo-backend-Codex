@@ -166,10 +166,10 @@ Response JSON:
   "phone_masked": "+91******3210",
   "email_verified": false,
   "phone_verified": false,
-  "email_resend_after_seconds": 30,
-  "phone_resend_after_seconds": 30,
-  "expires_in_seconds": 900,
-  "message": "Verification codes sent"
+  "email_resend_after_seconds": 0,
+  "phone_resend_after_seconds": 0,
+  "expires_in_seconds": 86400,
+  "message": "Signup session created"
 }
 ```
 
@@ -187,15 +187,15 @@ Frontend TypeScript adapter:
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 2. Email OTP send
 
@@ -225,10 +225,13 @@ Response JSON:
 {
   "signup_session_id": "uuid",
   "channel": "email",
+  "email_verified": false,
+  "phone_verified": false,
+  "phone_masked": "+91******3210",
   "email_masked": "am***@example.com",
   "verified": false,
   "resend_after_seconds": 30,
-  "expires_in_seconds": 300,
+  "expires_in_seconds": 600,
   "message": "Verification code sent"
 }
 ```
@@ -240,15 +243,15 @@ Errors:
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 3. Email OTP resend
 
@@ -278,25 +281,28 @@ Response JSON:
 {
   "signup_session_id": "uuid",
   "channel": "email",
+  "email_verified": false,
+  "phone_verified": false,
+  "phone_masked": "+91******3210",
   "email_masked": "am***@example.com",
   "verified": false,
   "resend_after_seconds": 30,
-  "expires_in_seconds": 300,
+  "expires_in_seconds": 600,
   "message": "Verification code sent"
 }
 ```
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 4. Email OTP verify
 
@@ -336,21 +342,20 @@ Response JSON:
 
 Errors:
 
-- `400 invalid_otp`
-- `400 otp_expired`
+- `401 unauthorized` with normalized error envelope for invalid or expired codes
 - `429 rate_limited`
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 5. Phone OTP send
 
@@ -380,25 +385,28 @@ Response JSON:
 {
   "signup_session_id": "uuid",
   "channel": "phone",
+  "email_verified": false,
+  "phone_verified": false,
+  "email_masked": "am***@example.com",
   "phone_masked": "+91******3210",
   "verified": false,
   "resend_after_seconds": 30,
-  "expires_in_seconds": 300,
+  "expires_in_seconds": 600,
   "message": "Verification code sent"
 }
 ```
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 6. Phone OTP resend
 
@@ -428,25 +436,28 @@ Response JSON:
 {
   "signup_session_id": "uuid",
   "channel": "phone",
+  "email_verified": false,
+  "phone_verified": false,
+  "email_masked": "am***@example.com",
   "phone_masked": "+91******3210",
   "verified": false,
   "resend_after_seconds": 30,
-  "expires_in_seconds": 300,
+  "expires_in_seconds": 600,
   "message": "Verification code sent"
 }
 ```
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 7. Phone OTP verify
 
@@ -486,15 +497,15 @@ Response JSON:
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 8. Signup complete
 
@@ -537,15 +548,15 @@ Rules:
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 9. Login
 
@@ -809,15 +820,15 @@ Rules:
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ### 15. Quick profile update
 
@@ -848,7 +859,7 @@ Response JSON:
 
 ```json
 {
-  "public_id": "uuid",
+  "id": "uuid",
   "email": "aman@example.com",
   "phone": "+919876543210",
   "full_name": "Aman Jha",
@@ -856,28 +867,29 @@ Response JSON:
   "current_role": "Software Engineer",
   "industry": "Technology",
   "years_of_experience": 6,
-  "email_verified": true,
-  "phone_verified": true,
-  "updated_at": "2026-07-12T10:00:00Z"
+  "phone_verified_at": "2026-07-12T10:00:00Z",
+  "employment_onboarding_completed_at": "2026-07-12T10:05:00Z",
+  "created_at": "2026-07-12T09:45:00Z"
 }
 ```
 
 Contract note:
 
-- if `PATCH /api/v1/users/me` already owns these profile fields canonically, it should remain the permanent contract
-- only add a dedicated onboarding quick-profile endpoint if orchestration is needed beyond a normal profile update
+- `PATCH /api/v1/users/me` is the permanent quick-profile persistence contract
+- frontend should re-fetch `GET /api/v1/onboarding/status` after success and route from backend facts
+- no separate quick-profile orchestration endpoint is required in Phase 1
 
 Backend implementation status:
 
-- backend change required
+- ready
 
 Owning side:
 
-- backend and frontend
+- frontend change required
 
 Integration status:
 
-- both required
+- frontend change required
 
 ## Deferred Feature Contract Decisions
 
@@ -909,15 +921,15 @@ Frontend handling for deferred features:
 
 | Frontend route | Feature | Required endpoint(s) | Backend status | Ownership | Integration status |
 | --- | --- | --- | --- | --- | --- |
-| `/signup` | staged signup start | `POST /api/v1/auth/signup/start` | backend change required | backend + frontend | both required |
-| `/verify-identity` | dual OTP verification | `POST /api/v1/auth/signup/email/send`, `POST /api/v1/auth/signup/email/resend`, `POST /api/v1/auth/signup/email/verify`, `POST /api/v1/auth/signup/phone/send`, `POST /api/v1/auth/signup/phone/resend`, `POST /api/v1/auth/signup/phone/verify`, `POST /api/v1/auth/signup/complete` | backend change required | backend + frontend | both required |
-| `/login` | login + onboarding routing | `POST /api/v1/auth/login`, `GET /api/v1/onboarding/status` | partial | frontend primary, backend additive | both required |
+| `/signup` | staged signup start | `POST /api/v1/auth/signup/start` | ready | frontend | frontend change required |
+| `/verify-identity` | dual OTP verification | `POST /api/v1/auth/signup/email/send`, `POST /api/v1/auth/signup/email/resend`, `POST /api/v1/auth/signup/email/verify`, `POST /api/v1/auth/signup/phone/send`, `POST /api/v1/auth/signup/phone/resend`, `POST /api/v1/auth/signup/phone/verify`, `POST /api/v1/auth/signup/complete` | ready | frontend | frontend change required |
+| `/login` | login + onboarding routing | `POST /api/v1/auth/login`, `GET /api/v1/onboarding/status` | ready | frontend | frontend change required |
 | `/reset-password` | forgot password request | `POST /api/v1/auth/forgot-password` | ready | frontend | frontend change required |
-| `/reset-password/confirm` | password reset confirm | `POST /api/v1/auth/reset-password` | ready | frontend | frontend change required |
+| `/reset-password-confirm` | password reset confirm | `POST /api/v1/auth/reset-password` | ready | frontend | frontend change required |
 | `/more` | logout | `POST /api/v1/auth/logout` | ready | frontend | frontend change required |
-| `/start-method` | onboarding route selection | `GET /api/v1/onboarding/status` | partial | frontend + backend | both required |
-| `/quick-profile` | minimal profile onboarding | `PATCH /api/v1/users/me`, `GET /api/v1/onboarding/status` | backend change required | backend + frontend | both required |
-| `/passport-created` | onboarding completion landing | `GET /api/v1/onboarding/status` | partial | frontend + backend | both required |
+| `/start-method` | onboarding route selection | `GET /api/v1/onboarding/status` | ready | frontend | frontend change required |
+| `/quick-profile` | minimal profile onboarding | `PATCH /api/v1/users/me`, `GET /api/v1/onboarding/status` | ready | frontend | frontend change required |
+| `/passport-created` | onboarding completion landing | `GET /api/v1/onboarding/status` | ready | frontend | frontend change required |
 | `/resume` | deferred resume onboarding | none in phase 1 | missing | frontend | deferred |
 | `/resume-processing` | deferred resume onboarding | none in phase 1 | missing | frontend | deferred |
 | `/review-import/$importId` | deferred resume onboarding | none in phase 1 | missing | frontend | deferred |
@@ -935,6 +947,7 @@ Frontend handling for deferred features:
 - `src/routes/verify-identity.tsx`
 - `src/routes/login.tsx`
 - `src/routes/reset-password.tsx`
+- `src/routes/reset-password-confirm.tsx`
 - `src/routes/more.tsx`
 - `src/routes/start-method.tsx`
 - `src/routes/quick-profile.tsx`
@@ -956,7 +969,8 @@ Likely new frontend files:
 - `app/schemas/auth.py`
 - `app/services/passport_engine_service.py`
 - `app/schemas/passport_engine.py`
-- `app/api/v1/routes/passport_engine.py`
+- `app/api/v1/routes/onboarding.py`
+- `app/api/v1/routes/users.py`
 - `app/models/user.py`
 - `app/models/pending_signup.py`
 - signup-related repositories and OTP stores
@@ -969,19 +983,16 @@ Likely new frontend files:
 
 Ready now:
 
+- staged dual-channel signup endpoints
+- phone OTP provider abstraction with safe local console delivery
+- backend-owned onboarding `current_step`
+- quick profile persistence fields on `PATCH /api/v1/users/me`
+- phone verification persistence on the user profile
 - login endpoint
 - refresh endpoint
 - logout endpoint
 - forgot password request endpoint
 - reset password confirm endpoint
-
-Needs backend extension:
-
-- staged dual-channel signup
-- phone OTP provider abstraction
-- backend-owned onboarding `current_step`
-- quick profile persistence fields if missing
-- phone verification persistence on the user profile
 
 Needs frontend integration work:
 
