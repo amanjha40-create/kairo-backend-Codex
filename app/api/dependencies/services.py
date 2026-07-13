@@ -238,8 +238,9 @@ def get_connector_execution_service(
 
 def get_verification_request_admin_review_service(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> VerificationRequestAdminReviewService:
-    return VerificationRequestAdminReviewService(session)
+    return VerificationRequestAdminReviewService(session, settings)
 
 
 def get_passport_share_service(

@@ -14,14 +14,18 @@ from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_evidence import VerificationRequestEvidence
+from app.models.verification_contact import VerificationContact
 from app.notifications.contracts import NotificationRequest
 from app.repositories.organization import OrganizationRepository
+from app.repositories.employment_document import EmploymentDocumentRepository
+from app.repositories.employment import EmploymentRepository
 from app.repositories.trust_invitation import TrustInvitationRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_document import UserDocumentRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
+from app.repositories.verification_contact import VerificationContactRepository
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
@@ -34,6 +38,9 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
+    VerificationContactRequest,
+    VerificationContactResponse,
+    EmploymentVerificationDraftRequest,
 )
 from app.services.notification_service import NotificationService
 from app.services.connector_execution_service import ConnectorExecutionService
@@ -46,7 +53,9 @@ from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestOriginType,
     VerificationRequestStatus,
+    VerificationRequestType,
 )
+from app.employment.enums import DocumentVerificationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +74,12 @@ class VerificationRequestService:
         self._organizations = OrganizationRepository(session)
         self._users = UserRepository(session)
         self._user_documents = UserDocumentRepository(session)
+        self._employment_documents = EmploymentDocumentRepository(session)
+        self._employments = EmploymentRepository(session)
         self._trust_invitations = TrustInvitationRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
+        self._contacts = VerificationContactRepository(session)
         self._workflow = VerificationRequestWorkflowService(self._requests)
         self._connector_registry = ConnectorRegistryService(session)
         self._connector_selector = ConnectorSelectionService(self._connector_registry)
@@ -78,6 +90,151 @@ class VerificationRequestService:
             self._connector_normalizer,
         )
         self._notifications = notifications or NotificationService(session)
+
+    async def create_employment_verification_draft(
+        self,
+        actor_user_id: UUID,
+        employment_id: UUID,
+        payload: EmploymentVerificationDraftRequest,
+    ) -> VerificationRequestResponse:
+        employment = await self._employments.get_owned_active(employment_id, actor_user_id)
+        if employment is None:
+            raise NotFoundError("Employment not found")
+        existing = await self._requests.get_active_for_employment(employment_id)
+        if existing is not None:
+            if existing.subject_user_id != actor_user_id:
+                raise NotFoundError("Employment verification request not found")
+            return self._to_response(existing)
+        subject = await self._require_subject_user(actor_user_id)
+        request = await self._requests.create(
+            VerificationRequest(
+                employment_id=employment.id,
+                origin_type=VerificationRequestOriginType.SUBJECT_INITIATED,
+                subject_user_id=actor_user_id,
+                subject_name=employment.subject_full_name,
+                subject_email=employment.subject_email or subject.email,
+                target_organization_name=employment.employer_legal_name,
+                target_organization_email=str(payload.verification_contact.contact_email).lower(),
+                request_type=VerificationRequestType.EMPLOYMENT,
+                status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
+                requested_by_user_id=actor_user_id,
+                trust_context={},
+            )
+        )
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="employment_created",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"employment_id": str(employment.id)},
+        )
+        contact = payload.verification_contact
+        contact_row = await self._contacts.create(
+            VerificationContact(
+                verification_request_id=request.id,
+                contact_name=contact.contact_name,
+                contact_email=str(contact.contact_email).lower(),
+                contact_role=contact.contact_role,
+                contact_type=contact.contact_type,
+                candidate_note=contact.candidate_note,
+                submitted_by_user_id=actor_user_id,
+            )
+        )
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_contact_added",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"verification_contact_public_id": str(contact_row.public_id)},
+        )
+        for document_id in dict.fromkeys(payload.employment_document_ids):
+            await self._validate_employment_document_evidence(request, actor_user_id, document_id)
+            document = await self._employment_documents.get_active_for_employment(employment.id, document_id)
+            assert document is not None
+            evidence = await self._evidence.create(
+                VerificationRequestEvidence(
+                    verification_request_id=request.id,
+                    submitted_by_user_id=actor_user_id,
+                    evidence_type=document.document_type,
+                    field_key="employment_evidence",
+                    employment_document_id=document.id,
+                    status=VerificationRequestEvidenceStatus.SUBMITTED,
+                )
+            )
+            await self._workflow.record_action(
+                request,
+                actor_user_id=actor_user_id,
+                event_type="evidence_uploaded",
+                event_source=VerificationRequestEventSource.CANDIDATE,
+                metadata={"evidence_public_id": str(evidence.public_id), "employment_document_id": str(document.id)},
+            )
+        return await self._commit_and_reload(request.public_id)
+
+    async def get_employment_verification_request(
+        self,
+        actor_user_id: UUID,
+        employment_id: UUID,
+    ) -> VerificationRequestResponse:
+        employment = await self._employments.get_owned_active(employment_id, actor_user_id)
+        if employment is None:
+            raise NotFoundError("Employment not found")
+        request = await self._requests.get_active_for_employment(employment_id)
+        if request is None or request.subject_user_id != actor_user_id:
+            raise NotFoundError("Employment verification request not found")
+        return self._to_response(request)
+
+    async def get_verification_contact(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+    ) -> VerificationContactResponse:
+        request = await self._get_accessible_request(
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+            verification_request_public_id=verification_request_public_id,
+        )
+        contact = await self._contacts.get_current(request.id)
+        if contact is None:
+            raise NotFoundError("Verification contact not found")
+        return self._to_contact_response(contact)
+
+    async def update_verification_contact(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+        payload: VerificationContactRequest,
+    ) -> VerificationContactResponse:
+        request = await self._require_editable_subject_request(
+            actor_user_id,
+            actor_email,
+            verification_request_public_id,
+        )
+        current = await self._contacts.get_current(request.id)
+        now = datetime.now(tz=UTC)
+        if current is not None:
+            current.superseded_at = now
+        contact = await self._contacts.create(
+            VerificationContact(
+                verification_request_id=request.id,
+                contact_name=payload.contact_name,
+                contact_email=str(payload.contact_email).strip().lower(),
+                contact_role=payload.contact_role,
+                contact_type=payload.contact_type,
+                candidate_note=payload.candidate_note,
+                submitted_by_user_id=actor_user_id,
+            )
+        )
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="candidate_updated_contact" if current is not None else "verification_contact_added",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"verification_contact_public_id": str(contact.public_id)},
+        )
+        await self._session.commit()
+        return self._to_contact_response(contact)
 
     async def create(
         self,
@@ -273,6 +430,12 @@ class VerificationRequestService:
             document = await self._user_documents.get_owned(payload.document_id, actor_user_id)
             if document is None:
                 raise NotFoundError("User document not found")
+        if payload.employment_document_id is not None:
+            await self._validate_employment_document_evidence(
+                request,
+                actor_user_id,
+                payload.employment_document_id,
+            )
 
         evidence = VerificationRequestEvidence(
             verification_request_id=request.id,
@@ -280,6 +443,7 @@ class VerificationRequestService:
             evidence_type=payload.evidence_type.strip().lower(),
             field_key=payload.field_key.strip(),
             document_id=payload.document_id,
+            employment_document_id=payload.employment_document_id,
             value=payload.value,
             status=VerificationRequestEvidenceStatus.SUBMITTED,
         )
@@ -287,7 +451,7 @@ class VerificationRequestService:
         await self._workflow.record_action(
             request,
             actor_user_id=actor_user_id,
-            event_type="verification_request_evidence_added",
+            event_type="evidence_uploaded",
             event_source=VerificationRequestEventSource.CANDIDATE,
             metadata={
                 "evidence_public_id": str(evidence.public_id),
@@ -320,6 +484,13 @@ class VerificationRequestService:
             document = await self._user_documents.get_owned(payload.document_id, actor_user_id)
             if document is None:
                 raise NotFoundError("User document not found")
+        if payload.employment_document_id is not None:
+            await self._validate_employment_document_evidence(
+                request,
+                actor_user_id,
+                payload.employment_document_id,
+                exclude_evidence_public_id=evidence.public_id,
+            )
 
         if payload.evidence_type is not None:
             evidence.evidence_type = payload.evidence_type.strip().lower()
@@ -327,13 +498,17 @@ class VerificationRequestService:
             evidence.field_key = payload.field_key.strip()
         if payload.document_id is not None:
             evidence.document_id = payload.document_id
+            evidence.employment_document_id = None
+        if payload.employment_document_id is not None:
+            evidence.employment_document_id = payload.employment_document_id
+            evidence.document_id = None
         if payload.value is not None:
             evidence.value = payload.value
         evidence.status = VerificationRequestEvidenceStatus.SUBMITTED
         await self._workflow.record_action(
             request,
             actor_user_id=actor_user_id,
-            event_type="verification_request_evidence_updated",
+            event_type="candidate_updated_evidence",
             event_source=VerificationRequestEventSource.CANDIDATE,
             metadata={
                 "evidence_public_id": str(evidence.public_id),
@@ -362,12 +537,19 @@ class VerificationRequestService:
         evidence_items = await self._evidence.list_for_request(request.id)
         if not evidence_items:
             raise ConflictError("Add at least one evidence item before submitting for review")
+        if request.request_type == VerificationRequestType.EMPLOYMENT:
+            if request.employment_id is None:
+                raise ConflictError("Employment verification request is not linked to an employment")
+            if await self._contacts.get_current(request.id) is None:
+                raise ConflictError("Add a verification contact before submitting for review")
+            if not any(item.employment_document_id is not None for item in evidence_items):
+                raise ConflictError("Add completed employment evidence before submitting for review")
         request.submitted_for_admin_review_at = datetime.now(tz=UTC)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
             actor_user_id=actor_user_id,
-            event_type="verification_request_submitted_for_admin_review",
+            event_type="verification_submitted",
             event_source=VerificationRequestEventSource.CANDIDATE,
             metadata={"evidence_count": len(evidence_items)},
         )
@@ -800,6 +982,28 @@ class VerificationRequestService:
             raise NotFoundError("Verification request not found")
         return request
 
+    async def _validate_employment_document_evidence(
+        self,
+        request: VerificationRequest,
+        actor_user_id: UUID,
+        employment_document_id: UUID,
+        *,
+        exclude_evidence_public_id: UUID | None = None,
+    ) -> None:
+        if request.employment_id is None:
+            raise ConflictError("Verification request is not linked to an employment")
+        document = await self._employment_documents.get_active_for_employment(
+            request.employment_id,
+            employment_document_id,
+        )
+        if document is None or document.uploaded_by_user_id != actor_user_id:
+            raise NotFoundError("Employment document not found")
+        if document.verification_status == DocumentVerificationStatus.PENDING_UPLOAD.value:
+            raise ConflictError("Employment document upload is not complete")
+        existing = await self._evidence.get_by_employment_document(request.id, employment_document_id)
+        if existing is not None and existing.public_id != exclude_evidence_public_id:
+            raise ConflictError("Employment document is already attached as evidence")
+
     async def _get_membership_for_request(self, request: VerificationRequest, actor_user_id: UUID):
         if request.organization_id is None:
             return None
@@ -820,6 +1024,7 @@ class VerificationRequestService:
     def _to_response(self, request: VerificationRequest) -> VerificationRequestResponse:
         return VerificationRequestResponse(
             public_id=request.public_id,
+            employment_id=request.employment_id,
             origin_type=request.origin_type,
             organization_public_id=request.organization.public_id if request.organization is not None else None,
             trust_invitation_public_id=request.trust_invitation.public_id if request.trust_invitation is not None else None,
@@ -835,12 +1040,28 @@ class VerificationRequestService:
             updated_at=request.updated_at,
         )
 
+    def _to_contact_response(self, contact: VerificationContact) -> VerificationContactResponse:
+        return VerificationContactResponse(
+            public_id=contact.public_id,
+            contact_name=contact.contact_name,
+            contact_email=contact.contact_email,
+            contact_role=contact.contact_role,
+            contact_type=contact.contact_type,
+            candidate_note=contact.candidate_note,
+            review_status=contact.review_status,
+            review_notes=contact.review_notes,
+            reviewed_at=contact.reviewed_at,
+            created_at=contact.created_at,
+            updated_at=contact.updated_at,
+        )
+
     def _to_evidence_response(self, evidence: VerificationRequestEvidence) -> VerificationRequestEvidenceResponse:
         return VerificationRequestEvidenceResponse(
             public_id=evidence.public_id,
             evidence_type=evidence.evidence_type,
             field_key=evidence.field_key,
             document_id=evidence.document_id,
+            employment_document_id=evidence.employment_document_id,
             value=evidence.value,
             status=evidence.status,
             created_at=evidence.created_at,

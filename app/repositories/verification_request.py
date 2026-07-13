@@ -33,6 +33,9 @@ class VerificationRequestRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_id(self, request_id: UUID) -> VerificationRequest | None:
+        return (await self._session.execute(select(VerificationRequest).where(VerificationRequest.id == request_id))).scalar_one_or_none()
+
     async def list_for_organization(self, organization_id: UUID) -> list[VerificationRequest]:
         stmt = (
             select(VerificationRequest)
@@ -60,6 +63,18 @@ class VerificationRequestRepository:
         )
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
+
+    async def get_active_for_employment(self, employment_id: UUID) -> VerificationRequest | None:
+        terminal_statuses = ("verified", "rejected", "cancelled", "expired")
+        stmt = (
+            select(VerificationRequest)
+            .where(
+                VerificationRequest.employment_id == employment_id,
+                VerificationRequest.status.not_in(terminal_statuses),
+            )
+            .order_by(VerificationRequest.created_at.desc())
+        )
+        return (await self._session.execute(stmt)).scalars().first()
 
     async def list_by_status(self, statuses: list[str]) -> list[VerificationRequest]:
         stmt = (

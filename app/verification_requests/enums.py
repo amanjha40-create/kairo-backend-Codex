@@ -5,6 +5,20 @@ from __future__ import annotations
 from enum import StrEnum
 
 
+class VerificationContactType(StrEnum):
+    HR = "hr"
+    MANAGER = "manager"
+    FOUNDER = "founder"
+    AUTHORIZED_REPRESENTATIVE = "authorized_representative"
+    OTHER = "other"
+
+
+class VerificationContactReviewStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    CHANGES_REQUESTED = "changes_requested"
+
+
 class VerificationRequestType(StrEnum):
     EMPLOYMENT = "employment"
     EDUCATION = "education"

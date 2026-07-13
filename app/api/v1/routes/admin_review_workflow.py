@@ -30,6 +30,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
+    AdminVerificationContactReviewRequest,
 )
 from app.schemas.pagination import ListQueryParams
 from app.schemas.trust_registry import (
@@ -38,7 +39,7 @@ from app.schemas.trust_registry import (
     TrustRegistryResolutionRequest,
     TrustRegistryVerificationRequestResolutionResponse,
 )
-from app.schemas.verification_request import VerificationRequestResponse
+from app.schemas.verification_request import VerificationContactResponse, VerificationRequestResponse
 from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
 from app.services.verification_request_admin_review_service import VerificationRequestAdminReviewService
 
@@ -91,6 +92,19 @@ async def request_admin_review_corrections(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> VerificationRequestResponse:
     return await svc.request_corrections(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/verification-contact/review",
+    response_model=VerificationContactResponse,
+)
+async def review_verification_contact(
+    verification_request_public_id: UUID,
+    payload: AdminVerificationContactReviewRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> VerificationContactResponse:
+    return await svc.review_contact(reviewer.id, verification_request_public_id, payload)
 
 
 @router.post("/{verification_request_public_id}/approve", response_model=VerificationRequestResponse)

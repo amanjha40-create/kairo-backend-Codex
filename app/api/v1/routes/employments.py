@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
-from app.api.dependencies.services import get_employment_service
+from app.api.dependencies.services import get_employment_service, get_verification_request_service
 from app.schemas.employment import (
     AuditEventListResponse,
     AuditEventResponse,
@@ -21,6 +21,8 @@ from app.schemas.employment import (
 )
 from app.schemas.pagination import Page, PageParams
 from app.services.employment_service import EmploymentService
+from app.services.verification_request_service import VerificationRequestService
+from app.schemas.verification_request import EmploymentVerificationDraftRequest, VerificationRequestResponse
 
 router = APIRouter(prefix="/employments", tags=["employments"])
 
@@ -60,6 +62,29 @@ async def get_employment(
     employment_service: Annotated[EmploymentService, Depends(get_employment_service)],
 ) -> EmploymentDetail:
     return await employment_service.get_detail_owned(current.id, employment_id)
+
+
+@router.post(
+    "/{employment_id}/verification-request",
+    response_model=VerificationRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_employment_verification_request(
+    employment_id: UUID,
+    payload: EmploymentVerificationDraftRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    verification_service: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await verification_service.create_employment_verification_draft(current.id, employment_id, payload)
+
+
+@router.get("/{employment_id}/verification-request", response_model=VerificationRequestResponse)
+async def get_employment_verification_request(
+    employment_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    verification_service: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await verification_service.get_employment_verification_request(current.id, employment_id)
 
 
 @router.patch("/{employment_id}", response_model=EmploymentPublic)

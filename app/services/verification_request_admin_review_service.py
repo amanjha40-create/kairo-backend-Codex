@@ -22,6 +22,11 @@ from app.repositories.user import UserRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
+from app.repositories.verification_contact import VerificationContactRepository
+from app.services.employer_verification_service import EmployerVerificationService
+from app.config import Settings, get_settings
+from app.schemas.employer_verification import EmployerVerificationRequestBody
+from app.verification_requests.enums import VerificationContactReviewStatus
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.admin_review_workflow import (
     AdminReviewAssignRequest,
@@ -35,6 +40,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
+    AdminVerificationContactReviewRequest,
 )
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
@@ -42,6 +48,7 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
+    VerificationContactResponse,
 )
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import VerificationRequestEventSource, VerificationRequestStatus
@@ -50,13 +57,15 @@ from app.verification_requests.enums import VerificationRequestEventSource, Veri
 class VerificationRequestAdminReviewService:
     """Platform-admin review stage for canonical verification requests."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
         self._requests = VerificationRequestRepository(session)
         self._organizations = OrganizationRepository(session)
         self._users = UserRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
+        self._contacts = VerificationContactRepository(session)
+        self._employer_outreach = EmployerVerificationService(session, settings or get_settings())
         self._workflow = VerificationRequestWorkflowService(self._requests)
 
     async def get_queue(self, params: ListQueryParams | None = None) -> AdminReviewQueueResponse:
@@ -210,11 +219,19 @@ class VerificationRequestAdminReviewService:
             )
             await self._reviews.create_correction(correction)
 
+            if item.field_key.startswith("verification_contact"):
+                contact = await self._contacts.get_current(request.id)
+                if contact is not None:
+                    contact.review_status = VerificationContactReviewStatus.CHANGES_REQUESTED
+                    contact.review_notes = item.request_text
+                    contact.reviewed_by_user_id = actor_user_id
+                    contact.reviewed_at = datetime.now(tz=UTC)
+
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
             actor_user_id=actor_user_id,
-            event_type="verification_request_corrections_requested",
+            event_type="admin_requested_corrections",
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"corrections_count": len(payload.corrections)},
         )
@@ -244,13 +261,18 @@ class VerificationRequestAdminReviewService:
                 VerificationRequestEvidenceStatus.NEEDS_CORRECTION,
             }:
                 evidence.status = VerificationRequestEvidenceStatus.ACCEPTED
+        contact = await self._contacts.get_current(request.id)
+        if request.employment_id is not None and contact is None:
+            raise ConflictError("Employment verification requires a verification contact")
+        if contact is not None and contact.review_status != VerificationContactReviewStatus.APPROVED:
+            raise ConflictError("Verification contact must be approved before approving the request")
 
         request.approved_for_organization_verification_at = datetime.now(tz=UTC)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
             actor_user_id=actor_user_id,
-            event_type="verification_request_admin_approved",
+            event_type="admin_approved",
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"decision_summary": payload.decision_summary},
         )
@@ -260,6 +282,35 @@ class VerificationRequestAdminReviewService:
         if refreshed is None:
             raise NotFoundError("Verification request not found")
         return self._to_request_response(refreshed)
+
+    async def review_contact(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminVerificationContactReviewRequest,
+    ) -> VerificationContactResponse:
+        request = await self._require_admin_reviewable_request(verification_request_public_id)
+        contact = await self._contacts.get_current(request.id)
+        if contact is None:
+            raise NotFoundError("Verification contact not found")
+        contact.review_status = payload.review_status
+        contact.review_notes = payload.review_notes
+        contact.reviewed_by_user_id = actor_user_id
+        contact.reviewed_at = datetime.now(tz=UTC)
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_contact_reviewed",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={
+                "verification_contact_public_id": str(contact.public_id),
+                "review_status": payload.review_status.value,
+            },
+        )
+        await self._session.commit()
+        from app.services.verification_request_service import VerificationRequestService
+
+        return VerificationRequestService(self._session)._to_contact_response(contact)
 
     async def reject(
         self,
@@ -430,12 +481,25 @@ class VerificationRequestAdminReviewService:
             )
             return
 
+        contact = await self._contacts.get_current(request.id)
+        if request.employment_id is not None:
+            if contact is None or contact.review_status != VerificationContactReviewStatus.APPROVED:
+                raise ConflictError("An approved verification contact is required for employer outreach")
+            await self._employer_outreach.initiate_admin_outreach(
+                actor_user_id=actor_user_id,
+                verification_request=request,
+                payload=EmployerVerificationRequestBody(
+                    contact_name=contact.contact_name or contact.contact_role or contact.contact_type.value,
+                    verifier_email=contact.contact_email,
+                    relationship=contact.contact_role or contact.contact_type.value,
+                ),
+            )
         request.organization_outreach_sent_at = datetime.now(tz=UTC)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
             actor_user_id=actor_user_id,
-            event_type="verification_request_organization_outreach_initiated",
+            event_type="organization_resolved",
             event_source=VerificationRequestEventSource.SYSTEM,
             metadata=metadata,
         )

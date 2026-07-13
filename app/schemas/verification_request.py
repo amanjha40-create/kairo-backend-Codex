@@ -10,11 +10,42 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
 from app.verification_requests.enums import (
+    VerificationContactReviewStatus,
+    VerificationContactType,
     VerificationRequestEventSource,
     VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
 )
+
+
+class VerificationContactRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    contact_name: str | None = Field(default=None, max_length=255)
+    contact_email: EmailStr
+    contact_role: str | None = Field(default=None, max_length=128)
+    contact_type: VerificationContactType
+    candidate_note: str | None = Field(default=None, max_length=2000)
+
+
+class VerificationContactResponse(BaseModel):
+    public_id: UUID
+    contact_name: str | None
+    contact_email: EmailStr
+    contact_role: str | None
+    contact_type: VerificationContactType
+    candidate_note: str | None
+    review_status: VerificationContactReviewStatus
+    review_notes: str | None
+    reviewed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EmploymentVerificationDraftRequest(BaseModel):
+    verification_contact: VerificationContactRequest
+    employment_document_ids: list[UUID] = Field(min_length=1, max_length=20)
 
 
 class VerificationRequestCreateRequest(BaseModel):
@@ -69,12 +100,16 @@ class VerificationRequestEvidenceCreateRequest(BaseModel):
     evidence_type: str = Field(min_length=1, max_length=64)
     field_key: str = Field(min_length=1, max_length=128)
     document_id: UUID | None = None
+    employment_document_id: UUID | None = None
     value: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self) -> "VerificationRequestEvidenceCreateRequest":
-        if self.document_id is None and self.value is None:
-            raise ValueError("Provide document_id or value")
+        supplied_documents = sum(item is not None for item in (self.document_id, self.employment_document_id))
+        if supplied_documents > 1:
+            raise ValueError("Provide only one document reference")
+        if supplied_documents == 0 and self.value is None:
+            raise ValueError("Provide a document reference or value")
         return self
 
 
@@ -84,17 +119,27 @@ class VerificationRequestEvidenceUpdateRequest(BaseModel):
     evidence_type: str | None = Field(default=None, min_length=1, max_length=64)
     field_key: str | None = Field(default=None, min_length=1, max_length=128)
     document_id: UUID | None = None
+    employment_document_id: UUID | None = None
     value: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self) -> "VerificationRequestEvidenceUpdateRequest":
-        if self.evidence_type is None and self.field_key is None and self.document_id is None and self.value is None:
+        if self.document_id is not None and self.employment_document_id is not None:
+            raise ValueError("Provide only one document reference")
+        if (
+            self.evidence_type is None
+            and self.field_key is None
+            and self.document_id is None
+            and self.employment_document_id is None
+            and self.value is None
+        ):
             raise ValueError("Provide at least one field to update")
         return self
 
 
 class VerificationRequestResponse(BaseModel):
     public_id: UUID
+    employment_id: UUID | None = None
     origin_type: VerificationRequestOriginType | None = None
     organization_public_id: UUID | None = None
     trust_invitation_public_id: UUID | None
@@ -115,6 +160,7 @@ class VerificationRequestEvidenceResponse(BaseModel):
     evidence_type: str
     field_key: str
     document_id: UUID | None
+    employment_document_id: UUID | None = None
     value: dict[str, Any] | None
     status: VerificationRequestEvidenceStatus
     created_at: datetime

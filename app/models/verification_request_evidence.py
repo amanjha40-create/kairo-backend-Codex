@@ -44,6 +44,12 @@ class VerificationRequestEvidence(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    employment_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("employment_documents.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[VerificationRequestEvidenceStatus] = mapped_column(
         verification_request_evidence_status_enum,

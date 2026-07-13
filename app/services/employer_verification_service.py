@@ -34,6 +34,9 @@ from app.models.employment_document import EmploymentDocument
 from app.repositories.employer_verification import EmployerVerificationRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.verification_audit import VerificationAuditRepository
+from app.repositories.verification_request import VerificationRequestRepository
+from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.verification_requests.enums import VerificationRequestEventSource, VerificationRequestStatus
 from app.schemas.employer_verification import (
     EmployerVerificationRequestBody,
     EmployerVerificationRequestResponse,
@@ -76,6 +79,8 @@ class EmployerVerificationService:
         self._requests = EmployerVerificationRepository(session)
         self._audit = VerificationAuditRepository(session)
         self._docs = EmploymentDocumentRepository(session)
+        self._verification_requests = VerificationRequestRepository(session)
+        self._workflow = VerificationRequestWorkflowService(self._verification_requests)
         self._email = get_email_sender(self._settings)
 
     def _review_link(self, token: str) -> str:
@@ -112,6 +117,8 @@ class EmployerVerificationService:
         owner_user_id: UUID,
         employment_id: UUID,
         payload: EmployerVerificationRequestBody,
+        *,
+        verification_request_id: UUID | None = None,
     ) -> EmployerVerificationRequestResponse:
         row = await self._employment.get_owned_active(employment_id, owner_user_id)
         if row is None:
@@ -133,6 +140,7 @@ class EmployerVerificationService:
         if existing is None:
             req = EmployerVerificationRequest(
                 employment_id=employment_id,
+                verification_request_id=verification_request_id,
                 contact_name=payload.contact_name,
                 verifier_email=verifier_email,
                 relationship_to_subject=payload.relationship,
@@ -145,6 +153,7 @@ class EmployerVerificationService:
             await self._requests.create(req)
         else:
             existing.contact_name = payload.contact_name
+            existing.verification_request_id = verification_request_id
             existing.verifier_email = verifier_email
             existing.relationship_to_subject = payload.relationship
             existing.token_hash = token_hash
@@ -195,6 +204,33 @@ class EmployerVerificationService:
             expires_at=expires_at,
         )
 
+    async def initiate_admin_outreach(
+        self,
+        *,
+        actor_user_id: UUID,
+        verification_request,
+        payload: EmployerVerificationRequestBody,
+    ) -> EmployerVerificationRequestResponse:
+        if verification_request.employment_id is None:
+            raise EmploymentWorkflowError("Verification request is not linked to an employment")
+        if verification_request.status != VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION:
+            raise EmploymentWorkflowError("Employer outreach requires Admin approval")
+        response = await self.request_verification(
+            verification_request.subject_user_id,
+            verification_request.employment_id,
+            payload,
+            verification_request_id=verification_request.id,
+        )
+        await self._workflow.record_action(
+            verification_request,
+            actor_user_id=actor_user_id,
+            event_type="hr_invitation_sent",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"verifier_email_masked": response.verifier_email_masked},
+        )
+        await self._session.commit()
+        return response
+
     async def _load_by_token(self, raw_token: str) -> EmployerVerificationRequest:
         if not raw_token or len(raw_token) < 16:
             raise NotFoundError("This verification link is invalid or has expired")
@@ -212,6 +248,45 @@ class EmployerVerificationService:
         )
         if conflicts > 0:
             raise ActiveVerificationPipelineConflictError()
+
+    async def _record_canonical_hr_result(
+        self,
+        request_row: EmployerVerificationRequest,
+        decision: EmployerVerificationDecision,
+    ) -> None:
+        if request_row.verification_request_id is None:
+            return
+        request = await self._verification_requests.get_by_id(request_row.verification_request_id)
+        if request is None:
+            return
+        if decision == EmployerVerificationDecision.CONFIRMED:
+            if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.IN_PROGRESS,
+                    actor_user_id=None,
+                    event_type="hr_verified",
+                    event_source=VerificationRequestEventSource.ORGANIZATION,
+                    metadata={},
+                )
+            if request.status == VerificationRequestStatus.IN_PROGRESS:
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.VERIFIED,
+                    actor_user_id=None,
+                    event_type="passport_updated",
+                    event_source=VerificationRequestEventSource.SYSTEM,
+                    metadata={"reason": "employment_verified"},
+                )
+        elif request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+            await self._workflow.transition(
+                request,
+                target_status=VerificationRequestStatus.REJECTED,
+                actor_user_id=None,
+                event_type="hr_verified",
+                event_source=VerificationRequestEventSource.ORGANIZATION,
+                metadata={"decision": decision.value},
+            )
 
     async def respond_confirm(self, raw_token: str) -> str:
         return await self._respond(raw_token, decision=EmployerVerificationDecision.CONFIRMED)
@@ -279,6 +354,7 @@ class EmployerVerificationService:
                 new_status=employment.verification_status,
                 metadata_payload={"via": "employer_confirmation"},
             )
+            await self._record_canonical_hr_result(req, decision)
 
             await self._session.commit()
             logger.info(
@@ -308,6 +384,7 @@ class EmployerVerificationService:
             new_status=employment.verification_status,
             metadata_payload={"verifier_email_domain": req.verifier_email.split("@")[-1]},
         )
+        await self._record_canonical_hr_result(req, decision)
         await self._session.commit()
         logger.info(
             "employer_verification.declined",
@@ -322,6 +399,17 @@ class EmployerVerificationService:
     async def render_review_page(self, raw_token: str) -> str:
         req = await self._load_by_token(raw_token)
         employment = req.employment
+        if req.verification_request_id is not None:
+            request = await self._verification_requests.get_by_id(req.verification_request_id)
+            if request is not None:
+                await self._workflow.record_action(
+                    request,
+                    actor_user_id=None,
+                    event_type="hr_link_opened",
+                    event_source=VerificationRequestEventSource.ORGANIZATION,
+                    metadata={},
+                )
+                await self._session.commit()
 
         docs = await self._docs.list_all_active_for_employment(employment.id)
         doc_list = []
@@ -435,6 +523,7 @@ class EmployerVerificationService:
                 new_status=employment.verification_status,
                 metadata_payload={"via": "employer_confirmation"},
             )
+            await self._record_canonical_hr_result(req, decision)
             await self._session.commit()
             logger.info("employer_verification.confirmed", extra={"employment_id": str(employment.id)})
             return render_result_page(
@@ -460,6 +549,7 @@ class EmployerVerificationService:
             new_status=employment.verification_status,
             metadata_payload={"verifier_email_domain": req.verifier_email.split("@")[-1]},
         )
+        await self._record_canonical_hr_result(req, decision)
         await self._session.commit()
         logger.info(
             f"employer_verification.{decision.value}",
