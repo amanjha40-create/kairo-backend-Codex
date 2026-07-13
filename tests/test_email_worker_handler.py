@@ -9,7 +9,7 @@ import pytest
 
 from app.config import Settings
 from app.models.email_delivery_log import EmailDeliveryLog
-from app.schemas.email_delivery import EmailSendResult, RenderedEmailMessage
+from app.schemas.email_delivery import EmailSendResult
 from app.workers.handlers.email import EmailSendJobHandler
 
 

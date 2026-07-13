@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -371,4 +370,3 @@ class TrustRegistryService:
             created_at=relationship.created_at,
             updated_at=relationship.updated_at,
         )
-

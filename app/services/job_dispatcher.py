@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
