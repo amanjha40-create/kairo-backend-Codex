@@ -14,6 +14,7 @@ from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_evidence import VerificationRequestEvidence
+from app.models.verification_contact import VerificationContact
 from app.notifications.contracts import NotificationRequest
 from app.repositories.organization import OrganizationRepository
 from app.repositories.trust_invitation import TrustInvitationRepository
@@ -22,6 +23,7 @@ from app.repositories.user_document import UserDocumentRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
+from app.repositories.verification_contact import VerificationContactRepository
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
@@ -34,6 +36,8 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
+    VerificationContactRequest,
+    VerificationContactResponse,
 )
 from app.services.notification_service import NotificationService
 from app.services.connector_execution_service import ConnectorExecutionService
@@ -68,6 +72,7 @@ class VerificationRequestService:
         self._trust_invitations = TrustInvitationRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
+        self._contacts = VerificationContactRepository(session)
         self._workflow = VerificationRequestWorkflowService(self._requests)
         self._connector_registry = ConnectorRegistryService(session)
         self._connector_selector = ConnectorSelectionService(self._connector_registry)
@@ -78,6 +83,59 @@ class VerificationRequestService:
             self._connector_normalizer,
         )
         self._notifications = notifications or NotificationService(session)
+
+    async def get_verification_contact(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+    ) -> VerificationContactResponse:
+        request = await self._get_accessible_request(
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+            verification_request_public_id=verification_request_public_id,
+        )
+        contact = await self._contacts.get_current(request.id)
+        if contact is None:
+            raise NotFoundError("Verification contact not found")
+        return self._to_contact_response(contact)
+
+    async def update_verification_contact(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+        payload: VerificationContactRequest,
+    ) -> VerificationContactResponse:
+        request = await self._require_editable_subject_request(
+            actor_user_id,
+            actor_email,
+            verification_request_public_id,
+        )
+        current = await self._contacts.get_current(request.id)
+        now = datetime.now(tz=UTC)
+        if current is not None:
+            current.superseded_at = now
+        contact = await self._contacts.create(
+            VerificationContact(
+                verification_request_id=request.id,
+                contact_name=payload.contact_name,
+                contact_email=str(payload.contact_email).strip().lower(),
+                contact_role=payload.contact_role,
+                contact_type=payload.contact_type,
+                candidate_note=payload.candidate_note,
+                submitted_by_user_id=actor_user_id,
+            )
+        )
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="candidate_updated_contact" if current is not None else "verification_contact_added",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"verification_contact_public_id": str(contact.public_id)},
+        )
+        await self._session.commit()
+        return self._to_contact_response(contact)
 
     async def create(
         self,
@@ -834,6 +892,21 @@ class VerificationRequestService:
             trust_context=request.trust_context,
             created_at=request.created_at,
             updated_at=request.updated_at,
+        )
+
+    def _to_contact_response(self, contact: VerificationContact) -> VerificationContactResponse:
+        return VerificationContactResponse(
+            public_id=contact.public_id,
+            contact_name=contact.contact_name,
+            contact_email=contact.contact_email,
+            contact_role=contact.contact_role,
+            contact_type=contact.contact_type,
+            candidate_note=contact.candidate_note,
+            review_status=contact.review_status,
+            review_notes=contact.review_notes,
+            reviewed_at=contact.reviewed_at,
+            created_at=contact.created_at,
+            updated_at=contact.updated_at,
         )
 
     def _to_evidence_response(self, evidence: VerificationRequestEvidence) -> VerificationRequestEvidenceResponse:

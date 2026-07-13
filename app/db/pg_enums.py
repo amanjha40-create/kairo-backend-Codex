@@ -25,10 +25,26 @@ from app.employment.enums import (
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.trust_invitations.enums import TrustInvitationStatus
 from app.verification_requests.enums import (
+    VerificationContactReviewStatus,
+    VerificationContactType,
     VerificationRequestEventSource,
     VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
+)
+
+verification_contact_type_enum = ENUM(
+    *[m.value for m in VerificationContactType],
+    name="verification_contact_type_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+verification_contact_review_status_enum = ENUM(
+    *[m.value for m in VerificationContactReviewStatus],
+    name="verification_contact_review_status_enum",
+    metadata=Base.metadata,
+    create_type=False,
 )
 
 verification_status_enum = ENUM(

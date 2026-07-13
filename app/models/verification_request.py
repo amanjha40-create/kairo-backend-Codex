@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from app.models.verification_request_evidence import VerificationRequestEvidence
     from app.models.verification_request_event import VerificationRequestEvent
     from app.models.verification_request_review import VerificationRequestReview
+    from app.models.verification_contact import VerificationContact
 
 
 class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -162,6 +163,12 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="verification_request",
         cascade="all, delete-orphan",
         order_by="VerificationConnectorRun.started_at.desc()",
+    )
+    verification_contacts: Mapped[list["VerificationContact"]] = relationship(
+        "VerificationContact",
+        back_populates="verification_request",
+        cascade="all, delete-orphan",
+        order_by="VerificationContact.created_at.asc()",
     )
 
     def __repr__(self) -> str:

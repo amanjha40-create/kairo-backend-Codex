@@ -20,6 +20,8 @@ from app.schemas.verification_request import (
     VerificationRequestEvidenceUpdateRequest,
     VerificationRequestResponse,
     VerificationRequestTimelineResponse,
+    VerificationContactRequest,
+    VerificationContactResponse,
 )
 from app.services.verification_request_service import VerificationRequestService
 
@@ -72,6 +74,31 @@ async def get_verification_request(
     svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
 ) -> VerificationRequestResponse:
     return await svc.get_detail(current.id, current.email, verification_request_public_id)
+
+
+@router.get(
+    "/verification-requests/{verification_request_public_id}/verification-contact",
+    response_model=VerificationContactResponse,
+)
+async def get_verification_contact(
+    verification_request_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationContactResponse:
+    return await svc.get_verification_contact(current.id, current.email, verification_request_public_id)
+
+
+@router.put(
+    "/verification-requests/{verification_request_public_id}/verification-contact",
+    response_model=VerificationContactResponse,
+)
+async def update_verification_contact(
+    verification_request_public_id: UUID,
+    payload: VerificationContactRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationContactResponse:
+    return await svc.update_verification_contact(current.id, current.email, verification_request_public_id, payload)
 
 
 @router.get(

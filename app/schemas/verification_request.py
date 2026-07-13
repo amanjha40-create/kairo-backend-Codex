@@ -10,11 +10,37 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
 from app.verification_requests.enums import (
+    VerificationContactReviewStatus,
+    VerificationContactType,
     VerificationRequestEventSource,
     VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
 )
+
+
+class VerificationContactRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    contact_name: str | None = Field(default=None, max_length=255)
+    contact_email: EmailStr
+    contact_role: str | None = Field(default=None, max_length=128)
+    contact_type: VerificationContactType
+    candidate_note: str | None = Field(default=None, max_length=2000)
+
+
+class VerificationContactResponse(BaseModel):
+    public_id: UUID
+    contact_name: str | None
+    contact_email: EmailStr
+    contact_role: str | None
+    contact_type: VerificationContactType
+    candidate_note: str | None
+    review_status: VerificationContactReviewStatus
+    review_notes: str | None
+    reviewed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class VerificationRequestCreateRequest(BaseModel):
