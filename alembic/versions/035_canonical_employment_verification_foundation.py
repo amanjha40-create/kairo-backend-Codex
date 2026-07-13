@@ -17,16 +17,21 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    contact_type = postgresql.ENUM(
+    contact_type_for_create = postgresql.ENUM(
         "hr", "manager", "founder", "authorized_representative", "other",
         name="verification_contact_type_enum",
     )
-    contact_review_status = postgresql.ENUM(
+    contact_review_status_for_create = postgresql.ENUM(
         "pending", "approved", "changes_requested",
         name="verification_contact_review_status_enum",
     )
-    contact_type.create(op.get_bind(), checkfirst=True)
-    contact_review_status.create(op.get_bind(), checkfirst=True)
+    contact_type_for_create.create(op.get_bind(), checkfirst=True)
+    contact_review_status_for_create.create(op.get_bind(), checkfirst=True)
+    contact_type = postgresql.ENUM(name="verification_contact_type_enum", create_type=False)
+    contact_review_status = postgresql.ENUM(
+        name="verification_contact_review_status_enum",
+        create_type=False,
+    )
     op.add_column(
         "verification_requests",
         sa.Column("employment_id", postgresql.UUID(as_uuid=True), nullable=True),
