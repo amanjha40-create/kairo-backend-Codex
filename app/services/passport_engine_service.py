@@ -238,41 +238,59 @@ class PassportEngineService:
         return PassportSectionStatusSummary(total=total, statuses=statuses)
 
     async def _build_onboarding_status(self, user: User) -> OnboardingStatusResponse:
-        work_history_count = await self._count_work_history(user.id)
-        education_count = await self._count_owned(Education, Education.user_id == user.id)
-        supporting_documents_count = await self._count_supporting_documents(user.id)
+        email_verified = user.email_verified_at is not None
+        phone_verified = user.phone_verified_at is not None
+        minimum_profile_complete = all(
+            [
+                self._has_value(user.full_name),
+                self._has_value(user.phone),
+                self._has_value(user.headline),
+                self._has_value(user.current_role),
+                self._has_value(user.industry),
+                user.years_of_experience is not None,
+            ]
+        )
+        passport_ready = email_verified and phone_verified and minimum_profile_complete
 
         requirements: list[tuple[str, bool]] = [
-            ("verify_email", user.email_verified_at is not None),
-            (
-                "complete_profile",
-                all(
-                    [
-                        self._has_value(user.full_name),
-                        self._has_value(user.profile_slug),
-                        self._has_value(user.phone),
-                        self._has_value(user.location),
-                        self._has_value(user.headline),
-                    ]
-                ),
-            ),
-            ("add_employment_or_work_history", work_history_count > 0),
-            ("add_education", education_count > 0),
-            ("add_supporting_documents", supporting_documents_count > 0),
+            ("verify_email", email_verified),
+            ("verify_phone", phone_verified),
+            ("headline", self._has_value(user.headline)),
+            ("current_role", self._has_value(user.current_role)),
+            ("industry", self._has_value(user.industry)),
+            ("years_of_experience", user.years_of_experience is not None),
         ]
 
-        completed_steps = [step for step, done in requirements if done]
+        completed_steps: list[str] = []
+        if email_verified:
+            completed_steps.append("verify_email")
+        if phone_verified:
+            completed_steps.append("verify_phone")
+        if minimum_profile_complete:
+            completed_steps.append("complete_profile")
+
         missing_requirements = [step for step, done in requirements if not done]
-        completion_percentage = int((len(completed_steps) / len(requirements)) * 100)
+        completion_percentage = int((sum(1 for _, done in requirements if done) / len(requirements)) * 100)
+        if not email_verified or not phone_verified:
+            current_step = "verify_identity"
+            next_step = "complete_profile" if email_verified and phone_verified else "verify_identity"
+        elif not minimum_profile_complete:
+            current_step = "complete_profile"
+            next_step = "complete_profile"
+        else:
+            current_step = "complete"
+            next_step = None
 
         return OnboardingStatusResponse(
+            current_step=current_step,
+            email_verified=email_verified,
+            phone_verified=phone_verified,
+            passport_ready=passport_ready,
             completed_steps=completed_steps,
             missing_requirements=missing_requirements,
-            next_recommended_step=missing_requirements[0] if missing_requirements else None,
+            next_recommended_step=next_step,
             completion_percentage=completion_percentage,
-            is_onboarding_complete=(
-                user.employment_onboarding_completed_at is not None or not missing_requirements
-            ),
+            is_onboarding_complete=passport_ready or user.employment_onboarding_completed_at is not None,
         )
 
     def _build_vault_summary(

@@ -26,8 +26,16 @@ class PendingSignupRepository(BaseRepository[PendingSignup]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_phone(self, phone: str) -> PendingSignup | None:
+        stmt = select(PendingSignup).where(PendingSignup.phone == phone)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def delete_by_email(self, email: str) -> None:
         await self._session.execute(delete(PendingSignup).where(PendingSignup.email == email))
+
+    async def delete_by_phone(self, phone: str) -> None:
+        await self._session.execute(delete(PendingSignup).where(PendingSignup.phone == phone))
 
     async def delete_by_id(self, signup_id: UUID) -> None:
         await self._session.execute(delete(PendingSignup).where(PendingSignup.id == signup_id))

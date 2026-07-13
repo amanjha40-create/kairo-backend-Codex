@@ -25,6 +25,10 @@ from app.schemas.auth import (
     ResetPasswordResponse,
     SetPasswordRequest,
     SetPasswordResponse,
+    SignupChannelRequest,
+    SignupChannelSendResponse,
+    SignupChannelVerifyResponse,
+    SignupCompleteRequest,
     SignupResendRequest,
     SignupResendResponse,
     SignupStartResponse,
@@ -45,7 +49,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
     "/register",
     response_model=SignupStartResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Start signup — sends email OTP (no tokens until verify)",
+    summary="Start staged signup — creates signup session",
     dependencies=[Depends(auth_rate_limit)],
 )
 async def register(
@@ -59,7 +63,7 @@ async def register(
     "/signup/start",
     response_model=SignupStartResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Start signup — sends email OTP",
+    summary="Start staged signup — creates signup session",
     dependencies=[Depends(auth_rate_limit)],
 )
 async def signup_start(
@@ -70,9 +74,100 @@ async def signup_start(
 
 
 @router.post(
+    "/signup/email/send",
+    response_model=SignupChannelSendResponse,
+    summary="Send signup email OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_email_send(
+    payload: SignupChannelRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupChannelSendResponse:
+    return await auth.send_signup_email_otp(payload)
+
+
+@router.post(
+    "/signup/email/resend",
+    response_model=SignupChannelSendResponse,
+    summary="Resend signup email OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_email_resend(
+    payload: SignupChannelRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupChannelSendResponse:
+    return await auth.resend_signup_email_otp(payload)
+
+
+@router.post(
+    "/signup/email/verify",
+    response_model=SignupChannelVerifyResponse,
+    summary="Verify signup email OTP",
+    dependencies=[Depends(otp_verify_rate_limit)],
+)
+async def signup_email_verify(
+    payload: SignupVerifyRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupChannelVerifyResponse:
+    return await auth.verify_signup_email(payload)
+
+
+@router.post(
+    "/signup/phone/send",
+    response_model=SignupChannelSendResponse,
+    summary="Send signup phone OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_phone_send(
+    payload: SignupChannelRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupChannelSendResponse:
+    return await auth.send_signup_phone_otp(payload)
+
+
+@router.post(
+    "/signup/phone/resend",
+    response_model=SignupChannelSendResponse,
+    summary="Resend signup phone OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_phone_resend(
+    payload: SignupChannelRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupChannelSendResponse:
+    return await auth.resend_signup_phone_otp(payload)
+
+
+@router.post(
+    "/signup/phone/verify",
+    response_model=SignupChannelVerifyResponse,
+    summary="Verify signup phone OTP",
+    dependencies=[Depends(otp_verify_rate_limit)],
+)
+async def signup_phone_verify(
+    payload: SignupVerifyRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupChannelVerifyResponse:
+    return await auth.verify_signup_phone(payload)
+
+
+@router.post(
+    "/signup/complete",
+    response_model=TokenResponse,
+    summary="Complete staged signup after both channels are verified",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_complete(
+    payload: SignupCompleteRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> TokenResponse:
+    return await auth.complete_signup(payload)
+
+
+@router.post(
     "/signup/verify",
     response_model=TokenResponse,
-    summary="Verify email OTP and complete signup",
+    summary="Legacy signup verify alias — verifies email and completes if phone already verified",
     dependencies=[Depends(otp_verify_rate_limit)],
 )
 async def signup_verify(
@@ -85,7 +180,7 @@ async def signup_verify(
 @router.post(
     "/signup/resend",
     response_model=SignupResendResponse,
-    summary="Resend signup OTP",
+    summary="Legacy signup resend alias — resends email OTP",
     dependencies=[Depends(auth_rate_limit)],
 )
 async def signup_resend(

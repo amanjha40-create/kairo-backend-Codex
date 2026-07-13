@@ -18,6 +18,9 @@ class UserPublic(BaseModel):
     full_name: str | None
     profile_slug: str | None = None
     phone: str | None = None
+    current_role: str | None = None
+    industry: str | None = None
+    years_of_experience: int | None = None
     location: str | None = None
     headline: str | None = None
     bio: str | None = None
@@ -25,6 +28,7 @@ class UserPublic(BaseModel):
     avatar_url: str | None = None
     role: Role
     is_active: bool
+    phone_verified_at: datetime | None = None
     employment_onboarding_completed_at: datetime | None = None
     created_at: datetime
 
@@ -42,6 +46,9 @@ class UserUpdate(BaseModel):
 
     full_name: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
+    current_role: str | None = Field(default=None, max_length=255)
+    industry: str | None = Field(default=None, max_length=255)
+    years_of_experience: int | None = Field(default=None, ge=0, le=80)
     location: str | None = Field(default=None, max_length=255)
     headline: str | None = Field(default=None, max_length=255)
     bio: str | None = Field(default=None, max_length=500)

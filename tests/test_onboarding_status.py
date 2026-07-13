@@ -16,10 +16,14 @@ from app.schemas.passport_engine import OnboardingStatusResponse
 class FakePassportEngineService:
     async def get_onboarding_status(self, user_id) -> OnboardingStatusResponse:  # noqa: ANN001
         return OnboardingStatusResponse(
-            completed_steps=["verify_email", "complete_profile"],
-            missing_requirements=["add_employment_or_work_history", "add_education"],
-            next_recommended_step="add_employment_or_work_history",
-            completion_percentage=40,
+            current_step="complete_profile",
+            email_verified=True,
+            phone_verified=False,
+            passport_ready=False,
+            completed_steps=["verify_email"],
+            missing_requirements=["verify_phone", "headline", "current_role"],
+            next_recommended_step="complete_profile",
+            completion_percentage=50,
             is_onboarding_complete=False,
         )
 
@@ -40,6 +44,10 @@ async def test_get_onboarding_status_returns_backend_owned_progress() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     body = response.json()
-    assert body["completed_steps"] == ["verify_email", "complete_profile"]
-    assert body["next_recommended_step"] == "add_employment_or_work_history"
-    assert body["completion_percentage"] == 40
+    assert body["current_step"] == "complete_profile"
+    assert body["email_verified"] is True
+    assert body["phone_verified"] is False
+    assert body["passport_ready"] is False
+    assert body["completed_steps"] == ["verify_email"]
+    assert body["next_recommended_step"] == "complete_profile"
+    assert body["completion_percentage"] == 50

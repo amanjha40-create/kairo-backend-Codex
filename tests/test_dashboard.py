@@ -30,6 +30,10 @@ class FakePassportEngineService:
         now = datetime.now(tz=UTC)
         return DashboardResponse(
             profile_completion=OnboardingStatusResponse(
+                current_step="complete_profile",
+                email_verified=True,
+                phone_verified=True,
+                passport_ready=False,
                 completed_steps=["verify_email", "complete_profile"],
                 missing_requirements=["add_employment_or_work_history"],
                 next_recommended_step="add_employment_or_work_history",
