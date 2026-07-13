@@ -16,6 +16,30 @@ def _document_type_options() -> list[dict[str, str]]:
             "Offer letter",
             "Signed or official offer letter from the employer.",
         ),
+        EmploymentDocumentType.APPOINTMENT_LETTER: (
+            "Appointment letter",
+            "Official appointment letter issued by the employer.",
+        ),
+        EmploymentDocumentType.EXPERIENCE_LETTER: (
+            "Experience letter",
+            "Employer-issued letter confirming role and tenure.",
+        ),
+        EmploymentDocumentType.PAYSLIP: (
+            "Payslip",
+            "Recent payslip showing employer and pay period.",
+        ),
+        EmploymentDocumentType.EMPLOYMENT_ID_CARD: (
+            "Employment ID card",
+            "Employer-issued identification card.",
+        ),
+        EmploymentDocumentType.CONTRACT: (
+            "Contract",
+            "Signed contract supporting the employment relationship.",
+        ),
+        EmploymentDocumentType.BANK_STATEMENT: (
+            "Bank statement",
+            "Statement containing an identifiable employer salary credit.",
+        ),
         EmploymentDocumentType.FORM_W2: (
             "Form W-2",
             "US W-2 tax form for the employment year.",
