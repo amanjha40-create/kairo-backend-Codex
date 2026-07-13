@@ -40,6 +40,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
+    AdminVerificationContactReviewRequest,
 )
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
@@ -47,6 +48,7 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
+    VerificationContactResponse,
 )
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import VerificationRequestEventSource, VerificationRequestStatus
@@ -262,11 +264,8 @@ class VerificationRequestAdminReviewService:
         contact = await self._contacts.get_current(request.id)
         if request.employment_id is not None and contact is None:
             raise ConflictError("Employment verification requires a verification contact")
-        if contact is not None:
-            contact.review_status = VerificationContactReviewStatus.APPROVED
-            contact.review_notes = payload.decision_summary
-            contact.reviewed_by_user_id = actor_user_id
-            contact.reviewed_at = datetime.now(tz=UTC)
+        if contact is not None and contact.review_status != VerificationContactReviewStatus.APPROVED:
+            raise ConflictError("Verification contact must be approved before approving the request")
 
         request.approved_for_organization_verification_at = datetime.now(tz=UTC)
         await self._workflow.transition(
@@ -283,6 +282,35 @@ class VerificationRequestAdminReviewService:
         if refreshed is None:
             raise NotFoundError("Verification request not found")
         return self._to_request_response(refreshed)
+
+    async def review_contact(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminVerificationContactReviewRequest,
+    ) -> VerificationContactResponse:
+        request = await self._require_admin_reviewable_request(verification_request_public_id)
+        contact = await self._contacts.get_current(request.id)
+        if contact is None:
+            raise NotFoundError("Verification contact not found")
+        contact.review_status = payload.review_status
+        contact.review_notes = payload.review_notes
+        contact.reviewed_by_user_id = actor_user_id
+        contact.reviewed_at = datetime.now(tz=UTC)
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_contact_reviewed",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={
+                "verification_contact_public_id": str(contact.public_id),
+                "review_status": payload.review_status.value,
+            },
+        )
+        await self._session.commit()
+        from app.services.verification_request_service import VerificationRequestService
+
+        return VerificationRequestService(self._session)._to_contact_response(contact)
 
     async def reject(
         self,

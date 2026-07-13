@@ -18,6 +18,14 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineResponse,
 )
+from app.verification_requests.enums import VerificationContactReviewStatus
+
+
+class AdminVerificationContactReviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    review_status: VerificationContactReviewStatus
+    review_notes: str | None = Field(default=None, max_length=5000)
 
 
 class AdminReviewQueueResponse(BaseModel):
