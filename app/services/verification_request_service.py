@@ -15,7 +15,6 @@ from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_evidence import VerificationRequestEvidence
 from app.models.verification_contact import VerificationContact
-from app.models.employment import Employment
 from app.notifications.contracts import NotificationRequest
 from app.repositories.organization import OrganizationRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
