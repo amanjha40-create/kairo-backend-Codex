@@ -33,6 +33,9 @@ class VerificationRequestRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_id(self, request_id: UUID) -> VerificationRequest | None:
+        return (await self._session.execute(select(VerificationRequest).where(VerificationRequest.id == request_id))).scalar_one_or_none()
+
     async def list_for_organization(self, organization_id: UUID) -> list[VerificationRequest]:
         stmt = (
             select(VerificationRequest)

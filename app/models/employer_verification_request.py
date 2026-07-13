@@ -30,6 +30,13 @@ class EmployerVerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=False,
     )
+    verification_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("verification_requests.id", ondelete="RESTRICT"),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
     contact_name: Mapped[str] = mapped_column(String(255), nullable=False)
     verifier_email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     relationship_to_subject: Mapped[str] = mapped_column(String(128), nullable=False)

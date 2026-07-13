@@ -102,6 +102,24 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("employment_document_id IS NOT NULL"),
     )
+    op.add_column(
+        "employer_verification_requests",
+        sa.Column("verification_request_id", postgresql.UUID(as_uuid=True), nullable=True),
+    )
+    op.create_foreign_key(
+        "fk_employer_verification_requests_verification_request",
+        "employer_verification_requests",
+        "verification_requests",
+        ["verification_request_id"],
+        ["id"],
+        ondelete="RESTRICT",
+    )
+    op.create_index(
+        "uq_employer_verification_requests_verification_request_id",
+        "employer_verification_requests",
+        ["verification_request_id"],
+        unique=True,
+    )
     op.create_index(
         "uq_verification_requests_active_employment",
         "verification_requests",
@@ -115,6 +133,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "uq_employer_verification_requests_verification_request_id",
+        table_name="employer_verification_requests",
+    )
+    op.drop_constraint(
+        "fk_employer_verification_requests_verification_request",
+        "employer_verification_requests",
+        type_="foreignkey",
+    )
+    op.drop_column("employer_verification_requests", "verification_request_id")
     op.drop_index(
         "uq_verification_request_evidence_employment_document",
         table_name="verification_request_evidence",

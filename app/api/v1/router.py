@@ -14,7 +14,6 @@ from app.api.v1.routes import (
     dashboard,
     documents,
     educations,
-    employer_verification,
     employments,
     employment_documents,
     freelance_contracts,
@@ -51,7 +50,6 @@ api_router.include_router(organizations.router)
 api_router.include_router(trust_invitations.org_router)
 api_router.include_router(verification_requests.org_router)
 api_router.include_router(employments.router)
-api_router.include_router(employer_verification.router)
 api_router.include_router(public_employer_verification.router)
 api_router.include_router(public_profile.router)
 api_router.include_router(public_passport.router)

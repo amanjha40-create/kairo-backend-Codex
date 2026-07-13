@@ -43,6 +43,11 @@ class VerificationContactResponse(BaseModel):
     updated_at: datetime
 
 
+class EmploymentVerificationDraftRequest(BaseModel):
+    verification_contact: VerificationContactRequest
+    employment_document_ids: list[UUID] = Field(min_length=1, max_length=20)
+
+
 class VerificationRequestCreateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

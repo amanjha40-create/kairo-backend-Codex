@@ -22,6 +22,7 @@ from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
 from app.repositories.user import UserRepository
 from app.repositories.verification_audit import VerificationAuditRepository
+from app.repositories.verification_request import VerificationRequestRepository
 from app.schemas.employment import (
     EmploymentCancelResponse,
     EmploymentCreate,
@@ -32,6 +33,8 @@ from app.schemas.employment import (
 )
 from app.schemas.pagination import Page, PageParams
 from app.services.employer_verification_service import EmployerVerificationService
+from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.verification_requests.enums import VerificationRequestEventSource
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,8 @@ class EmploymentService:
         self._documents = EmploymentDocumentRepository(session)
         self._audit = VerificationAuditRepository(session)
         self._users = UserRepository(session)
+        self._verification_requests = VerificationRequestRepository(session)
+        self._verification_workflow = VerificationRequestWorkflowService(self._verification_requests)
 
     async def _emit_audit(
         self,
@@ -134,6 +139,15 @@ class EmploymentService:
             new_status=row.verification_status,
             metadata_payload={"fields": list(data.keys())},
         )
+        verification_request = await self._verification_requests.get_active_for_employment(row.id)
+        if verification_request is not None:
+            await self._verification_workflow.record_action(
+                verification_request,
+                actor_user_id=owner_user_id,
+                event_type="employment_updated",
+                event_source=VerificationRequestEventSource.CANDIDATE,
+                metadata={"fields": list(data.keys())},
+            )
         await self._session.commit()
         await self._session.refresh(row)
         logger.info(
