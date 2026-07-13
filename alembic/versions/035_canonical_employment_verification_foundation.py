@@ -78,6 +78,30 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("superseded_at IS NULL"),
     )
+    op.add_column(
+        "verification_request_evidence",
+        sa.Column("employment_document_id", postgresql.UUID(as_uuid=True), nullable=True),
+    )
+    op.create_foreign_key(
+        "fk_verification_request_evidence_employment_document",
+        "verification_request_evidence",
+        "employment_documents",
+        ["employment_document_id"],
+        ["id"],
+        ondelete="RESTRICT",
+    )
+    op.create_index(
+        "ix_verification_request_evidence_employment_document_id",
+        "verification_request_evidence",
+        ["employment_document_id"],
+    )
+    op.create_index(
+        "uq_verification_request_evidence_employment_document",
+        "verification_request_evidence",
+        ["verification_request_id", "employment_document_id"],
+        unique=True,
+        postgresql_where=sa.text("employment_document_id IS NOT NULL"),
+    )
     op.create_index(
         "uq_verification_requests_active_employment",
         "verification_requests",
@@ -91,6 +115,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "uq_verification_request_evidence_employment_document",
+        table_name="verification_request_evidence",
+    )
+    op.drop_index(
+        "ix_verification_request_evidence_employment_document_id",
+        table_name="verification_request_evidence",
+    )
+    op.drop_constraint(
+        "fk_verification_request_evidence_employment_document",
+        "verification_request_evidence",
+        type_="foreignkey",
+    )
+    op.drop_column("verification_request_evidence", "employment_document_id")
     op.drop_index("uq_verification_contacts_current_request", table_name="verification_contacts")
     op.drop_index("ix_verification_contacts_superseded_at", table_name="verification_contacts")
     op.drop_index("ix_verification_contacts_email", table_name="verification_contacts")

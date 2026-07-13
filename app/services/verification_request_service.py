@@ -17,6 +17,7 @@ from app.models.verification_request_evidence import VerificationRequestEvidence
 from app.models.verification_contact import VerificationContact
 from app.notifications.contracts import NotificationRequest
 from app.repositories.organization import OrganizationRepository
+from app.repositories.employment_document import EmploymentDocumentRepository
 from app.repositories.trust_invitation import TrustInvitationRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_document import UserDocumentRepository
@@ -51,6 +52,7 @@ from app.verification_requests.enums import (
     VerificationRequestOriginType,
     VerificationRequestStatus,
 )
+from app.employment.enums import DocumentVerificationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,7 @@ class VerificationRequestService:
         self._organizations = OrganizationRepository(session)
         self._users = UserRepository(session)
         self._user_documents = UserDocumentRepository(session)
+        self._employment_documents = EmploymentDocumentRepository(session)
         self._trust_invitations = TrustInvitationRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
@@ -331,6 +334,12 @@ class VerificationRequestService:
             document = await self._user_documents.get_owned(payload.document_id, actor_user_id)
             if document is None:
                 raise NotFoundError("User document not found")
+        if payload.employment_document_id is not None:
+            await self._validate_employment_document_evidence(
+                request,
+                actor_user_id,
+                payload.employment_document_id,
+            )
 
         evidence = VerificationRequestEvidence(
             verification_request_id=request.id,
@@ -338,6 +347,7 @@ class VerificationRequestService:
             evidence_type=payload.evidence_type.strip().lower(),
             field_key=payload.field_key.strip(),
             document_id=payload.document_id,
+            employment_document_id=payload.employment_document_id,
             value=payload.value,
             status=VerificationRequestEvidenceStatus.SUBMITTED,
         )
@@ -378,6 +388,13 @@ class VerificationRequestService:
             document = await self._user_documents.get_owned(payload.document_id, actor_user_id)
             if document is None:
                 raise NotFoundError("User document not found")
+        if payload.employment_document_id is not None:
+            await self._validate_employment_document_evidence(
+                request,
+                actor_user_id,
+                payload.employment_document_id,
+                exclude_evidence_public_id=evidence.public_id,
+            )
 
         if payload.evidence_type is not None:
             evidence.evidence_type = payload.evidence_type.strip().lower()
@@ -385,6 +402,10 @@ class VerificationRequestService:
             evidence.field_key = payload.field_key.strip()
         if payload.document_id is not None:
             evidence.document_id = payload.document_id
+            evidence.employment_document_id = None
+        if payload.employment_document_id is not None:
+            evidence.employment_document_id = payload.employment_document_id
+            evidence.document_id = None
         if payload.value is not None:
             evidence.value = payload.value
         evidence.status = VerificationRequestEvidenceStatus.SUBMITTED
@@ -858,6 +879,28 @@ class VerificationRequestService:
             raise NotFoundError("Verification request not found")
         return request
 
+    async def _validate_employment_document_evidence(
+        self,
+        request: VerificationRequest,
+        actor_user_id: UUID,
+        employment_document_id: UUID,
+        *,
+        exclude_evidence_public_id: UUID | None = None,
+    ) -> None:
+        if request.employment_id is None:
+            raise ConflictError("Verification request is not linked to an employment")
+        document = await self._employment_documents.get_active_for_employment(
+            request.employment_id,
+            employment_document_id,
+        )
+        if document is None or document.uploaded_by_user_id != actor_user_id:
+            raise NotFoundError("Employment document not found")
+        if document.verification_status == DocumentVerificationStatus.PENDING_UPLOAD.value:
+            raise ConflictError("Employment document upload is not complete")
+        existing = await self._evidence.get_by_employment_document(request.id, employment_document_id)
+        if existing is not None and existing.public_id != exclude_evidence_public_id:
+            raise ConflictError("Employment document is already attached as evidence")
+
     async def _get_membership_for_request(self, request: VerificationRequest, actor_user_id: UUID):
         if request.organization_id is None:
             return None
@@ -915,6 +958,7 @@ class VerificationRequestService:
             evidence_type=evidence.evidence_type,
             field_key=evidence.field_key,
             document_id=evidence.document_id,
+            employment_document_id=evidence.employment_document_id,
             value=evidence.value,
             status=evidence.status,
             created_at=evidence.created_at,

@@ -95,12 +95,16 @@ class VerificationRequestEvidenceCreateRequest(BaseModel):
     evidence_type: str = Field(min_length=1, max_length=64)
     field_key: str = Field(min_length=1, max_length=128)
     document_id: UUID | None = None
+    employment_document_id: UUID | None = None
     value: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self) -> "VerificationRequestEvidenceCreateRequest":
-        if self.document_id is None and self.value is None:
-            raise ValueError("Provide document_id or value")
+        supplied_documents = sum(item is not None for item in (self.document_id, self.employment_document_id))
+        if supplied_documents > 1:
+            raise ValueError("Provide only one document reference")
+        if supplied_documents == 0 and self.value is None:
+            raise ValueError("Provide a document reference or value")
         return self
 
 
@@ -110,11 +114,20 @@ class VerificationRequestEvidenceUpdateRequest(BaseModel):
     evidence_type: str | None = Field(default=None, min_length=1, max_length=64)
     field_key: str | None = Field(default=None, min_length=1, max_length=128)
     document_id: UUID | None = None
+    employment_document_id: UUID | None = None
     value: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self) -> "VerificationRequestEvidenceUpdateRequest":
-        if self.evidence_type is None and self.field_key is None and self.document_id is None and self.value is None:
+        if self.document_id is not None and self.employment_document_id is not None:
+            raise ValueError("Provide only one document reference")
+        if (
+            self.evidence_type is None
+            and self.field_key is None
+            and self.document_id is None
+            and self.employment_document_id is None
+            and self.value is None
+        ):
             raise ValueError("Provide at least one field to update")
         return self
 
@@ -142,6 +155,7 @@ class VerificationRequestEvidenceResponse(BaseModel):
     evidence_type: str
     field_key: str
     document_id: UUID | None
+    employment_document_id: UUID | None = None
     value: dict[str, Any] | None
     status: VerificationRequestEvidenceStatus
     created_at: datetime
