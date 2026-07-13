@@ -117,7 +117,15 @@ class EmploymentRepository(BaseRepository[Employment]):
                 Employment.id == employment_id,
                 Employment.created_by_user_id == owner_user_id,
             )
-            .options(selectinload(Employment.employer_verification_request)),
+            .options(
+                selectinload(Employment.employer_verification_request),
+                selectinload(Employment.documents),
+                with_loader_criteria(
+                    EmploymentDocument,
+                    EmploymentDocument.deleted_at.is_(None),
+                    include_aliases=True,
+                ),
+            ),
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
