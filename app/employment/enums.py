@@ -57,6 +57,12 @@ class EmploymentDocumentType(StrEnum):
 
     PAY_STUB = "pay_stub"
     OFFER_LETTER = "offer_letter"
+    APPOINTMENT_LETTER = "appointment_letter"
+    EXPERIENCE_LETTER = "experience_letter"
+    PAYSLIP = "payslip"
+    EMPLOYMENT_ID_CARD = "employment_id_card"
+    CONTRACT = "contract"
+    BANK_STATEMENT = "bank_statement"
     FORM_W2 = "form_w2"
     FORM_1099 = "form_1099"
     EMPLOYMENT_CONTRACT = "employment_contract"
