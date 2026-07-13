@@ -24,6 +24,7 @@ from app.verification_requests.enums import (
 )
 
 if TYPE_CHECKING:
+    from app.models.employment import Employment
     from app.models.verification_connector_run import VerificationConnectorRun
     from app.models.organization import Organization
     from app.models.trust_registry_record import TrustRegistryRecord
@@ -60,6 +61,12 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     trust_invitation_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("trust_invitations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    employment_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("employments.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
@@ -130,6 +137,7 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     organization: Mapped["Organization | None"] = relationship("Organization", back_populates="verification_requests")
     trust_invitation: Mapped["TrustInvitation | None"] = relationship("TrustInvitation", back_populates="verification_requests")
+    employment: Mapped["Employment | None"] = relationship("Employment", back_populates="verification_requests")
     registry_record: Mapped["TrustRegistryRecord | None"] = relationship("TrustRegistryRecord", back_populates="verification_requests")
     evidence_items: Mapped[list["VerificationRequestEvidence"]] = relationship(
         "VerificationRequestEvidence",

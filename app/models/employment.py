@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.models.employer_verification_request import EmployerVerificationRequest
     from app.models.employment_document import EmploymentDocument
     from app.models.verification_audit import VerificationAuditEvent
+    from app.models.verification_request import VerificationRequest
 
 
 class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -101,6 +102,10 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         "VerificationAuditEvent",
         back_populates="employment",
         cascade="all, delete-orphan",
+    )
+    verification_requests: Mapped[list["VerificationRequest"]] = relationship(
+        "VerificationRequest",
+        back_populates="employment",
     )
 
     def __repr__(self) -> str:

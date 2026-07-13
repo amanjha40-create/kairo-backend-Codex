@@ -820,6 +820,7 @@ class VerificationRequestService:
     def _to_response(self, request: VerificationRequest) -> VerificationRequestResponse:
         return VerificationRequestResponse(
             public_id=request.public_id,
+            employment_id=request.employment_id,
             origin_type=request.origin_type,
             organization_public_id=request.organization.public_id if request.organization is not None else None,
             trust_invitation_public_id=request.trust_invitation.public_id if request.trust_invitation is not None else None,

@@ -95,6 +95,7 @@ class VerificationRequestEvidenceUpdateRequest(BaseModel):
 
 class VerificationRequestResponse(BaseModel):
     public_id: UUID
+    employment_id: UUID | None = None
     origin_type: VerificationRequestOriginType | None = None
     organization_public_id: UUID | None = None
     trust_invitation_public_id: UUID | None
