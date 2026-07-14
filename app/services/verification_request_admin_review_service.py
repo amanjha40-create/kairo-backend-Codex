@@ -11,6 +11,7 @@ from app.admin_review.enums import (
     VerificationRequestEvidenceStatus,
     VerificationRequestReviewStatus,
     VerificationReviewCorrectionStatus,
+    VerificationReviewNoteVisibility,
 )
 from app.core.permissions import Permission, has_permission
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
@@ -18,6 +19,9 @@ from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
 from app.repositories.organization import OrganizationRepository
+from app.repositories.employment import EmploymentRepository
+from app.repositories.employment_document import EmploymentDocumentRepository
+from app.repositories.trust_registry import TrustRegistryRepository
 from app.repositories.user import UserRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
@@ -34,6 +38,11 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminReviewEvidenceResponse,
+    AdminReviewInternalNoteResponse,
+    AdminOrganizationResolutionResponse,
+    AdminRegistryResolutionResponse,
+    AdminVerificationContactResponse,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
     AdminReviewOrganizationResolutionRequest,
@@ -61,6 +70,9 @@ class VerificationRequestAdminReviewService:
         self._session = session
         self._requests = VerificationRequestRepository(session)
         self._organizations = OrganizationRepository(session)
+        self._employments = EmploymentRepository(session)
+        self._employment_documents = EmploymentDocumentRepository(session)
+        self._registry = TrustRegistryRepository(session)
         self._users = UserRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
@@ -108,11 +120,94 @@ class VerificationRequestAdminReviewService:
         evidence_items = await self._evidence.list_for_request(request.id)
         reviews = await self._reviews.list_reviews_for_request(request.id)
         open_corrections = await self._reviews.list_open_corrections_for_request([review.id for review in reviews])
+        review_public_ids = {review.id: review.public_id for review in reviews}
+        notes = [
+            note
+            for note in await self._reviews.list_notes_for_request(list(review_public_ids))
+            if note.visibility == VerificationReviewNoteVisibility.INTERNAL
+        ]
+        employment = (
+            await self._employments.get_active_by_id(request.employment_id)
+            if request.employment_id is not None
+            else None
+        )
+        contacts = await self._contacts.list_versions(request.id)
+        current_contact = next((item for item in contacts if item.superseded_at is None), None)
+        organization = await self._organizations.get_by_id(request.organization_id) if request.organization_id else None
+        registry_record = (
+            await self._registry.get_by_id(request.registry_record_id)
+            if request.registry_record_id is not None
+            else None
+        )
         return AdminReviewDetailResponse(
             request=self._to_request_response(request),
-            evidence=[self._to_evidence_response(item) for item in evidence_items],
+            employment=employment,
+            verification_contact=self._to_admin_contact_response(current_contact) if current_contact else None,
+            verification_contact_history=[self._to_admin_contact_response(item) for item in contacts],
+            evidence=[await self._to_admin_evidence_response(item) for item in evidence_items],
             reviews=[self._to_review_response(review) for review in reviews],
             open_corrections=[self._to_correction_response(item) for item in open_corrections],
+            internal_notes=[self._to_internal_note_response(item, review_public_ids) for item in notes],
+            organization_resolution=AdminOrganizationResolutionResponse(
+                status="resolved" if organization is not None else "unresolved",
+                organization_public_id=organization.public_id if organization is not None else None,
+                organization_name=organization.name if organization is not None else request.target_organization_name,
+            ),
+            registry_resolution=AdminRegistryResolutionResponse(
+                status=request.registry_resolution_state,
+                registry_record_public_id=registry_record.public_id if registry_record is not None else None,
+                registry_code=registry_record.registry_code if registry_record is not None else None,
+                registry_name=registry_record.display_name or registry_record.legal_name if registry_record is not None else None,
+                resolution_method=request.registry_resolution_method,
+                resolution_confidence=request.registry_resolution_confidence,
+                resolution_metadata=dict(request.registry_resolution_metadata or {}),
+            ),
+        )
+
+    async def _to_admin_evidence_response(self, evidence) -> AdminReviewEvidenceResponse:  # noqa: ANN001
+        base = self._to_evidence_response(evidence)
+        document = None
+        if evidence.employment_document_id is not None:
+            document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
+        return AdminReviewEvidenceResponse(
+            **base.model_dump(),
+            document_type=document.document_type if document is not None else None,
+            original_filename=document.original_filename if document is not None else None,
+            mime_type=document.content_type if document is not None else None,
+            file_size=document.byte_size if document is not None else None,
+            upload_status=document.verification_status if document is not None else None,
+        )
+
+    @staticmethod
+    def _to_admin_contact_response(contact) -> AdminVerificationContactResponse:  # noqa: ANN001
+        return AdminVerificationContactResponse(
+            public_id=contact.public_id,
+            contact_name=contact.contact_name,
+            contact_email=contact.contact_email,
+            contact_role=contact.contact_role,
+            contact_type=contact.contact_type.value,
+            candidate_note=contact.candidate_note,
+            review_status=contact.review_status.value,
+            review_notes=contact.review_notes,
+            reviewed_by_user_id=contact.reviewed_by_user_id,
+            reviewed_at=contact.reviewed_at,
+            superseded_at=contact.superseded_at,
+            created_at=contact.created_at,
+            updated_at=contact.updated_at,
+        )
+
+    @staticmethod
+    def _to_internal_note_response(note, review_public_ids) -> AdminReviewInternalNoteResponse:  # noqa: ANN001
+        return AdminReviewInternalNoteResponse(
+            public_id=note.public_id,
+            review_public_id=review_public_ids[note.verification_request_review_id],
+            author_user_id=note.author_user_id,
+            visibility=note.visibility,
+            note_type=note.note_type,
+            body=note.body,
+            metadata=dict(note.metadata_payload or {}),
+            created_at=note.created_at,
+            updated_at=note.updated_at,
         )
 
     async def assign(

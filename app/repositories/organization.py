@@ -26,6 +26,10 @@ class OrganizationRepository:
         stmt = select(Organization).where(Organization.public_id == public_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_id(self, organization_id: UUID) -> Organization | None:
+        stmt = select(Organization).where(Organization.id == organization_id)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_user(self, user_id: UUID) -> list[tuple[Organization, OrganizationMember]]:
         stmt = (
             select(Organization, OrganizationMember)
