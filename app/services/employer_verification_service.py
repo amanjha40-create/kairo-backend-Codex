@@ -388,7 +388,7 @@ class EmployerVerificationService:
                     created_at=event.created_at,
                 )
                 for event in timeline
-                if event.event_type != "internal_note_added"
+                if "internal_note" not in event.event_type and "admin_note" not in event.event_type
             ],
         )
 
@@ -508,7 +508,7 @@ class EmployerVerificationService:
                 event_source=VerificationRequestEventSource.SYSTEM,
                 metadata={"reason": "employment_verified"},
             )
-            await self._notify_verification_completed(request)
+            await self._notify_verification_completed(request, employment.employer_legal_name)
         elif decision == EmployerVerificationDecision.DECLINED:
             employment.verification_status = VerificationStatus.REJECTED.value
             employment.reviewed_at = now
@@ -553,7 +553,7 @@ class EmployerVerificationService:
         await self._session.commit()
         return self._portal_action_response(req, employment, request)
 
-    async def _notify_verification_completed(self, request) -> None:
+    async def _notify_verification_completed(self, request, organization_name: str) -> None:
         try:
             await NotificationService(self._session, self._settings).create_and_dispatch(
                 NotificationRequest(
@@ -562,8 +562,10 @@ class EmployerVerificationService:
                     recipient_email=request.subject_email,
                     payload={
                         "subject_name": request.subject_name,
-                        "organization_name": request.organization.display_name if request.organization else "the organization",
-                        "request_type": request.request_type.value,
+                        "organization_name": organization_name,
+                        "request_type": request.request_type.value
+                        if hasattr(request.request_type, "value")
+                        else request.request_type,
                         "completed_at_iso": datetime.now(tz=UTC).isoformat(),
                     },
                     metadata={"verification_request_public_id": str(request.public_id)},

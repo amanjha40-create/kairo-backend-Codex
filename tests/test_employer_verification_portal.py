@@ -95,6 +95,7 @@ async def test_public_employer_portal_contracts_and_fail_closed_states() -> None
 
     assert workspace.status_code == 200
     assert "internal_notes" not in workspace.json()
+    assert all("admin_note" not in event["event_type"] for event in workspace.json()["timeline"])
     assert missing.status_code == 404
     assert expired.status_code == 410
     assert verified.json()["verification_request_status"] == "verified"
