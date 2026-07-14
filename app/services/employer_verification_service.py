@@ -215,7 +215,10 @@ class EmployerVerificationService:
     ) -> EmployerVerificationRequestResponse:
         if verification_request.employment_id is None:
             raise EmploymentWorkflowError("Verification request is not linked to an employment")
-        if verification_request.status != VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION:
+        if verification_request.approved_for_organization_verification_at is None or verification_request.status not in {
+            VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+            VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+        }:
             raise EmploymentWorkflowError("Employer outreach requires Admin approval")
         response = await self.request_verification(
             verification_request.subject_user_id,
