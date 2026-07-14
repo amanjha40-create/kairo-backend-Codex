@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.exceptions import (
     AppException,
     ConflictError,
+    ExpiredLinkError,
     ForbiddenError,
     NotFoundError,
     RateLimitError,
@@ -36,6 +37,8 @@ async def app_exception_handler(_: Request, exc: AppException) -> JSONResponse:
     status_code = status.HTTP_400_BAD_REQUEST
     if isinstance(exc, NotFoundError):
         status_code = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, ExpiredLinkError):
+        status_code = status.HTTP_410_GONE
     elif isinstance(exc, UnauthorizedError):
         status_code = status.HTTP_401_UNAUTHORIZED
     elif isinstance(exc, ForbiddenError):

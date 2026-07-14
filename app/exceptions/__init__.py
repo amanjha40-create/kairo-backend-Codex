@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.exceptions.base import (
     AppException,
     ConflictError,
+    ExpiredLinkError,
     ForbiddenError,
     NotFoundError,
     RateLimitError,
@@ -32,6 +33,7 @@ __all__ = [
     "EmploymentCaseNotFoundError",
     "EmploymentDateValidationError",
     "EmploymentWorkflowError",
+    "ExpiredLinkError",
     "ForbiddenError",
     "NotFoundError",
     "RateLimitError",

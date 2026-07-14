@@ -17,6 +17,11 @@ class NotFoundError(AppException):
         super().__init__(message, code="not_found")
 
 
+class ExpiredLinkError(AppException):
+    def __init__(self, message: str = "This link has expired") -> None:
+        super().__init__(message, code="link_expired")
+
+
 class ConflictError(AppException):
     def __init__(self, message: str = "Conflict") -> None:
         super().__init__(message, code="conflict")
