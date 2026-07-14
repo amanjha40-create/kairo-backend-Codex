@@ -83,6 +83,8 @@ class AdminRegistryResolutionResponse(BaseModel):
 
 
 class AdminReviewQueueItemResponse(VerificationRequestResponse):
+    model_config = ConfigDict(from_attributes=True)
+
     assigned_reviewer: AdminReviewerSummary | None = None
     contact_review_status: str | None = None
     organization_resolution_status: str = "unresolved"
