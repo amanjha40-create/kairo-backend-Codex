@@ -12,6 +12,11 @@ from app.schemas.admin_directory import (
     AdminReviewerResponse,
 )
 from app.schemas.pagination import ListQueryParams
+from app.organization.enums import OrganizationType
+
+
+def normalize_organization_type(organization_type: OrganizationType | str) -> str:
+    return organization_type.value if isinstance(organization_type, OrganizationType) else organization_type
 
 
 class AdminDirectoryService:
@@ -46,7 +51,7 @@ class AdminDirectoryService:
                 AdminOrganizationSearchItem(
                     public_id=item.public_id,
                     name=item.name,
-                    organization_type=item.organization_type.value,
+                    organization_type=normalize_organization_type(item.organization_type),
                     verification_capabilities=list(item.verification_capabilities),
                     registry_record_public_id=item.registry_record.public_id if item.registry_record else None,
                     registry_resolution_status="resolved" if item.registry_record_id else "unresolved",
