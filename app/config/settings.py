@@ -234,6 +234,11 @@ class Settings(BaseSettings):
         description="Public base URL embedded in employer verification emails (API or web app)",
         validation_alias=AliasChoices("APP_PUBLIC_BASE_URL"),
     )
+    employer_portal_base_url: str | None = Field(
+        default=None,
+        description="Frontend origin used for employer verification magic links",
+        validation_alias=AliasChoices("EMPLOYER_PORTAL_BASE_URL"),
+    )
     employer_verification_token_ttl_hours: int = Field(
         default=168,
         ge=24,
