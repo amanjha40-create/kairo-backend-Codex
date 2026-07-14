@@ -23,6 +23,14 @@ class EmployerVerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "employer_verification_requests"
 
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        default=uuid.uuid4,
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
     employment_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("employments.id", ondelete="CASCADE"),
