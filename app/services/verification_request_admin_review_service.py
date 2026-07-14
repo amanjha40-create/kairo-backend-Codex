@@ -476,6 +476,7 @@ class VerificationRequestAdminReviewService:
             },
         )
         await self._session.commit()
+        await self._session.refresh(contact)
         from app.services.verification_request_service import VerificationRequestService
 
         return VerificationRequestService(self._session)._to_contact_response(contact)
