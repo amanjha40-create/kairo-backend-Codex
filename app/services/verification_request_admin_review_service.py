@@ -68,6 +68,12 @@ from app.services.verification_request_workflow_service import VerificationReque
 from app.verification_requests.enums import VerificationRequestEventSource, VerificationRequestStatus
 
 
+def normalize_contact_review_status(
+    review_status: VerificationContactReviewStatus | str,
+) -> str:
+    return review_status.value if isinstance(review_status, VerificationContactReviewStatus) else review_status
+
+
 class VerificationRequestAdminReviewService:
     """Platform-admin review stage for canonical verification requests."""
 
@@ -139,7 +145,7 @@ class VerificationRequestAdminReviewService:
         return AdminReviewQueueItemResponse(
             **item.model_dump(),
             assigned_reviewer=reviewer,
-            contact_review_status=contact.review_status.value if contact is not None else None,
+            contact_review_status=(normalize_contact_review_status(contact.review_status) if contact is not None else None),
             organization_resolution_status="resolved" if request.organization_id else "unresolved",
             registry_resolution_status=request.registry_resolution_state,
         )

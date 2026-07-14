@@ -17,6 +17,7 @@ from app.admin_review.enums import (
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_admin_review_service
 from app.main import app
+from app.services.verification_request_admin_review_service import normalize_contact_review_status
 from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDetailResponse,
@@ -33,11 +34,23 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineResponse,
 )
 from app.verification_requests.enums import (
+    VerificationContactReviewStatus,
     VerificationRequestEventSource,
     VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
 )
+
+
+@pytest.mark.parametrize(
+    ("review_status", "expected"),
+    [
+        (VerificationContactReviewStatus.APPROVED, "approved"),
+        ("changes_requested", "changes_requested"),
+    ],
+)
+def test_contact_review_status_queue_normalization(review_status, expected) -> None:  # noqa: ANN001
+    assert normalize_contact_review_status(review_status) == expected
 
 
 class FakeVerificationRequestAdminReviewService:
