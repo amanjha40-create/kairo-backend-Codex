@@ -1016,3 +1016,20 @@ Needs frontend integration work:
 6. Integrate frontend auth screens.
 7. Integrate frontend onboarding screens.
 8. Run end-to-end verification and stop for review.
+
+## Phase 4 Admin Review Read Contracts
+
+These contracts support the Kairo internal review console. They require a platform role with the corresponding backend permission and are not candidate APIs.
+
+| Capability | Method | Path | Response |
+| --- | --- | --- | --- |
+| Review queue | `GET` | `/api/v1/admin/verification-requests/queue` | Paginated queue items with assignment, contact-review, organization-resolution, and registry-resolution state |
+| Review detail | `GET` | `/api/v1/admin/verification-requests/{request_id}` | Request, employment, current and historical contacts, enriched evidence, review cycles, open corrections, internal notes, and resolution summaries |
+| Evidence download | `GET` | `/api/v1/admin/verification-requests/{request_id}/evidence/{evidence_id}/download-url` | Short-lived presigned download URL scoped to evidence belonging to the request |
+| Reviewer lookup | `GET` | `/api/v1/admin/verification-reviewers` | Paginated active users eligible to review verification requests |
+| Organization search | `GET` | `/api/v1/admin/organizations/search` | Paginated organization matches for Admin resolution |
+| Outreach status | `GET` | `/api/v1/admin/employer-verifications/{employer_verification_public_id}` | Public outreach identifier, workflow status, masked recipient, dispatch acceptance state, and timestamps |
+
+The approval and organization-resolution mutation responses remain unchanged. Employer verification records expose immutable `public_id` values; internal database primary keys are never returned by the new Admin outreach contract.
+
+`delivery_status=accepted` means the configured email sender accepted the dispatch without raising an error. It does not claim inbox delivery. Evidence download URLs expire after 300 seconds and are available only to callers with `view_all_cases` permission.
