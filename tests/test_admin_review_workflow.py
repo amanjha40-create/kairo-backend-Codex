@@ -41,13 +41,14 @@ from app.verification_requests.enums import (
 
 
 class FakeVerificationRequestAdminReviewService:
-    def __init__(self) -> None:
+    def __init__(self, employer_verification_public_id: UUID | None = None) -> None:
         self._request_public_id = uuid4()
         self._review_public_id = uuid4()
         self._evidence_public_id = uuid4()
         self._correction_public_id = uuid4()
         self._event_public_id = uuid4()
         self._now = datetime.now(tz=UTC)
+        self._employer_verification_public_id = employer_verification_public_id
 
     def _request_response(
         self,
@@ -128,7 +129,8 @@ class FakeVerificationRequestAdminReviewService:
     async def get_detail(self, verification_request_public_id):  # noqa: ANN001
         return AdminReviewDetailResponse(
             request=self._request_response(),
-            evidence=[self._evidence_response()],
+            employer_verification_public_id=self._employer_verification_public_id,
+            evidence=[],
             reviews=[self._review_response()],
             open_corrections=[self._correction_response()],
         )
@@ -213,6 +215,26 @@ async def test_admin_review_queue_is_available_to_hr() -> None:
     assert response.status_code == 200
     assert len(response.json()["items"]) == 1
     assert response.json()["total"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("employer_verification_public_id", [None, uuid4()])
+async def test_admin_review_detail_exposes_employer_verification_public_id(
+    employer_verification_public_id: UUID | None,
+) -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_verification_request_admin_review_service] = lambda: (
+        FakeVerificationRequestAdminReviewService(employer_verification_public_id)
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/admin/verification-requests/{uuid4()}")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    expected = str(employer_verification_public_id) if employer_verification_public_id else None
+    assert response.json()["employer_verification_public_id"] == expected
 
 
 @pytest.mark.asyncio

@@ -168,6 +168,7 @@ class AdminReviewCycleResponse(BaseModel):
 
 class AdminReviewDetailResponse(BaseModel):
     request: VerificationRequestResponse
+    employer_verification_public_id: UUID | None = None
     employment: EmploymentResponse | None = None
     verification_contact: AdminVerificationContactResponse | None = None
     verification_contact_history: list[AdminVerificationContactResponse] = Field(default_factory=list)

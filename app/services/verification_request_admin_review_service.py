@@ -22,6 +22,7 @@ from app.models.verification_review_note import VerificationReviewNote
 from app.repositories.organization import OrganizationRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
+from app.repositories.employer_verification import EmployerVerificationRepository
 from app.repositories.trust_registry import TrustRegistryRepository
 from app.repositories.user import UserRepository
 from app.repositories.verification_request import VerificationRequestRepository
@@ -76,6 +77,7 @@ class VerificationRequestAdminReviewService:
         self._organizations = OrganizationRepository(session)
         self._employments = EmploymentRepository(session)
         self._employment_documents = EmploymentDocumentRepository(session)
+        self._employer_verifications = EmployerVerificationRepository(session)
         self._registry = TrustRegistryRepository(session)
         self._users = UserRepository(session)
         self._evidence = VerificationRequestEvidenceRepository(session)
@@ -196,8 +198,12 @@ class VerificationRequestAdminReviewService:
             if request.registry_record_id is not None
             else None
         )
+        employer_verification = await self._employer_verifications.get_by_verification_request_id(request.id)
         return AdminReviewDetailResponse(
             request=self._to_request_response(request),
+            employer_verification_public_id=(
+                employer_verification.public_id if employer_verification is not None else None
+            ),
             employment=employment,
             verification_contact=self._to_admin_contact_response(current_contact) if current_contact else None,
             verification_contact_history=[self._to_admin_contact_response(item) for item in contacts],
