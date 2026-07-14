@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,6 +20,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_admin_review_service
 from app.main import app
 from app.services.verification_request_admin_review_service import (
+    VerificationRequestAdminReviewService,
     normalize_contact_review_status,
     normalize_contact_type,
 )
@@ -28,6 +31,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
+    AdminVerificationContactReviewRequest,
 )
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
@@ -66,6 +70,39 @@ def test_contact_review_status_queue_normalization(review_status, expected) -> N
 )
 def test_contact_type_detail_normalization(contact_type, expected) -> None:  # noqa: ANN001
     assert normalize_contact_type(contact_type) == expected
+
+
+@pytest.mark.asyncio
+async def test_contact_review_refreshes_committed_contact_before_mapping() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._session = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+    request = SimpleNamespace(id=uuid4())
+    contact = SimpleNamespace(
+        public_id=uuid4(),
+        contact_name="Local HR",
+        contact_email="hr@example.com",
+        contact_role="HR Manager",
+        contact_type=VerificationContactType.HR,
+        candidate_note=None,
+        review_status=VerificationContactReviewStatus.PENDING,
+        review_notes=None,
+        reviewed_by_user_id=None,
+        reviewed_at=None,
+        created_at=datetime.now(tz=UTC),
+        updated_at=datetime.now(tz=UTC),
+    )
+    service._require_admin_reviewable_request = AsyncMock(return_value=request)
+    service._contacts = SimpleNamespace(get_current=AsyncMock(return_value=contact))
+    service._workflow = SimpleNamespace(record_action=AsyncMock())
+
+    response = await service.review_contact(
+        uuid4(),
+        uuid4(),
+        AdminVerificationContactReviewRequest(review_status=VerificationContactReviewStatus.APPROVED),
+    )
+
+    service._session.refresh.assert_awaited_once_with(contact)
+    assert response.review_status == VerificationContactReviewStatus.APPROVED
 
 
 class FakeVerificationRequestAdminReviewService:
