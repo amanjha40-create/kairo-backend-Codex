@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User
@@ -62,3 +62,25 @@ class UserRepository(BaseRepository[User]):
             return
         user.employment_onboarding_completed_at = datetime.now(tz=UTC)
         await self._session.flush()
+
+    async def list_by_roles(
+        self,
+        roles: frozenset[str],
+        *,
+        search: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[User], int]:
+        filters = [User.deleted_at.is_(None), User.is_active.is_(True), User.role.in_(roles)]
+        if search:
+            pattern = f"%{search.strip()}%"
+            filters.append(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
+        count = await self._session.scalar(select(func.count()).select_from(User).where(*filters))
+        rows = await self._session.execute(
+            select(User)
+            .where(*filters)
+            .order_by(User.full_name.asc().nulls_last(), User.email.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(rows.scalars().all()), int(count or 0)

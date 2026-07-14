@@ -19,7 +19,12 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "employer_verification_requests",
-        sa.Column("public_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column(
+            "public_id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=True,
+        ),
     )
     op.execute(
         sa.text(

@@ -15,6 +15,7 @@ from app.admin_review.enums import (
 )
 from app.core.permissions import Permission, has_permission
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
@@ -38,8 +39,11 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminEvidenceDownloadResponse,
     AdminReviewEvidenceResponse,
     AdminReviewInternalNoteResponse,
+    AdminReviewQueueItemResponse,
+    AdminReviewerSummary,
     AdminOrganizationResolutionResponse,
     AdminRegistryResolutionResponse,
     AdminVerificationContactResponse,
@@ -77,7 +81,8 @@ class VerificationRequestAdminReviewService:
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
         self._contacts = VerificationContactRepository(session)
-        self._employer_outreach = EmployerVerificationService(session, settings or get_settings())
+        self._settings = settings or get_settings()
+        self._employer_outreach = EmployerVerificationService(session, self._settings)
         self._workflow = VerificationRequestWorkflowService(self._requests)
 
     async def get_queue(self, params: ListQueryParams | None = None) -> AdminReviewQueueResponse:
@@ -106,13 +111,65 @@ class VerificationRequestAdminReviewService:
         if not isinstance(page, Page):
             raise RuntimeError("Admin review queue must return a page envelope")
         return AdminReviewQueueResponse(
-            items=page.items,
+            items=[await self._to_queue_item(item) for item in page.items],
             total=page.total,
             page=page.page,
             page_size=page.page_size,
             total_pages=page.total_pages,
             offset=page.offset,
             limit=page.limit,
+        )
+
+    async def _to_queue_item(self, item: VerificationRequestResponse) -> AdminReviewQueueItemResponse:
+        request = await self._get_required_request(item.public_id)
+        review = await self._reviews.get_latest_review_for_request(request.id)
+        reviewer = None
+        if review is not None and review.assigned_reviewer_user_id is not None:
+            user = await self._users.get_by_id(review.assigned_reviewer_user_id)
+            if user is not None:
+                reviewer = AdminReviewerSummary(
+                    user_id=user.id,
+                    full_name=user.full_name,
+                    email=user.email,
+                    role=user.role,
+                )
+        contact = await self._contacts.get_current(request.id)
+        return AdminReviewQueueItemResponse(
+            **item.model_dump(),
+            assigned_reviewer=reviewer,
+            contact_review_status=contact.review_status.value if contact is not None else None,
+            organization_resolution_status="resolved" if request.organization_id else "unresolved",
+            registry_resolution_status=request.registry_resolution_state,
+        )
+
+    async def get_evidence_download_url(
+        self,
+        verification_request_public_id: UUID,
+        evidence_public_id: UUID,
+    ) -> AdminEvidenceDownloadResponse:
+        request = await self._get_required_request(verification_request_public_id)
+        evidence = await self._evidence.get_by_public_id(evidence_public_id)
+        if evidence is None or evidence.verification_request_id != request.id:
+            raise NotFoundError("Verification request evidence not found")
+        if evidence.employment_document_id is None:
+            raise ConflictError("Evidence is not backed by an employment document")
+        document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
+        if document is None or request.employment_id != document.employment_id:
+            raise NotFoundError("Employment document not found")
+        bucket = self._settings.s3_documents_bucket
+        if not bucket:
+            raise ConflictError("Document storage is not configured")
+        ttl_seconds = 300
+        download_url = await generate_presigned_get_url(
+            bucket=bucket,
+            object_key=document.object_key,
+            ttl_seconds=ttl_seconds,
+            settings=self._settings,
+        )
+        return AdminEvidenceDownloadResponse(
+            evidence_public_id=evidence.public_id,
+            download_url=download_url,
+            expires_in_seconds=ttl_seconds,
         )
 
     async def get_detail(self, verification_request_public_id: UUID) -> AdminReviewDetailResponse:

@@ -44,6 +44,12 @@ class AdminReviewEvidenceResponse(VerificationRequestEvidenceResponse):
     upload_status: str | None = None
 
 
+class AdminEvidenceDownloadResponse(BaseModel):
+    evidence_public_id: UUID
+    download_url: str
+    expires_in_seconds: int
+
+
 class AdminVerificationContactResponse(BaseModel):
     public_id: UUID
     contact_name: str | None
@@ -79,8 +85,8 @@ class AdminRegistryResolutionResponse(BaseModel):
 class AdminReviewQueueItemResponse(VerificationRequestResponse):
     assigned_reviewer: AdminReviewerSummary | None = None
     contact_review_status: str | None = None
-    organization_resolution_status: str
-    registry_resolution_status: str
+    organization_resolution_status: str = "unresolved"
+    registry_resolution_status: str = "unresolved"
 
 
 class AdminReviewQueueResponse(BaseModel):

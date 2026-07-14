@@ -24,6 +24,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCorrectionRequest,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminEvidenceDownloadResponse,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
     AdminReviewOrganizationResolutionRequest,
@@ -184,3 +185,16 @@ async def get_admin_review_timeline(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> AdminReviewTimelineResponse:
     return await svc.get_timeline(verification_request_public_id, params)
+
+
+@router.get(
+    "/{verification_request_public_id}/evidence/{evidence_public_id}/download-url",
+    response_model=AdminEvidenceDownloadResponse,
+)
+async def get_admin_review_evidence_download_url(
+    verification_request_public_id: UUID,
+    evidence_public_id: UUID,
+    _: Annotated[CurrentUser, Depends(require_view_cases)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> AdminEvidenceDownloadResponse:
+    return await svc.get_evidence_download_url(verification_request_public_id, evidence_public_id)
