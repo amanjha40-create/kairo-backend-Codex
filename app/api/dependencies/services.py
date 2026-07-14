@@ -10,6 +10,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.infrastructure.redis.deps import get_redis
 from app.services import (
+    AdminDirectoryService,
     AdminVerificationService,
     AuthService,
     ConnectorExecutionService,
@@ -95,6 +96,10 @@ def get_document_upload_service(
 
 def get_admin_verification_service(session: AsyncSession = Depends(get_session)) -> AdminVerificationService:
     return AdminVerificationService(session)
+
+
+def get_admin_directory_service(session: AsyncSession = Depends(get_session)) -> AdminDirectoryService:
+    return AdminDirectoryService(session)
 
 
 def get_verification_service(session: AsyncSession = Depends(get_session)) -> VerificationService:

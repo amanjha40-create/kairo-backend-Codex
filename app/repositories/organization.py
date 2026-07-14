@@ -26,6 +26,10 @@ class OrganizationRepository:
         stmt = select(Organization).where(Organization.public_id == public_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_id(self, organization_id: UUID) -> Organization | None:
+        stmt = select(Organization).where(Organization.id == organization_id)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_user(self, user_id: UUID) -> list[tuple[Organization, OrganizationMember]]:
         stmt = (
             select(Organization, OrganizationMember)
@@ -80,3 +84,22 @@ class OrganizationRepository:
         self._session.add(membership)
         await self._session.flush()
         return membership
+
+    async def search_all(
+        self,
+        *,
+        search: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[Organization], int]:
+        filters = [Organization.name.ilike(f"%{search.strip()}%")] if search else []
+        count = await self._session.scalar(select(func.count()).select_from(Organization).where(*filters))
+        rows = await self._session.execute(
+            select(Organization)
+            .options(joinedload(Organization.registry_record))
+            .where(*filters)
+            .order_by(Organization.name.asc(), Organization.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(rows.scalars().all()), int(count or 0)

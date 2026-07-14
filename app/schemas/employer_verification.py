@@ -45,3 +45,15 @@ class EmployerVerificationStatusResponse(BaseModel):
     expires_at: datetime
     responded_at: datetime | None = None
 
+
+class AdminEmployerVerificationSummary(BaseModel):
+    public_id: uuid.UUID
+    status: EmployerVerificationDecision
+    masked_recipient: str
+    delivery_status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminEmployerVerificationResponse(BaseModel):
+    employer_verification: AdminEmployerVerificationSummary

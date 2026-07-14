@@ -66,6 +66,17 @@ class VerificationRequestReviewRepository:
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
 
+    async def list_notes_for_request(self, verification_request_review_ids: list[UUID]) -> list[VerificationReviewNote]:
+        if not verification_request_review_ids:
+            return []
+        stmt = (
+            select(VerificationReviewNote)
+            .where(VerificationReviewNote.verification_request_review_id.in_(verification_request_review_ids))
+            .order_by(VerificationReviewNote.created_at.asc())
+        )
+        rows = await self._session.execute(stmt)
+        return list(rows.scalars().all())
+
     async def create_correction(self, correction: VerificationReviewCorrection) -> VerificationReviewCorrection:
         self._session.add(correction)
         await self._session.flush()

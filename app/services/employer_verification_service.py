@@ -41,6 +41,8 @@ from app.schemas.employer_verification import (
     EmployerVerificationRequestBody,
     EmployerVerificationRequestResponse,
     EmployerVerificationStatusResponse,
+    AdminEmployerVerificationResponse,
+    AdminEmployerVerificationSummary,
 )
 logger = logging.getLogger(__name__)
 
@@ -230,6 +232,21 @@ class EmployerVerificationService:
         )
         await self._session.commit()
         return response
+
+    async def get_admin_summary(self, public_id: UUID) -> AdminEmployerVerificationResponse:
+        request = await self._requests.get_by_public_id(public_id)
+        if request is None:
+            raise NotFoundError("Employer verification not found")
+        return AdminEmployerVerificationResponse(
+            employer_verification=AdminEmployerVerificationSummary(
+                public_id=request.public_id,
+                status=EmployerVerificationDecision(request.response),
+                masked_recipient=mask_email(request.verifier_email),
+                delivery_status="accepted" if request.sent_at is not None else "queued",
+                created_at=request.created_at,
+                updated_at=request.updated_at,
+            )
+        )
 
     async def _load_by_token(self, raw_token: str) -> EmployerVerificationRequest:
         if not raw_token or len(raw_token) < 16:

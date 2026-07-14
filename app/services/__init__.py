@@ -1,6 +1,7 @@
 """Application services — use-case orchestration above repositories."""
 
 from app.auth.service import AuthService
+from app.services.admin_directory_service import AdminDirectoryService
 from app.services.admin_verification_service import AdminReviewService, AdminVerificationService
 from app.services.credential_verification_service import CredentialVerificationService
 from app.services.connector_execution_service import ConnectorExecutionService
@@ -37,6 +38,7 @@ from app.services.verification_service import VerificationService
 
 __all__ = [
     "AdminReviewService",
+    "AdminDirectoryService",
     "AdminVerificationService",
     "AuthService",
     "ConnectorExecutionService",

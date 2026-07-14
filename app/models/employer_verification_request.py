@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,15 @@ class EmployerVerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Outbound employer confirmation — one active row per employment case."""
 
     __tablename__ = "employer_verification_requests"
+
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
 
     employment_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
