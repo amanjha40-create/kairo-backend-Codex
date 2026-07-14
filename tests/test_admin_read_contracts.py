@@ -1,6 +1,8 @@
 """Route contracts for additive Admin review read APIs."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,6 +15,7 @@ from app.api.dependencies.services import (
     get_verification_request_admin_review_service,
 )
 from app.main import app
+from app.repositories.employer_verification import EmployerVerificationRepository
 from app.schemas.admin_directory import (
     AdminOrganizationSearchItem,
     AdminOrganizationSearchPage,
@@ -110,3 +113,28 @@ async def test_admin_read_contract_routes() -> None:
     assert evidence.json()["evidence_public_id"] == str(evidence_id)
     assert outreach.status_code == 200
     assert outreach.json()["employer_verification"]["public_id"] == str(outreach_id)
+
+
+@pytest.mark.asyncio
+async def test_employer_verification_lookup_uses_verification_request_linkage() -> None:
+    outreach = SimpleNamespace(public_id=uuid4())
+    result = Mock()
+    result.scalar_one_or_none.return_value = outreach
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+    repository = EmployerVerificationRepository(session)
+
+    found = await repository.get_by_verification_request_id(uuid4())
+
+    assert found is outreach
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_openapi_exposes_admin_detail_employer_verification_public_id() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/openapi.json")
+
+    assert response.status_code == 200
+    properties = response.json()["components"]["schemas"]["AdminReviewDetailResponse"]["properties"]
+    assert "employer_verification_public_id" in properties

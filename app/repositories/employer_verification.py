@@ -38,6 +38,15 @@ class EmployerVerificationRepository(BaseRepository[EmployerVerificationRequest]
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_verification_request_id(
+        self,
+        verification_request_id: UUID,
+    ) -> EmployerVerificationRequest | None:
+        stmt = select(EmployerVerificationRequest).where(
+            EmployerVerificationRequest.verification_request_id == verification_request_id,
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_token_hash(self, token_hash: str) -> EmployerVerificationRequest | None:
         stmt = (
             select(EmployerVerificationRequest)
