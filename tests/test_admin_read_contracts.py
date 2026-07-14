@@ -15,6 +15,8 @@ from app.api.dependencies.services import (
     get_verification_request_admin_review_service,
 )
 from app.main import app
+from app.organization.enums import OrganizationType
+from app.services.admin_directory_service import normalize_organization_type
 from app.repositories.employer_verification import EmployerVerificationRepository
 from app.schemas.admin_directory import (
     AdminOrganizationSearchItem,
@@ -35,6 +37,14 @@ async def _admin_user() -> CurrentUser:
         email="admin@kairo.test",
         role="admin",
     )
+
+
+@pytest.mark.parametrize(
+    ("organization_type", "expected"),
+    [(OrganizationType.EMPLOYER, "employer"), ("university", "university")],
+)
+def test_admin_organization_type_normalization(organization_type, expected) -> None:  # noqa: ANN001
+    assert normalize_organization_type(organization_type) == expected
 
 
 class FakeAdminDirectoryService:
