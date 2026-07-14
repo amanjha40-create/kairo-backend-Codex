@@ -55,6 +55,10 @@ from app.verification_requests.enums import (
     VerificationRequestStatus,
     VerificationRequestType,
 )
+
+
+def is_internal_admin_note_event(event_type: str, metadata: dict | None) -> bool:
+    return event_type == "verification_request_admin_note_added" and (metadata or {}).get("visibility") == "internal"
 from app.employment.enums import DocumentVerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -830,6 +834,7 @@ class VerificationRequestService:
                 created_at=row.created_at,
             )
             for row in rows
+            if not is_internal_admin_note_event(row.event_type, row.metadata_payload)
         ]
         effective_params = params or ListQueryParams()
         page = filter_sort_paginate(

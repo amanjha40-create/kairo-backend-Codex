@@ -18,11 +18,20 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
+from app.services.verification_request_service import is_internal_admin_note_event
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestStatus,
     VerificationRequestType,
 )
+
+
+def test_internal_admin_note_events_are_private_to_admin_timeline() -> None:
+    assert is_internal_admin_note_event(
+        "verification_request_admin_note_added",
+        {"visibility": "internal", "note_public_id": str(uuid4())},
+    )
+    assert not is_internal_admin_note_event("admin_requested_corrections", {"visibility": "candidate"})
 
 
 class FakeVerificationRequestService:
