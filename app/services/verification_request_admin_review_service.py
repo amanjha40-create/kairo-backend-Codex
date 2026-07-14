@@ -32,7 +32,7 @@ from app.repositories.verification_contact import VerificationContactRepository
 from app.services.employer_verification_service import EmployerVerificationService
 from app.config import Settings, get_settings
 from app.schemas.employer_verification import EmployerVerificationRequestBody
-from app.verification_requests.enums import VerificationContactReviewStatus
+from app.verification_requests.enums import VerificationContactReviewStatus, VerificationContactType
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.admin_review_workflow import (
     AdminReviewAssignRequest,
@@ -72,6 +72,10 @@ def normalize_contact_review_status(
     review_status: VerificationContactReviewStatus | str,
 ) -> str:
     return review_status.value if isinstance(review_status, VerificationContactReviewStatus) else review_status
+
+
+def normalize_contact_type(contact_type: VerificationContactType | str) -> str:
+    return contact_type.value if isinstance(contact_type, VerificationContactType) else contact_type
 
 
 class VerificationRequestAdminReviewService:
@@ -254,9 +258,9 @@ class VerificationRequestAdminReviewService:
             contact_name=contact.contact_name,
             contact_email=contact.contact_email,
             contact_role=contact.contact_role,
-            contact_type=contact.contact_type.value,
+            contact_type=normalize_contact_type(contact.contact_type),
             candidate_note=contact.candidate_note,
-            review_status=contact.review_status.value,
+            review_status=normalize_contact_review_status(contact.review_status),
             review_notes=contact.review_notes,
             reviewed_by_user_id=contact.reviewed_by_user_id,
             reviewed_at=contact.reviewed_at,
