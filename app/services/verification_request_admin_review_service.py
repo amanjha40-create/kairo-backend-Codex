@@ -658,9 +658,9 @@ class VerificationRequestAdminReviewService:
                 actor_user_id=actor_user_id,
                 verification_request=request,
                 payload=EmployerVerificationRequestBody(
-                    contact_name=contact.contact_name or contact.contact_role or contact.contact_type.value,
+                    contact_name=contact.contact_name or contact.contact_role or normalize_contact_type(contact.contact_type),
                     verifier_email=contact.contact_email,
-                    relationship=contact.contact_role or contact.contact_type.value,
+                    relationship=contact.contact_role or normalize_contact_type(contact.contact_type),
                 ),
             )
         request.organization_outreach_sent_at = datetime.now(tz=UTC)

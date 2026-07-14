@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -125,6 +127,7 @@ async def test_employer_outreach_fails_before_admin_approval() -> None:
     request = SimpleNamespace(
         employment_id=uuid4(),
         status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+        approved_for_organization_verification_at=None,
     )
 
     with pytest.raises(EmploymentWorkflowError, match="requires Admin approval"):
@@ -133,3 +136,28 @@ async def test_employer_outreach_fails_before_admin_approval() -> None:
             verification_request=request,
             payload=SimpleNamespace(),
         )
+
+
+@pytest.mark.asyncio
+async def test_employer_outreach_allows_admin_approved_request_after_organization_resolution() -> None:
+    service = EmployerVerificationService.__new__(EmployerVerificationService)
+    service.request_verification = AsyncMock(return_value=SimpleNamespace(verifier_email_masked="h***@example.com"))
+    service._workflow = SimpleNamespace(record_action=AsyncMock())
+    service._session = SimpleNamespace(commit=AsyncMock())
+    request = SimpleNamespace(
+        id=uuid4(),
+        employment_id=uuid4(),
+        subject_user_id=uuid4(),
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+        approved_for_organization_verification_at=datetime.now(tz=UTC),
+    )
+
+    await service.initiate_admin_outreach(
+        actor_user_id=uuid4(),
+        verification_request=request,
+        payload=SimpleNamespace(),
+    )
+
+    service.request_verification.assert_awaited_once()
+    service._workflow.record_action.assert_awaited_once()
+    service._session.commit.assert_awaited_once()
