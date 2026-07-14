@@ -49,6 +49,7 @@ SIGNUP_OTP_MAX_SENDS_PER_HOUR=5
 SIGNUP_PENDING_TTL_HOURS=24
 
 APP_PUBLIC_BASE_URL=https://api.kairo.example
+EMPLOYER_PORTAL_BASE_URL=https://app.kairo.example
 EMPLOYER_VERIFICATION_TOKEN_TTL_HOURS=168
 
 S3_PRESIGNED_PUT_TTL_SECONDS=600
@@ -68,6 +69,7 @@ TRUSTED_HOSTS=api.kairo.example
 ## Variables That Must Point to HTTPS Hosts
 
 - `APP_PUBLIC_BASE_URL`
+- `EMPLOYER_PORTAL_BASE_URL`
 - any production web app origin included in `CORS_ORIGINS`
 - any production OAuth redirect targets
 
