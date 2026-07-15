@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from email.message import EmailMessage
 import logging
+import re
 from typing import Any
 
 import boto3
@@ -24,6 +25,18 @@ from app.integrations.email.templates.password_reset import (
 from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitized_aws_error(exc: ClientError) -> dict[str, str]:
+    error = exc.response.get("Error", {})
+    metadata = exc.response.get("ResponseMetadata", {})
+    message = str(error.get("Message", ""))
+    message = re.sub(r"[\w.+-]+@[\w.-]+", "[redacted-email]", message)
+    return {
+        "aws_error_code": str(error.get("Code", "")),
+        "aws_error_message": message[:300],
+        "aws_request_id": str(metadata.get("RequestId", "")),
+    }
 
 
 def send_message_via_ses(
@@ -66,12 +79,14 @@ class SesEmailSender:
                 client=self._client,
             )
         except (BotoCoreError, ClientError, OSError, ServiceUnavailableError) as exc:
+            diagnostic = _sanitized_aws_error(exc) if isinstance(exc, ClientError) else {}
             logger.warning(
                 "ses_send_failed",
                 extra={
                     "event": "ses_send_failed",
                     "error_type": type(exc).__name__,
                     "email_event": event,
+                    **diagnostic,
                 },
             )
             raise ServiceUnavailableError(failure_message) from exc

@@ -12,6 +12,7 @@ import pytest
 from app.config import Settings
 from app.integrations.email.sender import get_email_sender
 from app.integrations.email.ses import SesEmailSender, send_message_via_ses
+from botocore.exceptions import ClientError
 from app.integrations.email.message import build_mime_message
 from app.integrations.email.templates.base import TransactionalEmailContent
 
@@ -87,6 +88,21 @@ def test_mime_builder_rejects_header_injection(field: str) -> None:
             from_email=values["from_email"],
             reply_to=values["reply_to"],
         )
+
+
+def test_ses_error_diagnostics_redact_email() -> None:
+    from app.integrations.email.ses import _sanitized_aws_error
+
+    error = ClientError(
+        {"Error": {"Code": "MessageRejected", "Message": "Rejected recipient@example.com"},
+         "ResponseMetadata": {"RequestId": "request-id"}},
+        "SendEmail",
+    )
+    assert _sanitized_aws_error(error) == {
+        "aws_error_code": "MessageRejected",
+        "aws_error_message": "Rejected [redacted-email]",
+        "aws_request_id": "request-id",
+    }
 
 
 @pytest.mark.asyncio
