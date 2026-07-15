@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from email.message import EmailMessage
 import logging
 from typing import Any
 
@@ -11,7 +10,9 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import Settings, get_settings
 from app.exceptions import ServiceUnavailableError
+from app.integrations.email.message import build_mime_message
 from app.integrations.email.ses import send_message_via_ses
+from app.integrations.email.templates.base import TransactionalEmailContent
 from app.schemas.email_delivery import EmailSendResult, RenderedEmailMessage
 
 logger = logging.getLogger(__name__)
@@ -36,14 +37,16 @@ class SesEmailProvider:
             )
             return EmailSendResult(provider=self.provider_name, status="skipped")
 
-        email_message = EmailMessage()
-        email_message["Subject"] = message.subject
-        email_message["From"] = self._settings.ses_from_email or self._settings.email_from
-        email_message["To"] = message.to_email
-        email_message["Reply-To"] = self._settings.email_reply_to
-        email_message.set_content(message.text_body)
-        if message.html_body:
-            email_message.add_alternative(message.html_body, subtype="html")
+        email_message = build_mime_message(
+            content=TransactionalEmailContent(
+                subject=message.subject,
+                html_body=message.html_body or "",
+                text_body=message.text_body,
+            ),
+            to_email=message.to_email,
+            from_email=self._settings.ses_from_email or self._settings.email_from,
+            reply_to=self._settings.email_reply_to,
+        )
 
         try:
             message_id = await asyncio.to_thread(

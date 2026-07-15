@@ -12,6 +12,8 @@ import pytest
 from app.config import Settings
 from app.integrations.email.sender import get_email_sender
 from app.integrations.email.ses import SesEmailSender, send_message_via_ses
+from app.integrations.email.message import build_mime_message
+from app.integrations.email.templates.base import TransactionalEmailContent
 
 
 class _FakeSesClient:
@@ -38,6 +40,53 @@ def _settings(**overrides: object) -> Settings:
 
 def test_sender_factory_selects_ses() -> None:
     assert isinstance(get_email_sender(_settings()), SesEmailSender)
+
+
+def test_mime_builder_uses_valid_smtp_multipart_message() -> None:
+    message = build_mime_message(
+        content=TransactionalEmailContent(
+            subject="Résumé verification — Kairo",
+            html_body="<p>HTML résumé</p>",
+            text_body="Plain résumé",
+        ),
+        to_email="recipient@example.com",
+        from_email="verify@kairoid.com",
+        reply_to="support@kairoid.com",
+    )
+    raw = message.as_bytes()
+    assert isinstance(raw, bytes)
+    parsed = BytesParser(policy=policy.default).parsebytes(raw)
+
+    assert raw.count(b"\r\n") > 10
+    assert parsed["From"] == "verify@kairoid.com"
+    assert parsed["To"] == "recipient@example.com"
+    assert parsed["Reply-To"] == "support@kairoid.com"
+    assert parsed["Date"]
+    assert parsed["Message-ID"]
+    assert parsed["MIME-Version"] == "1.0"
+    assert parsed.get_content_type() == "multipart/alternative"
+    assert parsed.get_body(preferencelist=("plain",)).get_content().replace("\r\n", "\n") == "Plain résumé\n"
+    assert parsed.get_body(preferencelist=("html",)).get_content().replace("\r\n", "\n") == "<p>HTML résumé</p>\n"
+
+
+@pytest.mark.parametrize("field", ["subject", "to_email", "from_email", "reply_to"])
+def test_mime_builder_rejects_header_injection(field: str) -> None:
+    values = {
+        "subject": "Safe",
+        "to_email": "recipient@example.com",
+        "from_email": "verify@kairoid.com",
+        "reply_to": "support@kairoid.com",
+    }
+    values[field] = "safe\r\nBcc: attacker@example.com"
+    with pytest.raises(ValueError):
+        build_mime_message(
+            content=TransactionalEmailContent(
+                subject=values["subject"], html_body="<p>body</p>", text_body="body"
+            ),
+            to_email=values["to_email"],
+            from_email=values["from_email"],
+            reply_to=values["reply_to"],
+        )
 
 
 @pytest.mark.asyncio
