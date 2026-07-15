@@ -11,6 +11,12 @@ from email.message import EmailMessage
 from app.config import Settings, get_settings
 from app.exceptions import ServiceUnavailableError
 from app.integrations.email.employer_verification_email import build_employer_verification_email
+from app.integrations.email.message import build_mime_message
+from app.integrations.email.templates.password_reset import (
+    PasswordResetContext,
+    render_password_reset,
+)
+from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +28,15 @@ def build_signup_otp_email(
     from_email: str,
     code: str,
     ttl_minutes: int,
+    reply_to: str | None = None,
 ) -> EmailMessage:
-    msg = EmailMessage()
-    msg["Subject"] = f"{app_name} — verify your email"
-    msg["From"] = from_email
-    msg["To"] = to_email
-    msg.set_content(
-        f"Your verification code is: {code}\n\n"
-        f"This code expires in {ttl_minutes} minutes.\n\n"
-        f"If you did not request this, you can ignore this email."
+    del app_name
+    return build_mime_message(
+        content=render_signup_otp(SignupOtpContext(code=code, ttl_minutes=ttl_minutes)),
+        to_email=to_email,
+        from_email=from_email,
+        reply_to=reply_to,
     )
-    return msg
 
 
 def build_password_reset_email(
@@ -42,18 +46,17 @@ def build_password_reset_email(
     from_email: str,
     reset_token: str,
     ttl_minutes: int,
+    reply_to: str | None = None,
 ) -> EmailMessage:
-    msg = EmailMessage()
-    msg["Subject"] = f"{app_name} — reset your password"
-    msg["From"] = from_email
-    msg["To"] = to_email
-    msg.set_content(
-        f"We received a request to reset your password.\n\n"
-        f"Password reset token: {reset_token}\n\n"
-        f"This token expires in {ttl_minutes} minutes and can only be used once.\n\n"
-        f"If you did not request this, you can ignore this email."
+    del app_name
+    return build_mime_message(
+        content=render_password_reset(
+            PasswordResetContext(reset_token=reset_token, ttl_minutes=ttl_minutes)
+        ),
+        to_email=to_email,
+        from_email=from_email,
+        reply_to=reply_to,
     )
-    return msg
 
 
 def send_message_via_smtp(settings: Settings, message: EmailMessage) -> None:
@@ -97,6 +100,7 @@ class SmtpEmailSender:
             from_email=self._settings.email_from,
             code=code,
             ttl_minutes=ttl_minutes,
+            reply_to=self._settings.email_reply_to,
         )
         try:
             await asyncio.to_thread(send_message_via_smtp, self._settings, message)
@@ -131,13 +135,16 @@ class SmtpEmailSender:
             },
         )
 
-    async def send_password_reset(self, *, to_email: str, reset_token: str, ttl_minutes: int) -> None:
+    async def send_password_reset(
+        self, *, to_email: str, reset_token: str, ttl_minutes: int
+    ) -> None:
         message = build_password_reset_email(
             app_name=self._settings.app_name,
             to_email=to_email,
             from_email=self._settings.email_from,
             reset_token=reset_token,
             ttl_minutes=ttl_minutes,
+            reply_to=self._settings.email_reply_to,
         )
         try:
             await asyncio.to_thread(send_message_via_smtp, self._settings, message)
@@ -195,6 +202,7 @@ class SmtpEmailSender:
             relationship=relationship,
             review_url=review_url,
             expires_hours=ttl_hours,
+            reply_to=self._settings.email_reply_to,
         )
         try:
             await asyncio.to_thread(send_message_via_smtp, self._settings, message)

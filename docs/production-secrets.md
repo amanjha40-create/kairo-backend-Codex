@@ -32,12 +32,16 @@ Store production secrets in a proper secret manager such as AWS Secrets Manager 
 
 | Variable | Required | Used by | Notes |
 |---|---|---|---|
-| `EMAIL_BACKEND` | Yes | API | Must be `smtp` in production. |
-| `EMAIL_FROM` | Yes | API | Sender address for OTP and verification emails. |
-| `SMTP_HOST` | Yes | API | SMTP hostname. |
-| `SMTP_PORT` | Yes | API | Usually `587` for STARTTLS. |
-| `SMTP_USER` | Yes | API | SMTP username. |
-| `SMTP_PASSWORD` | Yes | API | SMTP password or provider-issued app password. |
+| `EMAIL_BACKEND` | Yes | API, worker | Use `ses` for production delivery. This is not secret. |
+| `EMAIL_SEND_ENABLED` | Yes | API, worker | Must be `true` to permit external delivery. This is not secret. |
+| `EMAIL_FROM` | Yes | API, worker | Existing sender setting; use `verify@kairoid.com`. This is not secret. |
+| `EMAIL_REPLY_TO` | Yes | API, worker | Support reply address; use `support@kairoid.com`. This is not secret. |
+| `SES_FROM_EMAIL` | Yes | API, worker | SES-verified sender; use `verify@kairoid.com`. This is not secret. |
+| `AWS_REGION` | Yes | API, worker | SES identity region; use `us-east-1`. This is not secret. |
+
+SES does not require SMTP credentials. Grant the ECS API and worker task roles the minimum
+`ses:SendEmail` permission for the verified sender identity. Use static AWS credentials only
+outside AWS when an IAM role is unavailable, and store those credentials in Secrets Manager.
 
 ### AWS / Object Storage
 
@@ -75,7 +79,7 @@ Set only the providers you actually enable.
 ## Recommended Secret Handling
 
 - Prefer IAM roles over static AWS credentials.
-- Keep `DATABASE_URL`, `JWT_SECRET_KEY`, SMTP credentials, and OAuth secrets out of `.env.example`.
+- Keep `DATABASE_URL`, `JWT_SECRET_KEY`, static AWS credentials, and OAuth secrets out of `.env.example`.
 - Restrict who can read production secrets.
 - Audit access to secret stores.
 
@@ -85,7 +89,11 @@ These are not secrets, but they matter for safe production operation:
 
 - `APP_ENV=production`
 - `DOCS_ENABLED=false`
-- `EMAIL_BACKEND=smtp`
+- `EMAIL_BACKEND=ses`
+- `EMAIL_SEND_ENABLED=true`
+- `EMAIL_REPLY_TO=support@kairoid.com`
+- `SES_FROM_EMAIL=verify@kairoid.com`
+- `AWS_REGION=us-east-1`
 - `APP_PUBLIC_BASE_URL=https://api.kairo.example`
 - `CORS_ORIGINS=https://app.kairo.example`
 - `TRUSTED_HOSTS=api.kairo.example`

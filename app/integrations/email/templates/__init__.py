@@ -1,4 +1,4 @@
-"""Email template keys and versions."""
+"""Transactional email template registry and shared constants."""
 
 from __future__ import annotations
 
@@ -11,3 +11,6 @@ class EmailTemplateKey(StrEnum):
 
 
 DEFAULT_TEMPLATE_VERSION = "v1"
+
+
+__all__ = ["DEFAULT_TEMPLATE_VERSION", "EmailTemplateKey"]
