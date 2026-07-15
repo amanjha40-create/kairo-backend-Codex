@@ -55,3 +55,19 @@ class JobDispatcher:
             except Exception:
                 await session.rollback()
                 raise
+
+    async def dispatch_resume_processing(self, *, resume_id: str, job_id: str) -> None:
+        payload = {"resume_id": resume_id, "job_id": job_id}
+        if self._settings.job_backend == "sqs":
+            await self._publisher(SqsJobEnvelope(type="resume.process", data=payload))
+            return
+        handler = self._handler_resolver("resume.process")
+        if handler is None:
+            raise ValueError("No handler registered for resume.process")
+        async with self._session_factory() as session:
+            try:
+                await handler(payload, session)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
