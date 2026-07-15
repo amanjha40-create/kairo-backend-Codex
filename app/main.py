@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -28,11 +29,23 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.schemas.api_errors import ApiErrorResponse
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Startup/shutdown hooks — logging configuration and pool disposal."""
 
     setup_logging()
+    settings = get_settings()
+    if settings.phone_otp_backend == "staging_fixed":
+        logger.warning(
+            "staging fixed phone OTP provider active",
+            extra={
+                "event": "staging_fixed_phone_otp_provider_active",
+                "allowlisted_number_count": len(settings.staging_phone_otp_allowed_numbers),
+            },
+        )
     yield
     await dispose_engine()
     await close_redis_client()

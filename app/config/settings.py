@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+import re
 from typing import Self
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -174,13 +175,21 @@ class Settings(BaseSettings):
     )
     phone_otp_backend: str = Field(
         default="console",
-        description="console | real_provider_placeholder — console logs OTPs locally and is never valid for production.",
+        description="console | staging_fixed | real_provider_placeholder",
         validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
     )
     phone_otp_enabled: bool = Field(
         default=True,
         description="Enables staged phone OTP verification during signup.",
         validation_alias=AliasChoices("PHONE_OTP_ENABLED"),
+    )
+    staging_phone_otp_code: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("STAGING_PHONE_OTP_CODE"),
+    )
+    staging_phone_otp_allowed_numbers: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("STAGING_PHONE_OTP_ALLOWED_NUMBERS"),
     )
     password_reset_token_ttl_minutes: int = Field(
         default=30,
@@ -409,6 +418,17 @@ class Settings(BaseSettings):
     def normalize_phone_otp_backend(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("staging_phone_otp_allowed_numbers", mode="before")
+    @classmethod
+    def parse_staging_phone_otp_allowed_numbers(cls, v: object) -> list[str]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if str(item).strip()]
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return []
+
     @field_validator("trusted_hosts", mode="before")
     @classmethod
     def parse_trusted_hosts(cls, v: object) -> list[str]:
@@ -499,6 +519,29 @@ class Settings(BaseSettings):
             if self.phone_otp_enabled and self.phone_otp_backend == "console":
                 msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
                 raise ValueError(msg)
+            if self.phone_otp_backend == "staging_fixed":
+                msg = "PHONE_OTP_BACKEND=staging_fixed is forbidden in APP_ENV=production."
+                raise ValueError(msg)
+
+        if self.phone_otp_backend == "staging_fixed":
+            if self.app_env != AppEnvironment.STAGING:
+                msg = "PHONE_OTP_BACKEND=staging_fixed requires APP_ENV=staging."
+                raise ValueError(msg)
+            code = self.staging_phone_otp_code.get_secret_value() if self.staging_phone_otp_code else ""
+            if not re.fullmatch(r"\d{6}", code):
+                msg = "STAGING_PHONE_OTP_CODE must contain exactly six digits."
+                raise ValueError(msg)
+            if not self.staging_phone_otp_allowed_numbers:
+                msg = "STAGING_PHONE_OTP_ALLOWED_NUMBERS must contain at least one E.164 number."
+                raise ValueError(msg)
+            invalid_numbers = [
+                number
+                for number in self.staging_phone_otp_allowed_numbers
+                if re.fullmatch(r"\+[1-9]\d{7,14}", number) is None
+            ]
+            if invalid_numbers:
+                msg = "STAGING_PHONE_OTP_ALLOWED_NUMBERS must contain only normalized E.164 numbers."
+                raise ValueError(msg)
 
         if self.email_backend == "smtp":
             if not self.smtp_host:
@@ -520,8 +563,8 @@ class Settings(BaseSettings):
             msg = "EMAIL_BACKEND must be one of: console, smtp, ses."
             raise ValueError(msg)
 
-        if self.phone_otp_backend not in {"console", "real_provider_placeholder"}:
-            msg = "PHONE_OTP_BACKEND must be one of: console, real_provider_placeholder."
+        if self.phone_otp_backend not in {"console", "staging_fixed", "real_provider_placeholder"}:
+            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, real_provider_placeholder."
             raise ValueError(msg)
 
         if self.resume_processing_enabled:
