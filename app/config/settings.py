@@ -8,10 +8,10 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 import re
-from typing import Annotated, Self
+from typing import Self
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AppEnvironment(StrEnum):
@@ -187,9 +187,17 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("STAGING_PHONE_OTP_CODE"),
     )
-    staging_phone_otp_allowed_numbers: Annotated[list[str], NoDecode] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("STAGING_PHONE_OTP_ALLOWED_NUMBERS"),
+    auth_rate_limit_max_requests: int = Field(
+        default=10, ge=1, le=1000, validation_alias=AliasChoices("AUTH_RATE_LIMIT_MAX_REQUESTS")
+    )
+    auth_rate_limit_window_seconds: int = Field(
+        default=60, ge=1, le=3600, validation_alias=AliasChoices("AUTH_RATE_LIMIT_WINDOW_SECONDS")
+    )
+    otp_verify_rate_limit_max_requests: int = Field(
+        default=5, ge=1, le=100, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_MAX_REQUESTS")
+    )
+    otp_verify_rate_limit_window_seconds: int = Field(
+        default=60, ge=1, le=3600, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS")
     )
     password_reset_token_ttl_minutes: int = Field(
         default=30,
@@ -418,17 +426,6 @@ class Settings(BaseSettings):
     def normalize_phone_otp_backend(cls, v: str) -> str:
         return v.strip().lower()
 
-    @field_validator("staging_phone_otp_allowed_numbers", mode="before")
-    @classmethod
-    def parse_staging_phone_otp_allowed_numbers(cls, v: object) -> list[str]:
-        if v is None or v == "":
-            return []
-        if isinstance(v, list):
-            return [str(item).strip() for item in v if str(item).strip()]
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return []
-
     @field_validator("trusted_hosts", mode="before")
     @classmethod
     def parse_trusted_hosts(cls, v: object) -> list[str]:
@@ -531,18 +528,6 @@ class Settings(BaseSettings):
             if not re.fullmatch(r"\d{6}", code):
                 msg = "STAGING_PHONE_OTP_CODE must contain exactly six digits."
                 raise ValueError(msg)
-            if not self.staging_phone_otp_allowed_numbers:
-                msg = "STAGING_PHONE_OTP_ALLOWED_NUMBERS must contain at least one E.164 number."
-                raise ValueError(msg)
-            invalid_numbers = [
-                number
-                for number in self.staging_phone_otp_allowed_numbers
-                if re.fullmatch(r"\+[1-9]\d{7,14}", number) is None
-            ]
-            if invalid_numbers:
-                msg = "STAGING_PHONE_OTP_ALLOWED_NUMBERS must contain only normalized E.164 numbers."
-                raise ValueError(msg)
-
         if self.email_backend == "smtp":
             if not self.smtp_host:
                 msg = "SMTP_HOST is required when EMAIL_BACKEND=smtp."

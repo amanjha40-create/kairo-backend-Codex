@@ -30,7 +30,6 @@ def _settings(**overrides: object) -> Settings:
         "phone_otp_backend": "staging_fixed",
         "phone_otp_enabled": True,
         "staging_phone_otp_code": FIXED_CODE,
-        "staging_phone_otp_allowed_numbers": [ALLOWED_PHONE],
     }
     values.update(overrides)
     return Settings(**values)
@@ -56,11 +55,9 @@ def test_staging_fixed_provider_is_forbidden_in_production() -> None:
     (
         ({"staging_phone_otp_code": None}, "STAGING_PHONE_OTP_CODE"),
         ({"staging_phone_otp_code": "12345"}, "exactly six digits"),
-        ({"staging_phone_otp_allowed_numbers": []}, "at least one E.164"),
-        ({"staging_phone_otp_allowed_numbers": ["9876543210"]}, "normalized E.164"),
     ),
 )
-def test_staging_fixed_provider_validates_secret_and_allowlist(
+def test_staging_fixed_provider_validates_secret(
     overrides: dict[str, object],
     message: str,
 ) -> None:
@@ -72,28 +69,8 @@ def test_provider_factory_selects_staging_fixed() -> None:
     assert isinstance(get_phone_otp_sender(_settings()), StagingFixedPhoneOtpSender)
 
 
-def test_comma_separated_allowlist_loads_from_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APP_ENV", "staging")
-    monkeypatch.setenv("PHONE_OTP_BACKEND", "staging_fixed")
-    monkeypatch.setenv("STAGING_PHONE_OTP_CODE", FIXED_CODE)
-    monkeypatch.setenv(
-        "STAGING_PHONE_OTP_ALLOWED_NUMBERS",
-        f"{ALLOWED_PHONE},+15555550123",
-    )
-
-    settings = Settings(
-        database_url="postgresql+asyncpg://kairo:kairo@localhost:5432/kairo",
-        jwt_secret_key="test-jwt-secret-key-32-chars-minimum!!",
-        _env_file=None,
-    )
-
-    assert settings.staging_phone_otp_allowed_numbers == [ALLOWED_PHONE, "+15555550123"]
-
-
 @pytest.mark.asyncio
-async def test_allowed_number_uses_injected_code_without_logging_secret(
+async def test_valid_number_uses_injected_code_without_logging_secret(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     sender = StagingFixedPhoneOtpSender(_settings())
@@ -111,13 +88,12 @@ async def test_allowed_number_uses_injected_code_without_logging_secret(
     assert ALLOWED_PHONE not in caplog.text
 
 
-def test_unapproved_number_receives_indistinguishable_random_challenge() -> None:
+def test_any_valid_staging_number_uses_injected_code() -> None:
     sender = StagingFixedPhoneOtpSender(_settings())
 
     challenge = sender.challenge_code(to_phone="+919999999999", generated_code="111111")
 
-    assert challenge == "111111"
-    assert challenge != FIXED_CODE
+    assert challenge == FIXED_CODE
 
 
 class _OtpRedis:
@@ -221,7 +197,7 @@ async def test_auth_service_hashes_fixed_challenge_through_existing_store() -> N
 
 
 @pytest.mark.asyncio
-async def test_unapproved_number_gets_same_response_but_fixed_code_is_not_stored() -> None:
+async def test_different_valid_number_stores_same_staging_challenge() -> None:
     otp_store = _FakeOtpStore()
     pending = _pending(phone="+919999999999")
 
@@ -230,7 +206,7 @@ async def test_unapproved_number_gets_same_response_but_fixed_code_is_not_stored
     assert response.message == "Verification code sent"
     assert otp_store.stored is not None
     assert otp_store.stored[:2] == (pending.id, "phone")
-    assert otp_store.stored[2] != FIXED_CODE
+    assert otp_store.stored[2] == FIXED_CODE
 
 
 @pytest.mark.asyncio

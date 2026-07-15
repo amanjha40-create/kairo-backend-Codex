@@ -43,7 +43,6 @@ async def lifespan(_: FastAPI):
             "staging fixed phone OTP provider active",
             extra={
                 "event": "staging_fixed_phone_otp_provider_active",
-                "allowlisted_number_count": len(settings.staging_phone_otp_allowed_numbers),
             },
         )
     yield

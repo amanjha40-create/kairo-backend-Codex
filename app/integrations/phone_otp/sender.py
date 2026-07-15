@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import logging
 from typing import Protocol
 
@@ -40,19 +39,14 @@ class ConsolePhoneOtpSender:
 
 
 class StagingFixedPhoneOtpSender:
-    """Staging-only fixed challenge provider restricted to approved E.164 numbers."""
+    """Staging-only fixed challenge provider for active signup challenges."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
 
-    def _is_allowed(self, to_phone: str) -> bool:
-        return any(
-            hmac.compare_digest(to_phone, allowed)
-            for allowed in self._settings.staging_phone_otp_allowed_numbers
-        )
-
     def challenge_code(self, *, to_phone: str, generated_code: str) -> str:
-        if not self._is_allowed(to_phone) or self._settings.staging_phone_otp_code is None:
+        del to_phone
+        if self._settings.staging_phone_otp_code is None:
             return generated_code
         return self._settings.staging_phone_otp_code.get_secret_value()
 
