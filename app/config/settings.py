@@ -192,6 +192,10 @@ class Settings(BaseSettings):
         default="noreply@kairo.app",
         validation_alias=AliasChoices("EMAIL_FROM"),
     )
+    email_reply_to: str = Field(
+        default="support@kairoid.com",
+        validation_alias=AliasChoices("EMAIL_REPLY_TO"),
+    )
     email_backend: str = Field(
         default="console",
         description="console | smtp | ses — external delivery requires EMAIL_SEND_ENABLED=true",

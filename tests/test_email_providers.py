@@ -117,6 +117,7 @@ async def test_ses_provider_preserves_text_and_html_content() -> None:
     assert request["FromEmailAddress"] == "verify@kairoid.com"
     assert request["Destination"] == {"ToAddresses": ["recipient@example.com"]}
     raw_message = request["Content"]["Raw"]["Data"]  # type: ignore[index]
+    assert b"Reply-To: support@kairoid.com" in raw_message
     assert b"Plain text fallback" in raw_message
     assert b"HTML body" in raw_message
     assert b"multipart/alternative" in raw_message

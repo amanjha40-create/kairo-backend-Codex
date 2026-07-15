@@ -12,8 +12,16 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import Settings, get_settings
 from app.exceptions import ServiceUnavailableError
-from app.integrations.email.employer_verification_email import build_employer_verification_email
-from app.integrations.email.smtp import build_password_reset_email, build_signup_otp_email
+from app.integrations.email.message import build_mime_message
+from app.integrations.email.templates.employer_verification import (
+    EmployerVerificationContext,
+    render_employer_verification,
+)
+from app.integrations.email.templates.password_reset import (
+    PasswordResetContext,
+    render_password_reset,
+)
+from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +85,11 @@ class SesEmailSender:
         )
 
     async def send_signup_otp(self, *, to_email: str, code: str, ttl_minutes: int) -> None:
-        message = build_signup_otp_email(
-            app_name=self._settings.app_name,
+        message = build_mime_message(
+            content=render_signup_otp(SignupOtpContext(code=code, ttl_minutes=ttl_minutes)),
             to_email=to_email,
             from_email=self._settings.ses_from_email or self._settings.email_from,
-            code=code,
-            ttl_minutes=ttl_minutes,
+            reply_to=self._settings.email_reply_to,
         )
         await self._send(
             message,
@@ -93,12 +100,13 @@ class SesEmailSender:
     async def send_password_reset(
         self, *, to_email: str, reset_token: str, ttl_minutes: int
     ) -> None:
-        message = build_password_reset_email(
-            app_name=self._settings.app_name,
+        message = build_mime_message(
+            content=render_password_reset(
+                PasswordResetContext(reset_token=reset_token, ttl_minutes=ttl_minutes)
+            ),
             to_email=to_email,
             from_email=self._settings.ses_from_email or self._settings.email_from,
-            reset_token=reset_token,
-            ttl_minutes=ttl_minutes,
+            reply_to=self._settings.email_reply_to,
         )
         await self._send(
             message,
@@ -118,17 +126,21 @@ class SesEmailSender:
         review_url: str,
         ttl_hours: int,
     ) -> None:
-        message = build_employer_verification_email(
-            app_name=self._settings.app_name,
+        message = build_mime_message(
+            content=render_employer_verification(
+                EmployerVerificationContext(
+                    contact_name=contact_name,
+                    subject_full_name=subject_full_name,
+                    employer_name=employer_name,
+                    job_title=job_title,
+                    relationship=relationship,
+                    review_url=review_url,
+                    expires_hours=ttl_hours,
+                )
+            ),
             to_email=to_email,
             from_email=self._settings.ses_from_email or self._settings.email_from,
-            contact_name=contact_name,
-            subject_full_name=subject_full_name,
-            employer_name=employer_name,
-            job_title=job_title,
-            relationship=relationship,
-            review_url=review_url,
-            expires_hours=ttl_hours,
+            reply_to=self._settings.email_reply_to,
         )
         await self._send(
             message,

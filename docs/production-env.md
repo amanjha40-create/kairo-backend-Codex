@@ -31,6 +31,7 @@ LOG_ACCESS_ENABLED=true
 EMAIL_BACKEND=ses
 EMAIL_SEND_ENABLED=true
 EMAIL_FROM=verify@kairoid.com
+EMAIL_REPLY_TO=support@kairoid.com
 SES_FROM_EMAIL=verify@kairoid.com
 AWS_REGION=us-east-1
 

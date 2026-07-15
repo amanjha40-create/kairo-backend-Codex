@@ -35,6 +35,7 @@ Store production secrets in a proper secret manager such as AWS Secrets Manager 
 | `EMAIL_BACKEND` | Yes | API, worker | Use `ses` for production delivery. This is not secret. |
 | `EMAIL_SEND_ENABLED` | Yes | API, worker | Must be `true` to permit external delivery. This is not secret. |
 | `EMAIL_FROM` | Yes | API, worker | Existing sender setting; use `verify@kairoid.com`. This is not secret. |
+| `EMAIL_REPLY_TO` | Yes | API, worker | Support reply address; use `support@kairoid.com`. This is not secret. |
 | `SES_FROM_EMAIL` | Yes | API, worker | SES-verified sender; use `verify@kairoid.com`. This is not secret. |
 | `AWS_REGION` | Yes | API, worker | SES identity region; use `us-east-1`. This is not secret. |
 
@@ -90,6 +91,7 @@ These are not secrets, but they matter for safe production operation:
 - `DOCS_ENABLED=false`
 - `EMAIL_BACKEND=ses`
 - `EMAIL_SEND_ENABLED=true`
+- `EMAIL_REPLY_TO=support@kairoid.com`
 - `SES_FROM_EMAIL=verify@kairoid.com`
 - `AWS_REGION=us-east-1`
 - `APP_PUBLIC_BASE_URL=https://api.kairo.example`

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import inspect
+import logging
+from email import policy
+from email.parser import BytesParser
+
 import pytest
 
 from app.config import Settings
 from app.integrations.email.sender import get_email_sender
-from app.integrations.email.ses import SesEmailSender
+from app.integrations.email.ses import SesEmailSender, send_message_via_ses
 
 
 class _FakeSesClient:
@@ -59,9 +64,15 @@ async def test_ses_sender_uses_existing_transactional_templates() -> None:
 
     assert len(client.requests) == 3
     raw_messages = [request["Content"]["Raw"]["Data"] for request in client.requests]  # type: ignore[index]
-    assert b"verification code" in raw_messages[0]
-    assert b"password" in raw_messages[1]
-    assert b"employment verification" in raw_messages[2]
+    text_bodies = []
+    for raw_message in raw_messages:
+        parsed = BytesParser(policy=policy.default).parsebytes(raw_message)
+        plain = parsed.get_body(preferencelist=("plain",))
+        assert plain is not None
+        text_bodies.append(plain.get_content().lower())
+    assert "verification code" in text_bodies[0]
+    assert "password" in text_bodies[1]
+    assert "verify their employment" in text_bodies[2]
     assert all(request["FromEmailAddress"] == "verify@kairoid.com" for request in client.requests)
 
 
@@ -73,3 +84,32 @@ async def test_ses_sender_does_not_send_when_delivery_disabled() -> None:
     await sender.send_signup_otp(to_email="recipient@example.com", code="123456", ttl_minutes=10)
 
     assert client.requests == []
+
+
+@pytest.mark.asyncio
+async def test_ses_sender_does_not_log_security_secrets(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _FakeSesClient()
+    sender = SesEmailSender(_settings(), client=client)
+    otp = "otp-secret-value"
+    reset_token = "reset-secret-value"
+
+    with caplog.at_level(logging.INFO):
+        await sender.send_signup_otp(to_email="recipient@example.com", code=otp, ttl_minutes=10)
+        await sender.send_password_reset(
+            to_email="recipient@example.com",
+            reset_token=reset_token,
+            ttl_minutes=15,
+        )
+
+    rendered_logs = " ".join(record.getMessage() for record in caplog.records)
+    assert otp not in rendered_logs
+    assert reset_token not in rendered_logs
+
+
+def test_ses_transport_contains_no_transactional_business_copy() -> None:
+    source = inspect.getsource(send_message_via_ses)
+    assert "Verify once" not in source
+    assert "verification code" not in source
+    assert "reset your password" not in source

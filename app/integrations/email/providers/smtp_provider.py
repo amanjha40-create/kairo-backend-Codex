@@ -37,6 +37,7 @@ class SmtpEmailProvider:
         email_message["Subject"] = message.subject
         email_message["From"] = self._settings.email_from
         email_message["To"] = message.to_email
+        email_message["Reply-To"] = self._settings.email_reply_to
         email_message.set_content(message.text_body)
         if message.html_body:
             email_message.add_alternative(message.html_body, subtype="html")
