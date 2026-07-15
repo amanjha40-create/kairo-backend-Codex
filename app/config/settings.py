@@ -8,10 +8,10 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 import re
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class AppEnvironment(StrEnum):
@@ -187,7 +187,7 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("STAGING_PHONE_OTP_CODE"),
     )
-    staging_phone_otp_allowed_numbers: list[str] = Field(
+    staging_phone_otp_allowed_numbers: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         validation_alias=AliasChoices("STAGING_PHONE_OTP_ALLOWED_NUMBERS"),
     )

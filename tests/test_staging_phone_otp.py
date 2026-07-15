@@ -72,6 +72,26 @@ def test_provider_factory_selects_staging_fixed() -> None:
     assert isinstance(get_phone_otp_sender(_settings()), StagingFixedPhoneOtpSender)
 
 
+def test_comma_separated_allowlist_loads_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("PHONE_OTP_BACKEND", "staging_fixed")
+    monkeypatch.setenv("STAGING_PHONE_OTP_CODE", FIXED_CODE)
+    monkeypatch.setenv(
+        "STAGING_PHONE_OTP_ALLOWED_NUMBERS",
+        f"{ALLOWED_PHONE},+15555550123",
+    )
+
+    settings = Settings(
+        database_url="postgresql+asyncpg://kairo:kairo@localhost:5432/kairo",
+        jwt_secret_key="test-jwt-secret-key-32-chars-minimum!!",
+        _env_file=None,
+    )
+
+    assert settings.staging_phone_otp_allowed_numbers == [ALLOWED_PHONE, "+15555550123"]
+
+
 @pytest.mark.asyncio
 async def test_allowed_number_uses_injected_code_without_logging_secret(
     caplog: pytest.LogCaptureFixture,
