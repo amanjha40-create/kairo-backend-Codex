@@ -28,6 +28,12 @@ LOG_LEVEL=INFO
 LOG_JSON=true
 LOG_ACCESS_ENABLED=true
 
+EMAIL_BACKEND=ses
+EMAIL_SEND_ENABLED=true
+EMAIL_FROM=verify@kairoid.com
+SES_FROM_EMAIL=verify@kairoid.com
+AWS_REGION=us-east-1
+
 DATABASE_POOL_SIZE=20
 DATABASE_MAX_OVERFLOW=20
 DATABASE_POOL_TIMEOUT=30
@@ -111,10 +117,11 @@ Before promoting a release:
 2. Confirm `DOCS_ENABLED=false`.
 3. Confirm `APP_PUBLIC_BASE_URL` is an HTTPS hostname, not a raw IP.
 4. Confirm `TRUSTED_HOSTS` contains the production API hostname.
-5. Confirm SMTP credentials are set and `EMAIL_BACKEND=smtp`.
-6. Confirm `S3_DOCUMENTS_BUCKET` is private and available.
-7. Confirm `SQS_MAIN_QUEUE_URL` is set if the worker is expected to process jobs.
-8. Run `alembic upgrade head` before serving traffic.
+5. Confirm the API and worker IAM roles can call SES and `EMAIL_BACKEND=ses`.
+6. Confirm `SES_FROM_EMAIL=verify@kairoid.com` and the SES identity is verified in `AWS_REGION`.
+7. Confirm `S3_DOCUMENTS_BUCKET` is private and available.
+8. Confirm `SQS_MAIN_QUEUE_URL` is set if the worker is expected to process jobs.
+9. Run `alembic upgrade head` before serving traffic.
 
 ## Short-Term Token Strategy
 

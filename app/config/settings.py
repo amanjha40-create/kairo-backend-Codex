@@ -194,7 +194,7 @@ class Settings(BaseSettings):
     )
     email_backend: str = Field(
         default="console",
-        description="console | smtp — smtp sends real mail via SMTP_HOST",
+        description="console | smtp | ses — external delivery requires EMAIL_SEND_ENABLED=true",
         validation_alias=AliasChoices("EMAIL_BACKEND"),
     )
     email_send_enabled: bool = Field(
@@ -226,6 +226,9 @@ class Settings(BaseSettings):
         ge=5.0,
         le=120.0,
         validation_alias=AliasChoices("SMTP_TIMEOUT_SECONDS"),
+    )
+    ses_from_email: str | None = Field(
+        default=None, validation_alias=AliasChoices("SES_FROM_EMAIL")
     )
 
     # --- Employer verification magic links ---
@@ -465,7 +468,7 @@ class Settings(BaseSettings):
                 msg = "JWT_SECRET_KEY must be at least 48 characters in APP_ENV=production."
                 raise ValueError(msg)
             if self.email_backend == "console":
-                msg = "EMAIL_BACKEND must be smtp in APP_ENV=production."
+                msg = "EMAIL_BACKEND must be smtp or ses in APP_ENV=production."
                 raise ValueError(msg)
             if self.phone_otp_enabled and self.phone_otp_backend == "console":
                 msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
@@ -478,6 +481,18 @@ class Settings(BaseSettings):
             if self.smtp_use_ssl and self.smtp_use_tls:
                 msg = "Set only one of SMTP_USE_SSL (465) or SMTP_USE_TLS (587), not both."
                 raise ValueError(msg)
+
+        if self.email_backend == "ses":
+            if not self.aws_region:
+                msg = "AWS_REGION is required when EMAIL_BACKEND=ses."
+                raise ValueError(msg)
+            if not self.ses_from_email:
+                msg = "SES_FROM_EMAIL is required when EMAIL_BACKEND=ses."
+                raise ValueError(msg)
+
+        if self.email_backend not in {"console", "smtp", "ses"}:
+            msg = "EMAIL_BACKEND must be one of: console, smtp, ses."
+            raise ValueError(msg)
 
         if self.phone_otp_backend not in {"console", "real_provider_placeholder"}:
             msg = "PHONE_OTP_BACKEND must be one of: console, real_provider_placeholder."

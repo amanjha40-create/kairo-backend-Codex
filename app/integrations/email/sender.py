@@ -7,6 +7,7 @@ from typing import Protocol
 
 from app.config import Settings, get_settings
 from app.integrations.email.smtp import SmtpEmailSender
+from app.integrations.email.ses import SesEmailSender
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,8 @@ def get_email_sender(settings: Settings | None = None) -> EmailSender:
     backend = s.email_backend.lower().strip()
     if backend == "smtp":
         return SmtpEmailSender(s)
+    if backend == "ses":
+        return SesEmailSender(s)
     if backend != "console":
         logger.warning("unknown_email_backend", extra={"email_backend": backend})
     return ConsoleEmailSender(s)
