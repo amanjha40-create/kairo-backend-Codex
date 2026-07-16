@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -86,6 +87,7 @@ class ResumeService:
         row.processing_status = ResumeUploadStatus.UPLOADED.value
         await self.session.commit()
         await self.session.refresh(row)
+        logger.info("resume.upload.completed", extra={"resume_id": str(resume_id)})
         return ResumeResponse.model_validate(row)
 
     async def _read_object(self, row: ResumeDocument) -> bytes:
@@ -123,6 +125,10 @@ class ResumeService:
         row.processing_status = ResumeProcessingStatus.QUEUED.value
         # The inline worker uses a separate session and must see the durable job.
         await self.session.commit()
+        logger.info(
+            "resume.processing.queued",
+            extra={"resume_id": str(resume_id), "job_id": str(job.id), "retry_count": max(job.attempt_count, 0)},
+        )
         await JobDispatcher(self.settings).dispatch_resume_processing(resume_id=str(resume_id), job_id=str(job.id))
         return ResumeProcessResponse(resume_id=resume_id, job_id=job.id, status=job.status)
 
@@ -160,6 +166,7 @@ class ResumeService:
         row.processing_status = ResumeProcessingStatus.DELETED.value
         await self.storage.delete_object_best_effort(object_key=row.storage_key)
         await self.session.commit()
+        logger.info("resume.document.deleted", extra={"resume_id": str(resume_id)})
 
     async def process_job(self, resume_id: UUID, job_id: UUID) -> None:
         row = await self.session.get(ResumeDocument, resume_id)
@@ -170,16 +177,43 @@ class ResumeService:
         job.status = ResumeProcessingStatus.EXTRACTING.value
         row.processing_status = job.status
         await self.session.flush()
+        extraction_started_at = time.monotonic()
+        extraction_provider = "textract" if row.content_type == "application/pdf" else "deterministic_docx"
+        failure_stage = "extraction"
+        logger.info(
+            "resume.extraction.started",
+            extra={"resume_id": str(resume_id), "job_id": str(job_id), "provider": extraction_provider},
+        )
         try:
             content = await self._read_object(row)
             if row.content_type == "application/pdf":
                 extracted = await TextractDocumentExtractor(self.settings).extract(content, row.content_type)
             else:
                 extracted = await DeterministicDocxExtractor().extract(content, row.content_type)
+            logger.info(
+                "resume.extraction.completed",
+                extra={
+                    "resume_id": str(resume_id), "job_id": str(job_id), "provider": extraction_provider,
+                    "duration_ms": round((time.monotonic() - extraction_started_at) * 1000),
+                },
+            )
             job.status = ResumeProcessingStatus.PARSING.value
             row.processing_status = job.status
             await self.session.flush()
+            failure_stage = "parsing"
+            parsing_started_at = time.monotonic()
+            logger.info(
+                "resume.parsing.started",
+                extra={"resume_id": str(resume_id), "job_id": str(job_id), "provider": self.settings.resume_parser_provider},
+            )
             parsed = await build_resume_parser(self.settings).parse(extracted)
+            logger.info(
+                "resume.parsing.completed",
+                extra={
+                    "resume_id": str(resume_id), "job_id": str(job_id), "provider": self.settings.resume_parser_provider,
+                    "duration_ms": round((time.monotonic() - parsing_started_at) * 1000),
+                },
+            )
             result = ResumeParsedResult(
                 job_id=job.id, user_id=row.user_id, schema_version=parsed.schema_version,
                 structured_result=parsed.model_dump(mode="json"), parser_metadata={"provider": "bedrock"}, warnings=parsed.warnings,
@@ -189,11 +223,24 @@ class ResumeService:
             row.processing_status = job.status
             job.completed_at = datetime.now(UTC)
             await self.session.flush()
+            logger.info(
+                "resume.result.validated",
+                extra={
+                    "resume_id": str(resume_id), "job_id": str(job_id),
+                    "schema_version": parsed.schema_version, "warning_count": len(parsed.warnings),
+                },
+            )
         except Exception as exc:
             job.status = ResumeProcessingStatus.FAILED.value
             row.processing_status = job.status
             job.failure_category = type(exc).__name__[:64]
             job.sanitized_failure_code = "processing_failed"
             row.failure_code = "processing_failed"
-            logger.warning("resume.processing.failed", extra={"resume_id": str(resume_id), "job_id": str(job_id), "error_type": type(exc).__name__})
+            logger.warning(
+                "resume.processing.failed",
+                extra={
+                    "resume_id": str(resume_id), "job_id": str(job_id), "error_type": type(exc).__name__,
+                    "failure_stage": failure_stage, "retry_count": job.attempt_count - 1,
+                },
+            )
             await self.session.flush()

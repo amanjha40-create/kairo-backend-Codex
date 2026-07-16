@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser
-from app.exceptions import ConflictError
+from app.exceptions import ConflictError, NotFoundError
 from app.resumes.enums import ResumeProcessingStatus
 from app.resumes.schemas import (
     EmploymentClaim,
@@ -163,6 +163,16 @@ async def test_resume_process_enforces_retry_limit() -> None:
         await service.process(uuid4(), uuid4())
 
     session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_lookup_hides_unowned_records() -> None:
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=None)
+    service = ResumeService(session, SimpleNamespace())
+
+    with pytest.raises(NotFoundError, match="Resume not found"):
+        await service.get(uuid4(), uuid4())
 
 
 @pytest.mark.asyncio
