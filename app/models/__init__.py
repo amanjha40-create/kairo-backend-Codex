@@ -29,6 +29,11 @@ from app.models.refresh_token import RefreshToken
 from app.models.resume_document import ResumeDocument
 from app.models.resume_processing_job import ResumeProcessingJob
 from app.models.resume_parsed_result import ResumeParsedResult
+from app.models.resume_review_session import ResumeReviewSession
+from app.models.resume_review_item import ResumeReviewItem
+from app.models.resume_import_batch import ResumeImportBatch
+from app.models.resume_import_result import ResumeImportResult
+from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_registry_alias import TrustRegistryAlias
 from app.models.trust_registry_capability import TrustRegistryCapability
@@ -82,6 +87,11 @@ __all__ = [
     "ResumeDocument",
     "ResumeProcessingJob",
     "ResumeParsedResult",
+    "ResumeReviewSession",
+    "ResumeReviewItem",
+    "ResumeImportBatch",
+    "ResumeImportResult",
+    "ResumeRecordProvenance",
     "TrustInvitation",
     "TrustRegistryAlias",
     "TrustRegistryCapability",
