@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser
+from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser, _parse_model_json
 from app.exceptions import ConflictError, NotFoundError
 from app.resumes.enums import ResumeProcessingStatus
 from app.resumes.schemas import (
@@ -198,3 +198,10 @@ async def test_nova_parser_validates_structured_response(monkeypatch: pytest.Mon
     settings = SimpleNamespace(aws_region="us-east-1", bedrock_model_id="us.amazon.nova-2-lite-v1:0")
     result = await NovaResumeParser(settings).parse("synthetic resume")
     assert result.schema_version == "1"
+
+
+def test_nova_parser_rejects_malformed_structured_output() -> None:
+    payload = {"output": {"message": {"content": [{"text": "not-json"}]}}}
+
+    with pytest.raises(json.JSONDecodeError):
+        _parse_model_json(payload)
