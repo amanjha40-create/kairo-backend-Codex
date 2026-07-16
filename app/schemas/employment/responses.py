@@ -40,7 +40,7 @@ class EmploymentResponse(BaseModel):
     employment_type: EmploymentType
     start_date: date
     end_date: date | None
-    work_location_country: str
+    work_location_country: str | None
     work_location_region: str | None
     verification_method: VerificationMethod = VerificationMethod.DOCUMENT
     verification_status: VerificationStatus
