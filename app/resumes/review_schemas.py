@@ -16,13 +16,13 @@ class StrictModel(BaseModel):
 class ReviewLocation(StrictModel):
     city: str | None = Field(default=None, max_length=128)
     region: str | None = Field(default=None, max_length=128)
-    country: str | None = Field(default=None, min_length=2, max_length=2)
+    country: str | None = Field(default=None, min_length=2, max_length=128)
 
 
 class DatedClaim(StrictModel):
     start_date: date | None = None
     end_date: date | None = None
-    is_current: bool = False
+    is_current: bool | None = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> "DatedClaim":

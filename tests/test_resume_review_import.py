@@ -78,6 +78,36 @@ def test_import_plan_blocks_unsupported_and_incomplete_claims() -> None:
         "missing_start_date",
         "missing_location",
     ]
+    assert service._required_blockers("employment", {
+        "company_name": "Synthetic",
+        "role_title": "Engineer",
+        "start_date": "2024-01-01",
+        "location": {"country": "India"},
+    }) == ["invalid_work_location_country"]
+
+
+def test_review_accepts_extracted_country_name_for_candidate_correction() -> None:
+    claim = review_claim_adapter.validate_python({
+        "claim_type": "employment",
+        "company_name": "Synthetic Company",
+        "role_title": "Engineer",
+        "start_date": "2024-01-01",
+        "location": {"country": "India"},
+    })
+
+    assert claim.location is not None
+    assert claim.location.country == "India"
+
+
+def test_review_preserves_unknown_current_status() -> None:
+    claim = review_claim_adapter.validate_python({
+        "claim_type": "education",
+        "institution_name": "Synthetic Institute",
+        "degree": "Synthetic Degree",
+        "is_current": None,
+    })
+
+    assert claim.is_current is None
 
 
 def test_verified_or_active_records_are_protected() -> None:

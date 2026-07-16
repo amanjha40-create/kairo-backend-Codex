@@ -335,13 +335,13 @@ class ResumeReviewService:
                 raise ValidationAppError("Complete the candidate profile before importing employment", code="candidate_profile_incomplete")
             return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p["start_date"], end_date=p.get("end_date"), work_location_country=p["location"]["country"].upper(), work_location_region=p.get("location", {}).get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
         if claim_type == "education":
-            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p["degree"], field_of_study=p.get("field_of_study"), education_level=p["education_level"], grade=p.get("grade"), start_date=p["start_date"], end_date=p.get("end_date"), is_currently_studying=p.get("is_current", False), verification_status="draft")
+            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p["degree"], field_of_study=p.get("field_of_study"), education_level=p["education_level"], grade=p.get("grade"), start_date=p["start_date"], end_date=p.get("end_date"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
-            return Internship(user_id=user_id, company_name=p["company_name"], role=p["role"], description=p.get("description"), start_date=p["start_date"], end_date=p.get("end_date"), is_ongoing=p.get("is_current", False), is_paid=False, stipend_currency="INR", verification_status="pending")
+            return Internship(user_id=user_id, company_name=p["company_name"], role=p["role"], description=p.get("description"), start_date=p["start_date"], end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), is_paid=False, stipend_currency="INR", verification_status="pending")
         if claim_type == "freelance":
-            return FreelanceContract(user_id=user_id, client_name=p["client_name"], project_title=p["project_title"], description=p.get("description"), start_date=p["start_date"], end_date=p.get("end_date"), is_ongoing=p.get("is_current", False), verification_status="pending")
+            return FreelanceContract(user_id=user_id, client_name=p["client_name"], project_title=p["project_title"], description=p.get("description"), start_date=p["start_date"], end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), verification_status="pending")
         if claim_type == "gig_platform":
-            return GigPlatform(user_id=user_id, platform_name=p["platform_name"], partner_role=p["partner_role"], partner_id=p.get("partner_id"), started_at=p["start_date"], ended_at=p.get("end_date"), is_active=p.get("is_current", False), verification_status="pending")
+            return GigPlatform(user_id=user_id, platform_name=p["platform_name"], partner_role=p["partner_role"], partner_id=p.get("partner_id"), started_at=p["start_date"], ended_at=p.get("end_date"), is_active=bool(p.get("is_current")), verification_status="pending")
         if claim_type == "certification":
             return Certification(user_id=user_id, title=p["title"], issuing_organization=p["issuing_organization"], issued_date=p["issued_date"], expiry_date=p.get("expiry_date"), does_not_expire=p.get("expiry_date") is None, credential_id=p.get("credential_id"), credential_url=str(p["credential_url"]) if p.get("credential_url") else None, verification_status="pending")
         if claim_type == "portfolio":
@@ -440,8 +440,12 @@ class ResumeReviewService:
             "portfolio": ("title", "url"),
         }
         blockers = [f"missing_{field}" for field in required.get(claim_type, ()) if not p.get(field)]
-        if claim_type == "employment" and p.get("location") and not p["location"].get("country"):
-            blockers.append("missing_work_location_country")
+        if claim_type == "employment" and p.get("location"):
+            country = p["location"].get("country")
+            if not country:
+                blockers.append("missing_work_location_country")
+            elif len(country) != 2 or not country.isalpha():
+                blockers.append("invalid_work_location_country")
         return blockers
 
     @staticmethod
