@@ -14,8 +14,8 @@ from app.resumes.review_schemas import (
     ReviewItemUpdateRequest,
     review_claim_adapter,
 )
+from app.services.resume_duplicate_service import ResumeDuplicateService, classify_match
 from app.services.resume_review_service import ResumeReviewService
-from app.services.resume_duplicate_service import classify_match
 
 
 def test_stable_claim_ids_and_payload_hashes_are_deterministic() -> None:
@@ -260,6 +260,18 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         employment_id = first.results[0].record_id
         employment = await session.get(Employment, employment_id)
         assert employment.verification_status == "draft"
+        duplicate = await ResumeDuplicateService(session).assess(user.id, "employment", {
+            "claim_type": "employment",
+            "company_name": "Synthetic Company",
+            "role_title": "Engineer",
+            "employment_type": "full_time",
+            "start_date": "2024-01-01",
+            "end_date": None,
+            "is_current": True,
+            "location": {"country": "IN"},
+        })
+        assert duplicate.status == "exact_match"
+        assert duplicate.candidates[0]["record_id"] == str(employment_id)
         assert await session.scalar(select(ResumeRecordProvenance).where(ResumeRecordProvenance.record_id == employment_id))
         assert await session.scalar(select(VerificationRequest).where(VerificationRequest.employment_id == employment_id)) is None
 

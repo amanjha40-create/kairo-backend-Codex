@@ -43,6 +43,7 @@ class ResumeDuplicateService:
         if claim_type in {"profile", "project", "skill"}:
             return DuplicateAssessment("no_match", [], ["unsupported_import_target"] if claim_type in {"project", "skill"} else [])
         model, primary, secondary, start, end, protected = self._spec(claim_type)
+        payload_primary, payload_secondary, payload_start, payload_end = self._payload_spec(claim_type)
         owner_column = model.created_by_user_id if claim_type == "employment" else model.user_id
         rows = (await self.session.scalars(select(model).where(owner_column == user_id, model.deleted_at.is_(None)))).all()
         active_employment_ids: set[UUID] = set()
@@ -54,11 +55,11 @@ class ResumeDuplicateService:
                 VerificationRequest.status.not_in(terminal),
             ))).all())
         candidates: list[dict[str, Any]] = []
-        requested_primary = normalize_text(payload.get(primary))
-        requested_secondary = normalize_text(payload.get(secondary)) if secondary else ""
+        requested_primary = normalize_text(payload.get(payload_primary))
+        requested_secondary = normalize_text(payload.get(payload_secondary)) if payload_secondary else ""
         requested_url = normalize_url(payload.get("url") or payload.get("credential_url"))
-        requested_start = normalize_date(payload.get("start_date"))
-        requested_end = normalize_date(payload.get("end_date"))
+        requested_start = normalize_date(payload.get(payload_start)) if payload_start else None
+        requested_end = normalize_date(payload.get(payload_end)) if payload_end else None
         for row in rows:
             row_primary = normalize_text(getattr(row, primary, None))
             row_secondary = normalize_text(getattr(row, secondary, None)) if secondary else ""
@@ -104,5 +105,18 @@ class ResumeDuplicateService:
             "gig_platform": (GigPlatform, "platform_name", "partner_role", "started_at", "ended_at", {"submitted", "under_review", "verified"}),
             "certification": (Certification, "title", "issuing_organization", "issued_date", "expiry_date", {"submitted", "under_review", "verified"}),
             "portfolio": (PortfolioItem, "title", None, None, None, {"submitted", "under_review", "verified"}),
+        }
+        return specs[claim_type]
+
+    @staticmethod
+    def _payload_spec(claim_type: str) -> tuple[str, str | None, str | None, str | None]:
+        specs = {
+            "employment": ("company_name", "role_title", "start_date", "end_date"),
+            "education": ("institution_name", "degree", "start_date", "end_date"),
+            "internship": ("company_name", "role", "start_date", "end_date"),
+            "freelance": ("client_name", "project_title", "start_date", "end_date"),
+            "gig_platform": ("platform_name", "partner_role", "start_date", "end_date"),
+            "certification": ("title", "issuing_organization", "issued_date", "expiry_date"),
+            "portfolio": ("title", None, None, None),
         }
         return specs[claim_type]
