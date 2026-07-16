@@ -89,6 +89,52 @@ class EducationClaim(ClaimBase):
     grade: str | None = None
 
 
+class InternshipClaim(ClaimBase):
+    company_name: str | None = None
+    role: str | None = None
+    description: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    is_current: bool | None = None
+
+
+class FreelanceClaim(ClaimBase):
+    client_name: str | None = None
+    project_title: str | None = None
+    description: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    is_current: bool | None = None
+
+
+class GigPlatformClaim(ClaimBase):
+    platform_name: str | None = None
+    partner_role: str | None = None
+    partner_id: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    is_current: bool | None = None
+
+
+class CertificationClaim(ClaimBase):
+    title: str | None = None
+    issuing_organization: str | None = None
+    issued_date: date | None = None
+    expiry_date: date | None = None
+    credential_id: str | None = None
+    credential_url: str | None = None
+
+
+class ProjectClaim(ClaimBase):
+    title: str | None = None
+    description: str | None = None
+    url: str | None = None
+
+
+class SkillClaim(ClaimBase):
+    name: str | None = None
+
+
 class CandidateResumeProfile(BaseModel):
     full_name: str | None = None
     email: str | None = None
@@ -104,12 +150,12 @@ class ParsedResumeResult(BaseModel):
     candidate_profile: CandidateResumeProfile = Field(default_factory=CandidateResumeProfile)
     employments: list[EmploymentClaim] = Field(default_factory=list)
     education: list[EducationClaim] = Field(default_factory=list)
-    internships: list[ClaimBase] = Field(default_factory=list)
-    freelance: list[ClaimBase] = Field(default_factory=list)
-    gig_platforms: list[ClaimBase] = Field(default_factory=list)
-    certifications: list[ClaimBase] = Field(default_factory=list)
-    projects: list[ClaimBase] = Field(default_factory=list)
-    skills: list[ClaimBase] = Field(default_factory=list)
+    internships: list[InternshipClaim] = Field(default_factory=list)
+    freelance: list[FreelanceClaim] = Field(default_factory=list)
+    gig_platforms: list[GigPlatformClaim] = Field(default_factory=list)
+    certifications: list[CertificationClaim] = Field(default_factory=list)
+    projects: list[ProjectClaim] = Field(default_factory=list)
+    skills: list[SkillClaim] = Field(default_factory=list)
     portfolio_links: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

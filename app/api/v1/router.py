@@ -42,6 +42,7 @@ from app.api.v1.routes import (
     user_documents,
     users,
     resumes,
+    resume_reviews,
 )
 
 api_router = APIRouter()
@@ -49,6 +50,8 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(resumes.router)
+api_router.include_router(resume_reviews.resume_router)
+api_router.include_router(resume_reviews.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
