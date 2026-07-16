@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import io
 import zipfile
+import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from app.resumes.providers import DeterministicDocxExtractor
+from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser
 from app.resumes.schemas import EmploymentClaim, ParsedResumeResult, ResumeCompleteUploadRequest
 from app.resumes.validation import validate_resume_bytes, validate_resume_declaration
 
@@ -51,3 +53,20 @@ def test_parsed_claims_are_candidate_provided_and_unverified() -> None:
 def test_checksum_contract_rejects_non_sha256_values() -> None:
     with pytest.raises(ValidationError):
         ResumeCompleteUploadRequest(checksum_sha256="not-a-checksum")
+
+
+@pytest.mark.asyncio
+async def test_nova_parser_validates_structured_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Body:
+        def read(self) -> bytes:
+            return json.dumps({"output": {"message": {"content": [{"text": '{"schema_version":"1"}'}]}}}).encode()
+
+    class Client:
+        def invoke_model(self, **kwargs: object) -> dict[str, Body]:
+            assert kwargs["modelId"] == "us.amazon.nova-2-lite-v1:0"
+            return {"body": Body()}
+
+    monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: Client())
+    settings = SimpleNamespace(aws_region="us-east-1", bedrock_model_id="us.amazon.nova-2-lite-v1:0")
+    result = await NovaResumeParser(settings).parse("synthetic resume")
+    assert result.schema_version == "1"

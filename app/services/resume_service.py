@@ -18,7 +18,7 @@ from app.models.resume_document import ResumeDocument
 from app.models.resume_parsed_result import ResumeParsedResult
 from app.models.resume_processing_job import ResumeProcessingJob
 from app.resumes.enums import ResumeProcessingStatus, ResumeUploadStatus
-from app.resumes.providers import BedrockResumeParser, DeterministicDocxExtractor, TextractDocumentExtractor
+from app.resumes.providers import DeterministicDocxExtractor, TextractDocumentExtractor, build_resume_parser
 from app.resumes.validation import validate_resume_bytes, validate_resume_declaration
 from app.schemas.pagination import Page, PageParams
 from app.resumes.schemas import (
@@ -161,7 +161,7 @@ class ResumeService:
             job.status = ResumeProcessingStatus.PARSING.value
             row.processing_status = job.status
             await self.session.flush()
-            parsed = await BedrockResumeParser(self.settings).parse(extracted)
+            parsed = await build_resume_parser(self.settings).parse(extracted)
             result = ResumeParsedResult(
                 job_id=job.id, user_id=row.user_id, schema_version=parsed.schema_version,
                 structured_result=parsed.model_dump(mode="json"), parser_metadata={"provider": "bedrock"}, warnings=parsed.warnings,

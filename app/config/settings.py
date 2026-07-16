@@ -332,8 +332,12 @@ class Settings(BaseSettings):
     resume_max_retries: int = Field(default=3, ge=0, le=5, validation_alias=AliasChoices("RESUME_MAX_RETRIES"))
     resume_retention_days: int = Field(default=30, ge=1, le=365, validation_alias=AliasChoices("RESUME_RETENTION_DAYS"))
     bedrock_model_id: str | None = Field(default=None, validation_alias=AliasChoices("BEDROCK_MODEL_ID"))
+    resume_parser_provider: str = Field(default="nova", validation_alias=AliasChoices("RESUME_PARSER_PROVIDER"))
     bedrock_timeout_seconds: int = Field(default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS"))
-    resume_parser_schema_version: str = Field(default="1", validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION"))
+    resume_parser_schema_version: str = Field(
+        default="1",
+        validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION", "BEDROCK_SCHEMA_VERSION"),
+    )
 
     # --- Google OAuth ---
     google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID"))
@@ -393,6 +397,11 @@ class Settings(BaseSettings):
     @field_validator("job_backend")
     @classmethod
     def normalize_job_backend(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @field_validator("resume_parser_provider")
+    @classmethod
+    def normalize_resume_parser_provider(cls, v: str) -> str:
         return v.strip().lower()
 
     @field_validator("phone_otp_backend")
@@ -516,6 +525,8 @@ class Settings(BaseSettings):
             raise ValueError(msg)
 
         if self.resume_processing_enabled:
+            if self.resume_parser_provider not in {"nova", "anthropic"}:
+                raise ValueError("RESUME_PARSER_PROVIDER must be nova or anthropic")
             missing = []
             if not self.aws_region:
                 missing.append("AWS_REGION")
