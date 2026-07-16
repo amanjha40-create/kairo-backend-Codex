@@ -98,12 +98,26 @@ class ResumeService:
         row = await self._owned(user_id, resume_id)
         if row.upload_status != ResumeUploadStatus.UPLOADED.value:
             raise ConflictError("Resume must be uploaded before processing")
-        existing = await self.session.scalar(select(ResumeProcessingJob).where(
-            ResumeProcessingJob.resume_document_id == resume_id,
-            ResumeProcessingJob.status.in_([ResumeProcessingStatus.QUEUED.value, ResumeProcessingStatus.EXTRACTING.value, ResumeProcessingStatus.PARSING.value]),
-        ))
-        if existing:
-            return ResumeProcessResponse(resume_id=resume_id, job_id=existing.id, status=existing.status)
+        latest = await self.session.scalar(
+            select(ResumeProcessingJob)
+            .where(ResumeProcessingJob.resume_document_id == resume_id)
+            .order_by(ResumeProcessingJob.created_at.desc())
+        )
+        if latest and latest.status in {
+            ResumeProcessingStatus.QUEUED.value,
+            ResumeProcessingStatus.EXTRACTING.value,
+            ResumeProcessingStatus.PARSING.value,
+            ResumeProcessingStatus.NEEDS_REVIEW.value,
+        }:
+            return ResumeProcessResponse(resume_id=resume_id, job_id=latest.id, status=latest.status)
+        if latest and latest.status == ResumeProcessingStatus.FAILED.value:
+            attempts = await self.session.scalar(
+                select(func.count())
+                .select_from(ResumeProcessingJob)
+                .where(ResumeProcessingJob.resume_document_id == resume_id)
+            ) or 0
+            if attempts > self.settings.resume_max_retries:
+                raise ConflictError("Resume processing retry limit reached")
         job = ResumeProcessingJob(resume_document_id=resume_id, user_id=user_id, idempotency_key=str(uuid.uuid4()), parser_schema_version=self.settings.resume_parser_schema_version)
         self.session.add(job)
         row.processing_status = ResumeProcessingStatus.QUEUED.value

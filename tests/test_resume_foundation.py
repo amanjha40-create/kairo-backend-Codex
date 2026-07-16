@@ -13,6 +13,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser
+from app.exceptions import ConflictError
+from app.resumes.enums import ResumeProcessingStatus
 from app.resumes.schemas import (
     EmploymentClaim,
     ParsedResumeResult,
@@ -129,6 +131,38 @@ async def test_resume_complete_refreshes_server_fields_before_serializing() -> N
     assert response.upload_status == "uploaded"
     session.commit.assert_awaited_once()
     session.refresh.assert_awaited_once_with(row)
+
+
+@pytest.mark.asyncio
+async def test_resume_process_is_idempotent_after_result_needs_review() -> None:
+    resume_id = uuid4()
+    job = SimpleNamespace(id=uuid4(), status=ResumeProcessingStatus.NEEDS_REVIEW.value)
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+    settings = SimpleNamespace(resume_max_retries=3)
+    service = ResumeService(session, settings)
+    service._owned = AsyncMock(return_value=SimpleNamespace(upload_status="uploaded"))
+
+    response = await service.process(uuid4(), resume_id)
+
+    assert response.job_id == job.id
+    assert response.status == ResumeProcessingStatus.NEEDS_REVIEW.value
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_process_enforces_retry_limit() -> None:
+    latest = SimpleNamespace(id=uuid4(), status=ResumeProcessingStatus.FAILED.value)
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[latest, 4])
+    settings = SimpleNamespace(resume_max_retries=3)
+    service = ResumeService(session, settings)
+    service._owned = AsyncMock(return_value=SimpleNamespace(upload_status="uploaded"))
+
+    with pytest.raises(ConflictError, match="retry limit"):
+        await service.process(uuid4(), uuid4())
+
+    session.add.assert_not_called()
 
 
 @pytest.mark.asyncio
