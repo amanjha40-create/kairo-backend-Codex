@@ -59,6 +59,7 @@ class ResumeService:
         self.session.add(row)
         await self.session.flush()
         url, ttl = await self.storage.presign_put_url(object_key=key, content_type=row.content_type)
+        await self.session.commit()
         return ResumeUploadIntentResponse(resume_id=resume_id, upload_url=url, expires_in=ttl, object_key=key)
 
     async def _owned(self, user_id: UUID, resume_id: UUID) -> ResumeDocument:
@@ -83,7 +84,7 @@ class ResumeService:
         row.checksum_sha256 = payload.checksum_sha256.lower()
         row.upload_status = ResumeUploadStatus.UPLOADED.value
         row.processing_status = ResumeUploadStatus.UPLOADED.value
-        await self.session.flush()
+        await self.session.commit()
         return ResumeResponse.model_validate(row)
 
     async def _read_object(self, row: ResumeDocument) -> bytes:
@@ -105,7 +106,8 @@ class ResumeService:
         job = ResumeProcessingJob(resume_document_id=resume_id, user_id=user_id, idempotency_key=str(uuid.uuid4()), parser_schema_version=self.settings.resume_parser_schema_version)
         self.session.add(job)
         row.processing_status = ResumeProcessingStatus.QUEUED.value
-        await self.session.flush()
+        # The inline worker uses a separate session and must see the durable job.
+        await self.session.commit()
         await JobDispatcher(self.settings).dispatch_resume_processing(resume_id=str(resume_id), job_id=str(job.id))
         return ResumeProcessResponse(resume_id=resume_id, job_id=job.id, status=job.status)
 
@@ -142,6 +144,7 @@ class ResumeService:
         row.upload_status = ResumeUploadStatus.DELETED.value
         row.processing_status = ResumeProcessingStatus.DELETED.value
         await self.storage.delete_object_best_effort(object_key=row.storage_key)
+        await self.session.commit()
 
     async def process_job(self, resume_id: UUID, job_id: UUID) -> None:
         row = await self.session.get(ResumeDocument, resume_id)
