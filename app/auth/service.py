@@ -561,6 +561,8 @@ class AuthService:
 
         code = generate_otp_code()
         await self._otp.enforce_send_rate(pending.id, channel)
+        if channel == "phone":
+            code = self._phone.challenge_code(to_phone=pending.phone or "", generated_code=code)
         await self._otp.store_otp(pending.id, channel, code)
         ttl_minutes = max(1, self._settings.signup_otp_ttl_seconds // 60)
         if channel == "email":

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,36 @@ from app.main import app
 from app.models.employment import Employment
 from app.models.employment_document import EmploymentDocument
 from app.models.user import User
+from app.schemas.employment import EmploymentPublic
+
+
+def test_employment_response_accepts_legacy_missing_country() -> None:
+    now = datetime.now(UTC)
+    employment = SimpleNamespace(
+        id=uuid4(),
+        subject_full_name="Legacy Employment Test",
+        subject_email=None,
+        employer_legal_name="Legacy Company",
+        employer_trade_name=None,
+        job_title="Test Engineer",
+        employment_type="full_time",
+        start_date=date(2024, 1, 1),
+        end_date=None,
+        work_location_country=None,
+        work_location_region=None,
+        verification_method="document",
+        verification_status="draft",
+        submitted_at=None,
+        reviewed_at=None,
+        assigned_reviewer_user_id=None,
+        assigned_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    response = EmploymentPublic.model_validate(employment)
+
+    assert response.work_location_country is None
 
 
 @pytest.mark.asyncio

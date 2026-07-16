@@ -35,6 +35,7 @@ from app.services.verification_request_service import VerificationRequestService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.services.verification_queue_service import VerificationQueueService
 from app.services.verification_service import VerificationService
+from app.services.resume_service import ResumeService
 
 __all__ = [
     "AdminReviewService",
@@ -73,4 +74,5 @@ __all__ = [
     "VerificationRequestWorkflowService",
     "VerificationQueueService",
     "VerificationService",
+    "ResumeService",
 ]

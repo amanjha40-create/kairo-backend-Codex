@@ -26,6 +26,9 @@ from app.models.employment_document import EmploymentDocument
 from app.models.pending_signup import PendingSignup
 from app.models.profile_view import ProfileView
 from app.models.refresh_token import RefreshToken
+from app.models.resume_document import ResumeDocument
+from app.models.resume_processing_job import ResumeProcessingJob
+from app.models.resume_parsed_result import ResumeParsedResult
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_registry_alias import TrustRegistryAlias
 from app.models.trust_registry_capability import TrustRegistryCapability
@@ -76,6 +79,9 @@ __all__ = [
     "ProfileView",
     "PortfolioItem",
     "RefreshToken",
+    "ResumeDocument",
+    "ResumeProcessingJob",
+    "ResumeParsedResult",
     "TrustInvitation",
     "TrustRegistryAlias",
     "TrustRegistryCapability",

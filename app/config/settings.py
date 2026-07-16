@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+import re
 from typing import Self
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -174,13 +175,29 @@ class Settings(BaseSettings):
     )
     phone_otp_backend: str = Field(
         default="console",
-        description="console | real_provider_placeholder — console logs OTPs locally and is never valid for production.",
+        description="console | staging_fixed | real_provider_placeholder",
         validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
     )
     phone_otp_enabled: bool = Field(
         default=True,
         description="Enables staged phone OTP verification during signup.",
         validation_alias=AliasChoices("PHONE_OTP_ENABLED"),
+    )
+    staging_phone_otp_code: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("STAGING_PHONE_OTP_CODE"),
+    )
+    auth_rate_limit_max_requests: int = Field(
+        default=10, ge=1, le=1000, validation_alias=AliasChoices("AUTH_RATE_LIMIT_MAX_REQUESTS")
+    )
+    auth_rate_limit_window_seconds: int = Field(
+        default=60, ge=1, le=3600, validation_alias=AliasChoices("AUTH_RATE_LIMIT_WINDOW_SECONDS")
+    )
+    otp_verify_rate_limit_max_requests: int = Field(
+        default=5, ge=1, le=100, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_MAX_REQUESTS")
+    )
+    otp_verify_rate_limit_window_seconds: int = Field(
+        default=60, ge=1, le=3600, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS")
     )
     password_reset_token_ttl_minutes: int = Field(
         default=30,
@@ -322,6 +339,23 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("S3_ALLOWED_UPLOAD_CONTENT_TYPES"),
     )
 
+    # --- Resume processing (disabled unless explicitly configured) ---
+    resume_processing_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("RESUME_PROCESSING_ENABLED")
+    )
+    resume_max_upload_bytes: int = Field(
+        default=10_000_000, ge=1024, le=50_000_000, validation_alias=AliasChoices("RESUME_MAX_UPLOAD_BYTES")
+    )
+    resume_max_retries: int = Field(default=3, ge=0, le=5, validation_alias=AliasChoices("RESUME_MAX_RETRIES"))
+    resume_retention_days: int = Field(default=30, ge=1, le=365, validation_alias=AliasChoices("RESUME_RETENTION_DAYS"))
+    bedrock_model_id: str | None = Field(default=None, validation_alias=AliasChoices("BEDROCK_MODEL_ID"))
+    resume_parser_provider: str = Field(default="nova", validation_alias=AliasChoices("RESUME_PARSER_PROVIDER"))
+    bedrock_timeout_seconds: int = Field(default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS"))
+    resume_parser_schema_version: str = Field(
+        default="1",
+        validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION", "BEDROCK_SCHEMA_VERSION"),
+    )
+
     # --- Google OAuth ---
     google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID"))
     google_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET"))
@@ -380,6 +414,11 @@ class Settings(BaseSettings):
     @field_validator("job_backend")
     @classmethod
     def normalize_job_backend(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @field_validator("resume_parser_provider")
+    @classmethod
+    def normalize_resume_parser_provider(cls, v: str) -> str:
         return v.strip().lower()
 
     @field_validator("phone_otp_backend")
@@ -477,7 +516,18 @@ class Settings(BaseSettings):
             if self.phone_otp_enabled and self.phone_otp_backend == "console":
                 msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
                 raise ValueError(msg)
+            if self.phone_otp_backend == "staging_fixed":
+                msg = "PHONE_OTP_BACKEND=staging_fixed is forbidden in APP_ENV=production."
+                raise ValueError(msg)
 
+        if self.phone_otp_backend == "staging_fixed":
+            if self.app_env != AppEnvironment.STAGING:
+                msg = "PHONE_OTP_BACKEND=staging_fixed requires APP_ENV=staging."
+                raise ValueError(msg)
+            code = self.staging_phone_otp_code.get_secret_value() if self.staging_phone_otp_code else ""
+            if not re.fullmatch(r"\d{6}", code):
+                msg = "STAGING_PHONE_OTP_CODE must contain exactly six digits."
+                raise ValueError(msg)
         if self.email_backend == "smtp":
             if not self.smtp_host:
                 msg = "SMTP_HOST is required when EMAIL_BACKEND=smtp."
@@ -498,9 +548,24 @@ class Settings(BaseSettings):
             msg = "EMAIL_BACKEND must be one of: console, smtp, ses."
             raise ValueError(msg)
 
-        if self.phone_otp_backend not in {"console", "real_provider_placeholder"}:
-            msg = "PHONE_OTP_BACKEND must be one of: console, real_provider_placeholder."
+        if self.phone_otp_backend not in {"console", "staging_fixed", "real_provider_placeholder"}:
+            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, real_provider_placeholder."
             raise ValueError(msg)
+
+        if self.resume_processing_enabled:
+            if self.resume_parser_provider not in {"nova", "anthropic"}:
+                raise ValueError("RESUME_PARSER_PROVIDER must be nova or anthropic")
+            missing = []
+            if not self.aws_region:
+                missing.append("AWS_REGION")
+            if not self.s3_documents_bucket:
+                missing.append("S3_DOCUMENTS_BUCKET")
+            if not self.bedrock_model_id:
+                missing.append("BEDROCK_MODEL_ID")
+            if self.job_backend == "sqs" and not self.sqs_main_queue_url:
+                missing.append("SQS_MAIN_QUEUE_URL")
+            if missing:
+                raise ValueError("Resume processing requires: " + ", ".join(missing))
 
         if self.job_backend not in {"inline", "sqs"}:
             msg = "JOB_BACKEND must be one of: inline, sqs."

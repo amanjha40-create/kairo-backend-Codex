@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import Depends, Request
 from redis.asyncio import Redis
 
+from app.config import Settings, get_settings
 from app.exceptions import RateLimitError
 from app.infrastructure.redis.deps import get_redis
 
@@ -35,6 +36,7 @@ async def _check_rate(
 async def auth_rate_limit(
     request: Request,
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> None:
     """10 auth attempts per IP per 60 seconds.
 
@@ -44,16 +46,27 @@ async def auth_rate_limit(
 
     ip = request.client.host if request.client else "unknown"
     key = f"rate:auth:{ip}"
-    await _check_rate(redis, key, window_seconds=60, max_requests=10)
+    await _check_rate(
+        redis,
+        key,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+        max_requests=settings.auth_rate_limit_max_requests,
+    )
 
 
 async def otp_verify_rate_limit(
     request: Request,
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> None:
     """5 OTP verify attempts per IP per 60 seconds — tighter than the general
     auth limiter to protect against distributed OTP brute-force."""
 
     ip = request.client.host if request.client else "unknown"
     key = f"rate:otp_verify:{ip}"
-    await _check_rate(redis, key, window_seconds=60, max_requests=5)
+    await _check_rate(
+        redis,
+        key,
+        window_seconds=settings.otp_verify_rate_limit_window_seconds,
+        max_requests=settings.otp_verify_rate_limit_max_requests,
+    )

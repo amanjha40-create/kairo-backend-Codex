@@ -45,6 +45,7 @@ from app.services import (
     VerificationQueueService,
     VerificationService,
 )
+from app.services.resume_service import ResumeService
 
 
 def get_auth_service(
@@ -64,6 +65,13 @@ def get_user_service(
 
 def get_employment_service(session: AsyncSession = Depends(get_session)) -> EmploymentService:
     return EmploymentService(session)
+
+
+def get_resume_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ResumeService:
+    return ResumeService(session, settings)
 
 
 def get_employer_verification_service(
