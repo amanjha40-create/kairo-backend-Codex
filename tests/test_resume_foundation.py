@@ -140,6 +140,14 @@ async def test_nova_parser_validates_structured_response(monkeypatch: pytest.Mon
     class Client:
         def invoke_model(self, **kwargs: object) -> dict[str, Body]:
             assert kwargs["modelId"] == "us.amazon.nova-2-lite-v1:0"
+            request = json.loads(str(kwargs["body"]))
+            system_text = request["system"][0]["text"]
+            user_text = request["messages"][0]["content"][0]["text"]
+            assert '"candidate_profile"' in system_text
+            assert '"employments"' in system_text
+            assert "with no wrapper" in system_text
+            assert "<resume_data>\nsynthetic resume\n</resume_data>" == user_text
+            assert "selected_for_import must be false" in system_text
             return {"body": Body()}
 
     monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: Client())
