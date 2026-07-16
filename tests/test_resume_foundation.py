@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import zipfile
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -91,6 +93,42 @@ async def test_resume_upload_intent_is_committed_for_followup_requests() -> None
 
     assert response.resume_id is not None
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resume_complete_refreshes_server_fields_before_serializing() -> None:
+    content = b"%PDF-1.4 synthetic acceptance fixture"
+    now = datetime.now(UTC)
+    row = SimpleNamespace(
+        id=uuid4(),
+        storage_key="resumes/synthetic/resume.pdf",
+        file_size_bytes=len(content),
+        content_type="application/pdf",
+        checksum_sha256=None,
+        upload_status="pending_upload",
+        processing_status="pending_upload",
+        original_filename="resume.pdf",
+        created_at=now,
+        updated_at=now,
+    )
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    settings = SimpleNamespace(resume_max_upload_bytes=10_000_000)
+    service = ResumeService(session, settings)
+    service.storage = SimpleNamespace(verify_upload_matches_intent=AsyncMock())
+    service._owned = AsyncMock(return_value=row)
+    service._read_object = AsyncMock(return_value=content)
+
+    response = await service.complete_upload(
+        uuid4(),
+        row.id,
+        ResumeCompleteUploadRequest(checksum_sha256=hashlib.sha256(content).hexdigest()),
+    )
+
+    assert response.upload_status == "uploaded"
+    session.commit.assert_awaited_once()
+    session.refresh.assert_awaited_once_with(row)
 
 
 @pytest.mark.asyncio

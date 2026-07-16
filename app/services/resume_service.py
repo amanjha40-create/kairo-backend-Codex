@@ -85,6 +85,7 @@ class ResumeService:
         row.upload_status = ResumeUploadStatus.UPLOADED.value
         row.processing_status = ResumeUploadStatus.UPLOADED.value
         await self.session.commit()
+        await self.session.refresh(row)
         return ResumeResponse.model_validate(row)
 
     async def _read_object(self, row: ResumeDocument) -> bytes:
