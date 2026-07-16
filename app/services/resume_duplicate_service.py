@@ -15,7 +15,7 @@ from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.portfolio import PortfolioItem
 from app.models.verification_request import VerificationRequest
-from app.resumes.normalization import date_ranges_overlap, normalize_text, normalize_url
+from app.resumes.normalization import date_ranges_overlap, normalize_date, normalize_text, normalize_url
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,8 @@ class ResumeDuplicateService:
         requested_primary = normalize_text(payload.get(primary))
         requested_secondary = normalize_text(payload.get(secondary)) if secondary else ""
         requested_url = normalize_url(payload.get("url") or payload.get("credential_url"))
+        requested_start = normalize_date(payload.get("start_date"))
+        requested_end = normalize_date(payload.get("end_date"))
         for row in rows:
             row_primary = normalize_text(getattr(row, primary, None))
             row_secondary = normalize_text(getattr(row, secondary, None)) if secondary else ""
@@ -66,8 +68,8 @@ class ResumeDuplicateService:
             url_equal = bool(requested_url and requested_url == row_url)
             row_start = getattr(row, start, None) if start else None
             row_end = getattr(row, end, None) if end else None
-            ranges_overlap = date_ranges_overlap(payload.get("start_date"), payload.get("end_date"), row_start, row_end)
-            exact_dates = bool(payload.get("start_date") and payload.get("start_date") == row_start and payload.get("end_date") == row_end)
+            ranges_overlap = date_ranges_overlap(requested_start, requested_end, row_start, row_end)
+            exact_dates = bool(requested_start and requested_start == row_start and requested_end == row_end)
             classification, reasons = classify_match(
                 primary_equal=primary_equal,
                 secondary_equal=secondary_equal,

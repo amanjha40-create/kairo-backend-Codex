@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.resumes.normalization import date_ranges_overlap, normalize_text, normalize_url, payload_hash, stable_claim_id
+from app.resumes.normalization import date_ranges_overlap, normalize_date, normalize_text, normalize_url, payload_hash, stable_claim_id
 from app.resumes.review_schemas import (
     EmploymentReviewClaim,
     ReviewImportRequest,
@@ -31,6 +31,8 @@ def test_normalization_is_deterministic_and_unicode_safe() -> None:
     assert normalize_url("HTTPS://Example.COM/work/") == "https://example.com/work"
     assert normalize_url("javascript:alert(1)") == ""
     assert date_ranges_overlap(date(2020, 1, 1), date(2021, 1, 1), date(2020, 6, 1), None)
+    assert date_ranges_overlap("2020-01-01", "2021-01-01", date(2020, 6, 1), None)
+    assert normalize_date("not-a-date") is None
 
 
 def test_duplicate_classification_is_deterministic() -> None:
@@ -156,12 +158,27 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
     from app.resumes.review_schemas import ReviewImportRequest, ReviewValidateRequest
 
     now = datetime.now(UTC)
-    user_id = resume_id = employment_id = None
+    user_id = resume_id = employment_id = existing_employment_id = None
     async with async_session_factory() as session:
         user = User(email=f"resume-import-{uuid4()}@example.invalid", full_name="Synthetic Candidate", role="user", is_active=True)
         session.add(user)
         await session.flush()
         user_id = user.id
+        existing_employment = Employment(
+            created_by_user_id=user.id,
+            subject_full_name=user.full_name,
+            subject_email=user.email,
+            employer_legal_name="Unrelated Existing Company",
+            job_title="Analyst",
+            employment_type="full_time",
+            start_date=date(2022, 1, 1),
+            work_location_country="IN",
+            verification_method="document",
+            verification_status="draft",
+        )
+        session.add(existing_employment)
+        await session.flush()
+        existing_employment_id = existing_employment.id
         document = ResumeDocument(
             user_id=user.id,
             storage_bucket="synthetic-private-bucket",
@@ -231,8 +248,10 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
     async with async_session_factory() as cleanup:
         if resume_id:
             await cleanup.execute(delete(ResumeDocument).where(ResumeDocument.id == resume_id))
-        if employment_id:
-            await cleanup.execute(delete(Employment).where(Employment.id == employment_id))
+        if employment_id or existing_employment_id:
+            await cleanup.execute(delete(Employment).where(Employment.id.in_(
+                [value for value in (employment_id, existing_employment_id) if value]
+            )))
         if user_id:
             await cleanup.execute(delete(User).where(User.id == user_id))
         await cleanup.commit()

@@ -38,9 +38,28 @@ def stable_claim_id(parsed_result_id: UUID, claim_type: str, ordinal: int, paylo
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-def date_ranges_overlap(start_a: date | None, end_a: date | None, start_b: date | None, end_b: date | None) -> bool:
+def normalize_date(value: date | str | None) -> date | None:
+    if isinstance(value, date):
+        return value
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def date_ranges_overlap(
+    start_a: date | str | None,
+    end_a: date | str | None,
+    start_b: date | str | None,
+    end_b: date | str | None,
+) -> bool:
+    start_a = normalize_date(start_a)
+    end_a = normalize_date(end_a)
+    start_b = normalize_date(start_b)
+    end_b = normalize_date(end_b)
     if not start_a or not start_b:
         return False
     high = date.max
     return start_a <= (end_b or high) and start_b <= (end_a or high)
-
