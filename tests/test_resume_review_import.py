@@ -86,6 +86,11 @@ def test_import_plan_blocks_unsupported_and_incomplete_claims() -> None:
         "start_date": "2024-01-01",
         "location": {"country": "India"},
     }) == ["invalid_work_location_country"]
+    assert service._action_blockers(
+        "link_existing",
+        "education",
+        {"institution_name": "Synthetic", "degree": "Synthetic"},
+    ) == []
 
 
 def test_review_accepts_extracted_country_name_for_candidate_correction() -> None:

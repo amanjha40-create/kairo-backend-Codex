@@ -252,7 +252,11 @@ class ResumeReviewService:
         for item in items:
             if not item.selected:
                 continue
-            blockers = self._required_blockers(item.claim_type, item.edited_payload)
+            blockers = self._action_blockers(
+                item.import_action,
+                item.claim_type,
+                item.edited_payload,
+            )
             if item.claim_type not in SUPPORTED_IMPORT_TYPES:
                 blockers.append("unsupported_import_target")
             verified_protected = False
@@ -447,6 +451,15 @@ class ResumeReviewService:
             elif len(country) != 2 or not country.isalpha():
                 blockers.append("invalid_work_location_country")
         return blockers
+
+    @classmethod
+    def _action_blockers(
+        cls,
+        action: str,
+        claim_type: str,
+        payload: dict[str, Any],
+    ) -> list[str]:
+        return cls._required_blockers(claim_type, payload) if action == "create_new" else []
 
     @staticmethod
     def _target_model(claim_type: str) -> tuple[Any, str]:
