@@ -112,6 +112,24 @@ def test_review_preserves_unknown_current_status() -> None:
     assert claim.is_current is None
 
 
+def test_review_requires_canonical_education_level() -> None:
+    with pytest.raises(ValidationError):
+        review_claim_adapter.validate_python({
+            "claim_type": "education",
+            "institution_name": "Synthetic Institute",
+            "degree": "Synthetic Degree",
+            "education_level": "bachelor",
+        })
+
+    claim = review_claim_adapter.validate_python({
+        "claim_type": "education",
+        "institution_name": "Synthetic Institute",
+        "degree": "Synthetic Degree",
+        "education_level": "bachelors",
+    })
+    assert claim.education_level == "bachelors"
+
+
 def test_verified_or_active_records_are_protected() -> None:
     assert ResumeReviewService._protected(SimpleNamespace(verification_status="verified", verified_at=None))
     assert ResumeReviewService._protected(SimpleNamespace(verification_status="pending", verified_at=object()))

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
 
+from app.education.enums import EducationLevel
 from app.resumes.review_enums import ResumeImportAction
 
 
@@ -57,7 +58,7 @@ class EducationReviewClaim(DatedClaim):
     institution_name: str | None = Field(default=None, max_length=512)
     degree: str | None = Field(default=None, max_length=255)
     field_of_study: str | None = Field(default=None, max_length=255)
-    education_level: str | None = Field(default=None, max_length=48)
+    education_level: EducationLevel | None = None
     grade: str | None = Field(default=None, max_length=64)
 
 
