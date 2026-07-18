@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 DatePrecision = Literal["day", "month", "year"]
 
@@ -92,6 +93,41 @@ def _normalize_location(location: dict[str, Any] | None) -> dict[str, Any] | Non
     return value
 
 
+def _normalize_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return candidate
+    return None
+
+
+def _normalize_link_fields(value: dict[str, Any]) -> dict[str, Any]:
+    profile = dict(value.get("candidate_profile") or {})
+    links = profile.get("profile_links") or []
+    normalized_links = [link for item in links if (link := _normalize_url(item))]
+    if len(normalized_links) != len(links):
+        value.setdefault("warnings", []).append("invalid_profile_link_removed")
+    profile["profile_links"] = normalized_links
+    value["candidate_profile"] = profile
+    for key in ("portfolio_links",):
+        links = value.get(key) or []
+        normalized = [link for item in links if (link := _normalize_url(item))]
+        if len(normalized) != len(links):
+            value.setdefault("warnings", []).append(f"invalid_{key[:-6]}_removed")
+        value[key] = normalized
+    for claim_type in ("projects", "certifications"):
+        for claim in value.get(claim_type) or []:
+            if not isinstance(claim, dict):
+                continue
+            field = "url" if claim_type == "projects" else "credential_url"
+            if claim.get(field) is not None and _normalize_url(claim.get(field)) is None:
+                claim[field] = None
+                value.setdefault("warnings", []).append(f"invalid_{field}_removed")
+    return value
+
+
 def _nearby_lines(claim: dict[str, Any], lines: list[str]) -> list[str]:
     needles = [claim.get("company_name"), claim.get("role_title")]
     needles = [str(item).casefold() for item in needles if item]
@@ -157,7 +193,7 @@ def enrich_employment_claims(payload: dict[str, Any], extracted_text: str) -> di
 
 def normalize_extracted_payload(payload: dict[str, Any], extracted_text: str = "") -> dict[str, Any]:
     """Normalize partial dates and high-confidence location/date hints without inventing values."""
-    value = dict(payload)
+    value = _normalize_link_fields(dict(payload))
     claims = []
     for claim in value.get("employments") or []:
         if isinstance(claim, dict):

@@ -69,3 +69,15 @@ def test_nearby_employment_text_fills_high_confidence_date_and_location() -> Non
     assert employment["is_current"] is True
     assert employment["location"]["city"] == "Bengaluru"
     assert employment["location"]["display"].endswith("Bangalore | Jan 2023 - Present")
+
+
+def test_invalid_links_are_removed_without_breaking_parsed_result() -> None:
+    result = normalize_extracted_payload(
+        {
+            "candidate_profile": {"profile_links": ["not-a-url", "https://example.com/profile"]},
+            "portfolio_links": ["also-not-a-url"],
+        }
+    )
+    assert result["candidate_profile"]["profile_links"] == ["https://example.com/profile"]
+    assert result["portfolio_links"] == []
+    assert "invalid_profile_link_removed" in result["warnings"]
