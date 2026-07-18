@@ -82,7 +82,10 @@ class NovaResumeParser(ResumeParser):
             "warning. For employment dates with month/year or year-only precision, preserve the normalized value in "
             "start_date_display/end_date_display (YYYY-MM or YYYY) and set the matching precision field. Treat "
             "Present, Current, Till Date, Ongoing and Now as current roles. Preserve employment location city, "
-            "country and original display text when present. Every claim is unverified and selected_for_import must be false.\nJSON Schema:\n"
+            "country and original display text when present. Do not omit a recognizable employer/role entry just "
+            "because its date or location is partial or unavailable; retain the claim with null for unknown fields "
+            "and add a warning so the candidate can complete it during review. Every claim is unverified and "
+            "selected_for_import must be false.\nJSON Schema:\n"
             f"{schema}"
         )
         client = boto3.client("bedrock-runtime", region_name=self._settings.aws_region)

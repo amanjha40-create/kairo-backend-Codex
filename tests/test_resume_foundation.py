@@ -192,6 +192,7 @@ async def test_nova_parser_validates_structured_response(monkeypatch: pytest.Mon
             assert "with no wrapper" in system_text
             assert "<resume_data>\nsynthetic resume\n</resume_data>" == user_text
             assert "selected_for_import must be false" in system_text
+            assert "Do not omit a recognizable employer/role entry" in system_text
             return {"body": Body()}
 
     monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: Client())
