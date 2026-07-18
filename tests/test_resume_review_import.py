@@ -102,6 +102,15 @@ def test_import_plan_accepts_nullable_employment_location() -> None:
     ) == []
 
 
+def test_review_payload_bounds_profile_headline_to_canonical_user_limit() -> None:
+    payload = ResumeReviewService._review_payload(
+        "profile",
+        {"professional_headline": "A" * 300},
+    )
+
+    assert len(payload["professional_headline"]) == 255
+
+
 def test_review_accepts_extracted_country_name_for_candidate_correction() -> None:
     claim = review_claim_adapter.validate_python({
         "claim_type": "employment",

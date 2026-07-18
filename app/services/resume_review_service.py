@@ -429,6 +429,8 @@ class ResumeReviewService:
     def _review_payload(claim_type: str, raw: dict[str, Any]) -> dict[str, Any]:
         metadata = {"source_type", "source_text_reference", "confidence", "warnings", "selected_for_import"}
         value = {key: val for key, val in raw.items() if key not in metadata}
+        if claim_type == "profile" and value.get("professional_headline"):
+            value["professional_headline"] = value["professional_headline"][:255]
         value["claim_type"] = claim_type
         return review_claim_adapter.dump_python(review_claim_adapter.validate_python(value), mode="json")
 
