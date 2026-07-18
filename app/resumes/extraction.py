@@ -125,6 +125,10 @@ def _normalize_link_fields(value: dict[str, Any]) -> dict[str, Any]:
             if claim.get(field) is not None and _normalize_url(claim.get(field)) is None:
                 claim[field] = None
                 value.setdefault("warnings", []).append(f"invalid_{field}_removed")
+    for skill in value.get("skills") or []:
+        if isinstance(skill, dict) and isinstance(skill.get("name"), str) and len(skill["name"]) > 128:
+            skill["name"] = skill["name"][:128]
+            value.setdefault("warnings", []).append("skill_name_truncated")
     return value
 
 

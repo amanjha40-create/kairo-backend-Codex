@@ -88,3 +88,9 @@ def test_profile_links_are_bounded_to_review_schema_limit() -> None:
         {"candidate_profile": {"profile_links": [f"https://example.com/{index}" for index in range(25)]}}
     )
     assert len(result["candidate_profile"]["profile_links"]) == 20
+
+
+def test_skill_names_are_bounded_to_review_schema_limit() -> None:
+    result = normalize_extracted_payload({"skills": [{"name": "x" * 200}]})
+    assert len(result["skills"][0]["name"]) == 128
+    assert "skill_name_truncated" in result["warnings"]
