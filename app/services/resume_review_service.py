@@ -446,6 +446,11 @@ class ResumeReviewService:
             "portfolio": ("title", "url"),
         }
         blockers = [f"missing_{field}" for field in required.get(claim_type, ()) if not p.get(field)]
+        if claim_type == "employment":
+            if not p.get("start_date") and p.get("start_date_display"):
+                blockers.append("imprecise_start_date")
+            if not p.get("end_date") and p.get("end_date_display") and not p.get("is_current"):
+                blockers.append("imprecise_end_date")
         if claim_type == "employment" and p.get("location"):
             country = p["location"].get("country")
             if not country:

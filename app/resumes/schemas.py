@@ -56,6 +56,7 @@ class LocationClaim(BaseModel):
     city: str | None = None
     region: str | None = None
     country: str | None = None
+    display: str | None = None
 
 
 class ClaimBase(BaseModel):
@@ -73,6 +74,10 @@ class EmploymentClaim(ClaimBase):
     employment_type: str | None = None
     start_date: date | None = None
     end_date: date | None = None
+    start_date_display: str | None = None
+    end_date_display: str | None = None
+    start_date_precision: Literal["day", "month", "year"] | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
     is_current: bool | None = None
     work_arrangement: str | None = None
     location: LocationClaim | None = None

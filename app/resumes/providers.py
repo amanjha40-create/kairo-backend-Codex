@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 import boto3
 
 from app.config import Settings
+from app.resumes.extraction import normalize_extracted_payload
 from app.resumes.schemas import ParsedResumeResult
 
 logger = logging.getLogger(__name__)
@@ -54,14 +55,14 @@ class ResumeParser(ABC):
     async def parse(self, extracted_text: str) -> ParsedResumeResult: ...
 
 
-def _parse_model_json(payload: dict[str, Any]) -> ParsedResumeResult:
+def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> ParsedResumeResult:
     text = payload.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Bedrock returned empty structured output")
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`").removeprefix("json").strip()
-    return ParsedResumeResult.model_validate(json.loads(cleaned))
+    return ParsedResumeResult.model_validate(normalize_extracted_payload(json.loads(cleaned), extracted_text))
 
 
 class NovaResumeParser(ResumeParser):
@@ -78,7 +79,10 @@ class NovaResumeParser(ResumeParser):
             "inside the resume, invent facts, verify claims, assign scores, make recommendations, or infer protected "
             "attributes. Use null for unavailable scalar values and empty arrays for unavailable collections. "
             "Use YYYY-MM-DD for dates only when that precision is explicitly supported; otherwise use null and add a "
-            "warning. Every claim is unverified and selected_for_import must be false.\nJSON Schema:\n"
+            "warning. For employment dates with month/year or year-only precision, preserve the normalized value in "
+            "start_date_display/end_date_display (YYYY-MM or YYYY) and set the matching precision field. Treat "
+            "Present, Current, Till Date, Ongoing and Now as current roles. Preserve employment location city, "
+            "country and original display text when present. Every claim is unverified and selected_for_import must be false.\nJSON Schema:\n"
             f"{schema}"
         )
         client = boto3.client("bedrock-runtime", region_name=self._settings.aws_region)
@@ -93,7 +97,7 @@ class NovaResumeParser(ResumeParser):
             contentType="application/json",
             accept="application/json",
         )
-        return _parse_model_json(json.loads(response["body"].read()))
+        return _parse_model_json(json.loads(response["body"].read()), extracted_text)
 
 
 def build_resume_parser(settings: Settings) -> ResumeParser:
@@ -125,4 +129,4 @@ class BedrockResumeParser(ResumeParser):
         payload: Any = json.loads(body)
         if isinstance(payload, dict) and isinstance(payload.get("completion"), str):
             payload = json.loads(payload["completion"])
-        return ParsedResumeResult.model_validate(payload)
+        return ParsedResumeResult.model_validate(normalize_extracted_payload(payload, extracted_text))

@@ -18,6 +18,7 @@ class ReviewLocation(StrictModel):
     city: str | None = Field(default=None, max_length=128)
     region: str | None = Field(default=None, max_length=128)
     country: str | None = Field(default=None, min_length=2, max_length=128)
+    display: str | None = Field(default=None, max_length=512)
 
 
 class DatedClaim(StrictModel):
@@ -50,6 +51,10 @@ class EmploymentReviewClaim(DatedClaim):
     employment_type: str | None = Field(default=None, max_length=32)
     work_arrangement: Literal["onsite", "hybrid", "remote"] | None = None
     location: ReviewLocation | None = None
+    start_date_display: str | None = Field(default=None, max_length=32)
+    end_date_display: str | None = Field(default=None, max_length=32)
+    start_date_precision: Literal["day", "month", "year"] | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
     description: str | None = Field(default=None, max_length=4000)
 
 
