@@ -491,7 +491,7 @@ class ResumeReviewService:
         ignored: list[str] = []
         if claim_type == "employment":
             ignored.extend(field for field in ("work_arrangement", "description") if payload.get(field) is not None)
-            if payload.get("location", {}).get("city"):
+            if (payload.get("location") or {}).get("city"):
                 ignored.append("location.city")
         if claim_type == "profile" and payload.get("profile_links"):
             ignored.append("profile_links")

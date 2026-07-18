@@ -93,6 +93,15 @@ def test_import_plan_blocks_unsupported_and_incomplete_claims() -> None:
     ) == []
 
 
+def test_import_plan_accepts_nullable_employment_location() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+
+    assert service._ignored_fields(
+        "employment",
+        {"company_name": "Synthetic Company", "location": None},
+    ) == []
+
+
 def test_review_accepts_extracted_country_name_for_candidate_correction() -> None:
     claim = review_claim_adapter.validate_python({
         "claim_type": "employment",
