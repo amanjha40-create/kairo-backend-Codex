@@ -81,3 +81,10 @@ def test_invalid_links_are_removed_without_breaking_parsed_result() -> None:
     assert result["candidate_profile"]["profile_links"] == ["https://example.com/profile"]
     assert result["portfolio_links"] == []
     assert "invalid_profile_link_removed" in result["warnings"]
+
+
+def test_profile_links_are_bounded_to_review_schema_limit() -> None:
+    result = normalize_extracted_payload(
+        {"candidate_profile": {"profile_links": [f"https://example.com/{index}" for index in range(25)]}}
+    )
+    assert len(result["candidate_profile"]["profile_links"]) == 20

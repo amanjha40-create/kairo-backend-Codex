@@ -106,7 +106,7 @@ def _normalize_url(value: Any) -> str | None:
 def _normalize_link_fields(value: dict[str, Any]) -> dict[str, Any]:
     profile = dict(value.get("candidate_profile") or {})
     links = profile.get("profile_links") or []
-    normalized_links = [link for item in links if (link := _normalize_url(item))]
+    normalized_links = [link for item in links if (link := _normalize_url(item))][:20]
     if len(normalized_links) != len(links):
         value.setdefault("warnings", []).append("invalid_profile_link_removed")
     profile["profile_links"] = normalized_links
