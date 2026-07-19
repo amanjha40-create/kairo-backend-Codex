@@ -73,10 +73,9 @@ return 1
         await self._redis.delete(self._otp_key(signup_session_id, channel))
 
     async def clear_all(self, signup_session_id: UUID) -> None:
-        await self._redis.delete(
-            self._otp_key(signup_session_id, "email"),
-            self._otp_key(signup_session_id, "phone"),
-        )
+        # Redis Cluster rejects multi-key commands when keys hash to different slots.
+        await self._redis.delete(self._otp_key(signup_session_id, "email"))
+        await self._redis.delete(self._otp_key(signup_session_id, "phone"))
 
     async def enforce_send_rate(self, signup_session_id: UUID, channel: str) -> None:
         """Hourly send cap across start + resend.
