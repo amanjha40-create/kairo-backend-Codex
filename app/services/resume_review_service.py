@@ -28,7 +28,7 @@ from app.models.resume_review_item import ResumeReviewItem
 from app.models.resume_review_session import ResumeReviewSession
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
-from app.resumes.normalization import payload_hash, stable_claim_id
+from app.resumes.normalization import normalize_review_date, payload_hash, stable_claim_id
 from app.resumes.review_enums import ResumeImportAction, ResumeReviewStatus
 from app.resumes.review_schemas import (
     ImportBatchResponse,
@@ -138,7 +138,10 @@ class ResumeReviewService:
         if not item:
             raise NotFoundError("Resume review item not found")
         self._check_version(item.version, payload.expected_version)
-        edited = payload.edited_payload if payload.edited_payload is not None else item.edited_payload
+        edited = self._normalize_review_payload(
+            item.claim_type,
+            dict(payload.edited_payload if payload.edited_payload is not None else item.edited_payload),
+        )
         try:
             claim = review_claim_adapter.validate_python(edited)
         except ValidationError as exc:
@@ -163,7 +166,7 @@ class ResumeReviewService:
         review.version += 1
         await self.session.commit()
         logger.info("resume_review_item_updated", extra={"review_session_id": str(review.id), "review_item_id": str(item.id), "user_id": str(user_id), "claim_type": item.claim_type, "selected": item.selected})
-        return ReviewItemResponse.model_validate(item)
+        return self._item_response(item)
 
     async def validate(self, user_id: UUID, review_id: UUID, payload: ReviewValidateRequest) -> ReviewPlanResponse:
         review = await self._owned_review(user_id, review_id, for_update=True)
@@ -279,7 +282,7 @@ class ResumeReviewService:
                 target_model=item.claim_type if item.claim_type in SUPPORTED_IMPORT_TYPES else None,
                 duplicate_status=item.duplicate_status,
                 target_record_id=item.target_record_id,
-                fields_to_create=sorted(key for key, value in item.edited_payload.items() if key != "claim_type" and value is not None),
+                fields_to_create=sorted(key for key, value in item.edited_payload.items() if key not in {"claim_type", "location"} and value is not None),
                 fields_ignored=self._ignored_fields(item.claim_type, item.edited_payload),
                 blockers=sorted(set(blockers)),
                 warnings=item.conflict_warnings,
@@ -337,7 +340,8 @@ class ResumeReviewService:
             user = await self.session.get(User, user_id)
             if not user or not user.full_name:
                 raise ValidationAppError("Complete the candidate profile before importing employment", code="candidate_profile_incomplete")
-            return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p["start_date"], end_date=p.get("end_date"), work_location_country=p["location"]["country"].upper(), work_location_region=p.get("location", {}).get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
+            location = p.get("location") or {}
+            return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p["start_date"], end_date=p.get("end_date"), work_location_country=location.get("country", "").upper() or None, work_location_region=location.get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
         if claim_type == "education":
             return Education(user_id=user_id, institution_name=p["institution_name"], degree=p["degree"], field_of_study=p.get("field_of_study"), education_level=p["education_level"], grade=p.get("grade"), start_date=p["start_date"], end_date=p.get("end_date"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
@@ -408,7 +412,25 @@ class ResumeReviewService:
     async def _session_response(self, review: ResumeReviewSession) -> ReviewSessionResponse:
         review = await self.session.scalar(select(ResumeReviewSession).where(ResumeReviewSession.id == review.id))
         items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == review.id).order_by(ResumeReviewItem.created_at))).all()
-        return ReviewSessionResponse(id=review.id, resume_id=review.resume_document_id, parsed_result_id=review.parsed_result_id, status=review.status, schema_version=review.schema_version, version=review.version, items=[ReviewItemResponse.model_validate(item) for item in items], created_at=review.created_at, updated_at=review.updated_at)
+        return ReviewSessionResponse(
+            id=review.id,
+            resume_id=review.resume_document_id,
+            parsed_result_id=review.parsed_result_id,
+            status=review.status,
+            schema_version=review.schema_version,
+            version=review.version,
+            items=[self._item_response(item) for item in items],
+            created_at=review.created_at,
+            updated_at=review.updated_at,
+        )
+
+    @staticmethod
+    def _item_response(item: ResumeReviewItem) -> ReviewItemResponse:
+        response = ReviewItemResponse.model_validate(item)
+        if response.claim_type == "employment":
+            response.original_payload.pop("location", None)
+            response.edited_payload.pop("location", None)
+        return response
 
     async def _batch_response(self, batch: ResumeImportBatch) -> ImportBatchResponse:
         batch = await self.session.scalar(select(ResumeImportBatch).where(ResumeImportBatch.id == batch.id))
@@ -429,15 +451,33 @@ class ResumeReviewService:
     def _review_payload(claim_type: str, raw: dict[str, Any]) -> dict[str, Any]:
         metadata = {"source_type", "source_text_reference", "confidence", "warnings", "selected_for_import"}
         value = {key: val for key, val in raw.items() if key not in metadata}
+        if claim_type == "employment":
+            value.pop("location", None)
         if claim_type == "profile" and value.get("professional_headline"):
             value["professional_headline"] = value["professional_headline"][:255]
         value["claim_type"] = claim_type
         return review_claim_adapter.dump_python(review_claim_adapter.validate_python(value), mode="json")
 
     @staticmethod
+    def _normalize_review_payload(claim_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if claim_type != "employment":
+            return payload
+        for field, is_end in (("start_date", False), ("end_date", True)):
+            normalized_date, precision = normalize_review_date(
+                payload.get(field), payload.get(f"{field}_display"), is_end=is_end
+            )
+            if normalized_date:
+                payload[field] = normalized_date
+                if payload.get(f"{field}_precision") is None and precision:
+                    payload[f"{field}_precision"] = precision
+            elif field == "end_date" and payload.get("is_current"):
+                payload[field] = None
+        return payload
+
+    @staticmethod
     def _required_blockers(claim_type: str, p: dict[str, Any]) -> list[str]:
         required = {
-            "employment": ("company_name", "role_title", "start_date", "location"),
+            "employment": ("company_name", "role_title", "start_date"),
             "education": ("institution_name", "degree", "education_level", "start_date"),
             "internship": ("company_name", "role", "start_date"),
             "freelance": ("client_name", "project_title", "start_date"),
@@ -451,12 +491,6 @@ class ResumeReviewService:
                 blockers.append("imprecise_start_date")
             if not p.get("end_date") and p.get("end_date_display") and not p.get("is_current"):
                 blockers.append("imprecise_end_date")
-        if claim_type == "employment" and p.get("location"):
-            country = p["location"].get("country")
-            if not country:
-                blockers.append("missing_work_location_country")
-            elif len(country) != 2 or not country.isalpha():
-                blockers.append("invalid_work_location_country")
         return blockers
 
     @classmethod
@@ -497,9 +531,7 @@ class ResumeReviewService:
     def _ignored_fields(claim_type: str, payload: dict[str, Any]) -> list[str]:
         ignored: list[str] = []
         if claim_type == "employment":
-            ignored.extend(field for field in ("work_arrangement", "description") if payload.get(field) is not None)
-            if (payload.get("location") or {}).get("city"):
-                ignored.append("location.city")
+            ignored.extend(field for field in ("work_arrangement", "description", "location") if payload.get(field) is not None)
         if claim_type == "profile" and payload.get("profile_links"):
             ignored.append("profile_links")
         return ignored

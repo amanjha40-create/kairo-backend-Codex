@@ -52,7 +52,7 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    work_location_country: Mapped[str] = mapped_column(String(2), nullable=False)
+    work_location_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     work_location_region: Mapped[str | None] = mapped_column(String(128), nullable=True)
     verification_method: Mapped[str] = mapped_column(
         String(32),

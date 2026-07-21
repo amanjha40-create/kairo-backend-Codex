@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from calendar import monthrange
 from datetime import date
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -49,6 +50,41 @@ def normalize_date(value: date | str | None) -> date | None:
         return None
 
 
+def normalize_review_date(value: date | str | None, display: str | None = None, *, is_end: bool = False) -> tuple[str | None, str | None]:
+    """Convert resume month/year claims to contract dates without inventing precision."""
+    raw = value.isoformat() if isinstance(value, date) else value or display
+    if not raw:
+        return None, None
+    raw = raw.strip()
+    if raw.casefold() in {"present", "current", "ongoing", "now", "till date", "current role"}:
+        return None, None
+    match = re.fullmatch(r"(\d{4})-(\d{2})(?:-(\d{2}))?", raw)
+    if match:
+        year, month, day = int(match.group(1)), int(match.group(2)), match.group(3)
+        if not 1 <= month <= 12:
+            return None, None
+        if day:
+            try:
+                return date(year, month, int(day)).isoformat(), "day"
+            except ValueError:
+                return None, None
+        return date(year, month, monthrange(year, month)[1] if is_end else 1).isoformat(), "month"
+    year_match = re.fullmatch(r"(\d{4})", raw)
+    if year_match:
+        year = int(year_match.group(1))
+        return date(year, 12 if is_end else 1, 31 if is_end else 1).isoformat(), "year"
+    month_match = re.fullmatch(
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[ '\u2019-]*(\d{2}|\d{4})",
+        raw,
+        re.IGNORECASE,
+    )
+    if month_match:
+        month = ("jan feb mar apr may jun jul aug sep oct nov dec".split().index(month_match.group(1)[:3].lower()) + 1)
+        year = int(month_match.group(2))
+        if year < 100:
+            year += 2000
+        return date(year, month, monthrange(year, month)[1] if is_end else 1).isoformat(), "month"
+    return None, None
 def date_ranges_overlap(
     start_a: date | str | None,
     end_a: date | str | None,
