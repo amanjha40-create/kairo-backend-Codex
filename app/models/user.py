@@ -46,6 +46,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    trust_score_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trust_score_consent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken",

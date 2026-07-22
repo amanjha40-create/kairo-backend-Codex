@@ -39,6 +39,7 @@ from app.models.resume_import_batch import ResumeImportBatch
 from app.models.resume_import_result import ResumeImportResult
 from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.trust_invitation import TrustInvitation
+from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.trust_registry_alias import TrustRegistryAlias
 from app.models.trust_registry_capability import TrustRegistryCapability
 from app.models.trust_registry_domain import TrustRegistryDomain
@@ -101,6 +102,7 @@ __all__ = [
     "ResumeImportResult",
     "ResumeRecordProvenance",
     "TrustInvitation",
+    "TrustScoreSnapshot",
     "TrustRegistryAlias",
     "TrustRegistryCapability",
     "TrustRegistryDomain",

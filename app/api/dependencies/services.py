@@ -141,8 +141,11 @@ def get_education_service(
     return EducationService(session, settings)
 
 
-def get_trust_score_service(session: AsyncSession = Depends(get_session)) -> TrustScoreService:
-    return TrustScoreService(session)
+def get_trust_score_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TrustScoreService:
+    return TrustScoreService(session, settings)
 
 
 def get_organization_service(session: AsyncSession = Depends(get_session)) -> OrganizationService:

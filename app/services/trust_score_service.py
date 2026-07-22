@@ -1,177 +1,187 @@
-"""Trust score calculation service — measures profile completeness and verification status."""
+"""Canonical Version 1 Trust Score engine.
+
+The engine consumes existing verification outcomes. It does not verify claims,
+change verification state, or infer trust from profile completeness.
+"""
 
 from __future__ import annotations
 
-import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Education, Employment, User, UserDocument
-from app.schemas.trust_score import TrustScoreComponentBreakdown, TrustScoreResponse
+from app.config import Settings, get_settings
+from app.models import Education, Employment, TrustScoreSnapshot, User, UserDocument
+from app.schemas.trust_score import (
+    TrustScoreComponentBreakdown,
+    TrustScoreConsentRequest,
+    TrustScoreContributor,
+    TrustScoreDomainScore,
+    TrustScoreResponse,
+)
 
-logger = logging.getLogger(__name__)
+_VERIFIED_STATES = {"approved", "verified"}
 
 
 class TrustScoreService:
-    """Calculate user trust score across multiple verification dimensions."""
+    """Calculate and persist explainable, versioned Version 1 scores."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
+        self._settings = settings or get_settings()
+
+    async def record_consent(self, user_id: UUID, payload: TrustScoreConsentRequest) -> None:
+        user = await self._get_user(user_id)
+        if user is None:
+            raise ValueError("User not found")
+        user.trust_score_consent_at = datetime.now(UTC)
+        user.trust_score_consent_version = payload.consent_version
+        await self._session.commit()
 
     async def calculate_trust_score(self, user_id: UUID) -> TrustScoreResponse:
-        """Calculate complete trust score for a user with component breakdown."""
         user = await self._get_user(user_id)
-        if not user:
+        if user is None:
             raise ValueError(f"User {user_id} not found")
 
-        identity_score = await self._calculate_identity_score(user)
-        employment_score = await self._calculate_employment_score(user_id)
-        education_score = await self._calculate_education_score(user_id)
-        documents_score = await self._calculate_documents_score(user_id)
+        now = datetime.now(UTC)
+        if self._settings.trust_score_require_consent and user.trust_score_consent_at is None:
+            response = self._response(
+                status="consent_required",
+                overall=None,
+                breakdown=None,
+                domain_details={},
+                score_version=self._settings.trust_score_version,
+                last_calculated_at=now,
+                manual_review_reason="Explicit Trust Score consent is required before screening starts.",
+            )
+            await self._persist(user, response)
+            return response
 
-        breakdown = TrustScoreComponentBreakdown(
-            identity=identity_score,
-            employment=employment_score,
-            education=education_score,
-            documents=documents_score,
+        identity = await self._identity_domain(user)
+        employment = await self._employment_domain(user_id)
+        education = await self._education_domain(user_id)
+        domains = {"identity": identity, "employment": employment, "education": education}
+        positives = [item for domain in domains.values() for item in domain.positive_contributors]
+        negatives = [item for domain in domains.values() for item in domain.negative_contributors]
+        critical: list[TrustScoreContributor] = []
+        weighted = (
+            identity.score * self._settings.trust_score_identity_weight
+            + employment.score * self._settings.trust_score_employment_weight
+            + education.score * self._settings.trust_score_education_weight
         )
-
-        overall = self._calculate_weighted_overall(breakdown)
-        week_change = 0
-
-        return TrustScoreResponse(
+        completeness = await self._verification_completeness(user, user_id)
+        status = "calculated" if completeness == 100 else "incomplete_verification"
+        overall = round(weighted)
+        response = self._response(
+            status=status,
             overall=overall,
-            breakdown=breakdown,
-            week_change=week_change,
+            breakdown=TrustScoreComponentBreakdown(
+                identity=round(identity.score, 2), employment=round(employment.score, 2), education=round(education.score, 2)
+            ),
+            domain_details=domains,
+            positive_contributors=positives,
+            negative_contributors=negatives,
+            critical_overrides=critical,
+            manual_review_reason=("Mandatory verification checks remain incomplete." if status != "calculated" else None),
+            score_version=self._settings.trust_score_version,
+            last_calculated_at=now,
+            verification_completeness_percentage=completeness,
         )
+        await self._persist(user, response)
+        return response
 
     async def _get_user(self, user_id: UUID) -> User | None:
-        """Fetch user by ID."""
-        stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        return (await self._session.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))).scalar_one_or_none()
 
-    async def _calculate_identity_score(self, user: User) -> int:
-        """Calculate identity verification score (0-100).
+    async def _identity_domain(self, user: User) -> TrustScoreDomainScore:
+        documents = list((await self._session.execute(
+            select(UserDocument).where(UserDocument.user_id == user.id, UserDocument.deleted_at.is_(None))
+        )).scalars().all())
+        identity_doc = next((doc for doc in documents if doc.verification_status in _VERIFIED_STATES), None)
+        self_attested_doc = next((doc for doc in documents if doc.verification_status not in {"rejected", "cancelled"}), None)
+        points = 0.0
+        positives: list[TrustScoreContributor] = []
+        if identity_doc:
+            points += 40
+            positives.append(TrustScoreContributor(code="identity_authoritative", label="Identity document verified", points=40, detail="Approved identity evidence provides the authoritative tier."))
+        elif self_attested_doc:
+            points += 10
+            positives.append(TrustScoreContributor(code="identity_self_attested", label="Identity document submitted", points=10, detail="Candidate-submitted identity evidence is self-attested only."))
+        if user.phone_verified_at:
+            points += 15
+            positives.append(TrustScoreContributor(code="phone_verified", label="Mobile number verified", points=15, detail="Phone OTP verification is complete."))
+        if user.email_verified_at:
+            points += 15
+            positives.append(TrustScoreContributor(code="email_verified", label="Email verified", points=15, detail="Email verification is complete."))
+        return self._domain(points, 70, self._settings.trust_score_identity_weight, positives, [])
 
-        Weights:
-        - Email verified: 50 points
-        - Full name provided: 25 points
-        - Profile slug set: 25 points
-        """
-        score = 0
+    async def _employment_domain(self, user_id: UUID) -> TrustScoreDomainScore:
+        rows = list((await self._session.execute(
+            select(Employment).where(Employment.created_by_user_id == user_id, Employment.deleted_at.is_(None))
+        )).scalars().all())
+        if not rows:
+            return self._domain(0, 100, self._settings.trust_score_employment_weight, [], [TrustScoreContributor(code="employment_missing", label="Employment verification missing", points=0, detail="No employment claim is available for verification.")])
+        total = 0.0
+        positives: list[TrustScoreContributor] = []
+        for row in rows:
+            if row.verification_status in _VERIFIED_STATES:
+                total += 30 + 30 + 20
+                positives.append(TrustScoreContributor(code="employment_authoritative", label=f"Employment verified: {row.employer_legal_name}", points=80, detail="The existing employment workflow marked the claim approved."))
+            elif row.verification_status not in {"rejected", "cancelled"}:
+                total += 7.5
+                positives.append(TrustScoreContributor(code="employment_self_attested", label=f"Employment submitted: {row.employer_legal_name}", points=7.5, detail="The claim is submitted but not third-party or authoritative verified."))
+        score = total / len(rows)
+        negatives = [] if total else [TrustScoreContributor(code="employment_unverified", label="Employment not verified", points=0, detail="No verification outcome supports the employment claim.")]
+        return self._domain(score, 100, self._settings.trust_score_employment_weight, positives, negatives)
 
-        if user.email_verified_at is not None:
-            score += 50
+    async def _education_domain(self, user_id: UUID) -> TrustScoreDomainScore:
+        rows = list((await self._session.execute(
+            select(Education).where(Education.user_id == user_id, Education.deleted_at.is_(None))
+        )).scalars().all())
+        if not rows:
+            return self._domain(0, 100, self._settings.trust_score_education_weight, [], [TrustScoreContributor(code="education_missing", label="Education verification missing", points=0, detail="No education claim is available for verification.")])
+        total = 0.0
+        positives: list[TrustScoreContributor] = []
+        for row in rows:
+            if row.verification_status in _VERIFIED_STATES:
+                total += 70
+                positives.append(TrustScoreContributor(code="education_authoritative", label=f"Education verified: {row.institution_name}", points=70, detail="The existing education workflow marked the credential verified."))
+            elif row.verification_status not in {"rejected", "cancelled"}:
+                total += 17.5
+                positives.append(TrustScoreContributor(code="education_self_attested", label=f"Education submitted: {row.institution_name}", points=17.5, detail="The credential is candidate-submitted and not independently verified."))
+        return self._domain(total / len(rows), 100, self._settings.trust_score_education_weight, positives, [])
 
-        if user.full_name and len(user.full_name.strip()) > 0:
-            score += 25
-
-        if user.profile_slug and len(user.profile_slug.strip()) > 0:
-            score += 25
-
-        return min(score, 100)
-
-    async def _calculate_employment_score(self, user_id: UUID) -> int:
-        """Calculate employment verification score (0-100).
-
-        Based on ratio of verified/approved employments to total employments.
-        """
-        stmt = (
-            select(func.count())
-            .select_from(Employment)
-            .where(Employment.created_by_user_id == user_id, Employment.deleted_at.is_(None))
-        )
-        total = int((await self._session.execute(stmt)).scalar_one() or 0)
-
-        if total == 0:
-            return 0
-
-        stmt_verified = (
-            select(func.count())
-            .select_from(Employment)
-            .where(
-                Employment.created_by_user_id == user_id,
-                Employment.verification_status == "approved",
-                Employment.deleted_at.is_(None),
-            )
-        )
-        verified = int((await self._session.execute(stmt_verified)).scalar_one() or 0)
-
-        return int((verified / total) * 100) if total > 0 else 0
-
-    async def _calculate_education_score(self, user_id: UUID) -> int:
-        """Calculate education verification score (0-100).
-
-        Based on ratio of verified education credentials to total credentials.
-        """
-        stmt = (
-            select(func.count())
-            .select_from(Education)
-            .where(Education.user_id == user_id, Education.deleted_at.is_(None))
-        )
-        total = int((await self._session.execute(stmt)).scalar_one() or 0)
-
-        if total == 0:
-            return 0
-
-        stmt_verified = (
-            select(func.count())
-            .select_from(Education)
-            .where(
-                Education.user_id == user_id,
-                Education.verification_status == "verified",
-                Education.deleted_at.is_(None),
-            )
-        )
-        verified = int((await self._session.execute(stmt_verified)).scalar_one() or 0)
-
-        return int((verified / total) * 100) if total > 0 else 0
-
-    async def _calculate_documents_score(self, user_id: UUID) -> int:
-        """Calculate document verification score (0-100).
-
-        Based on ratio of verified documents to total documents.
-        """
-        stmt = (
-            select(func.count())
-            .select_from(UserDocument)
-            .where(UserDocument.user_id == user_id, UserDocument.deleted_at.is_(None))
-        )
-        total = int((await self._session.execute(stmt)).scalar_one() or 0)
-
-        if total == 0:
-            return 0
-
-        stmt_verified = (
-            select(func.count())
-            .select_from(UserDocument)
-            .where(
-                UserDocument.user_id == user_id,
-                UserDocument.verification_status == "verified",
-                UserDocument.deleted_at.is_(None),
-            )
-        )
-        verified = int((await self._session.execute(stmt_verified)).scalar_one() or 0)
-
-        return int((verified / total) * 100) if total > 0 else 0
+    async def _verification_completeness(self, user: User, user_id: UUID) -> int:
+        employments = list((await self._session.execute(select(Employment).where(Employment.created_by_user_id == user_id, Employment.deleted_at.is_(None)))).scalars().all())
+        educations = list((await self._session.execute(select(Education).where(Education.user_id == user_id, Education.deleted_at.is_(None)))).scalars().all())
+        checks = [bool(user.email_verified_at), bool(user.phone_verified_at), bool(user.trust_score_consent_at)]
+        checks.extend(row.verification_status in _VERIFIED_STATES for row in employments)
+        checks.extend(row.verification_status in _VERIFIED_STATES for row in educations)
+        return round(sum(checks) * 100 / len(checks)) if checks else 0
 
     @staticmethod
-    def _calculate_weighted_overall(breakdown: TrustScoreComponentBreakdown) -> int:
-        """Calculate weighted overall score.
+    def _domain(points: float, maximum: float, weight: float, positives: list[TrustScoreContributor], negatives: list[TrustScoreContributor]) -> TrustScoreDomainScore:
+        return TrustScoreDomainScore(score=max(0, min(100, points / maximum * 100)), verification_points=max(0, points), fraud_deduction=0, weight=weight, positive_contributors=positives, negative_contributors=negatives)
 
-        Weights:
-        - Identity: 30%
-        - Employment: 25%
-        - Education: 20%
-        - Documents: 25%
-        """
-        weighted = (
-            breakdown.identity * 0.30
-            + breakdown.employment * 0.25
-            + breakdown.education * 0.20
-            + breakdown.documents * 0.25
-        )
-        return int(weighted)
+    @staticmethod
+    def _response(**kwargs) -> TrustScoreResponse:  # noqa: ANN003
+        return TrustScoreResponse(**kwargs)
+
+    async def _persist(self, user: User, response: TrustScoreResponse) -> None:
+        self._session.add(TrustScoreSnapshot(
+            user_id=user.id,
+            score_version=response.score_version,
+            status=response.status,
+            overall_score=response.overall,
+            verification_completeness_percentage=response.verification_completeness_percentage,
+            domain_scores={key: value.model_dump() for key, value in response.domain_details.items()},
+            positive_contributors=[item.model_dump() for item in response.positive_contributors],
+            negative_contributors=[item.model_dump() for item in response.negative_contributors],
+            critical_overrides=[item.model_dump() for item in response.critical_overrides],
+            manual_review_reason=response.manual_review_reason,
+            consent_at=user.trust_score_consent_at,
+            calculated_at=response.last_calculated_at or datetime.now(UTC),
+        ))
+        await self._session.commit()

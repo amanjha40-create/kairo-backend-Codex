@@ -193,6 +193,12 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(
         default=60, ge=1, le=3600, validation_alias=AliasChoices("AUTH_RATE_LIMIT_WINDOW_SECONDS")
     )
+    # --- Versioned Trust Score configuration ---
+    trust_score_version: str = Field(default="v1", validation_alias=AliasChoices("TRUST_SCORE_VERSION"))
+    trust_score_identity_weight: float = Field(default=0.25, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_IDENTITY_WEIGHT"))
+    trust_score_employment_weight: float = Field(default=0.45, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EMPLOYMENT_WEIGHT"))
+    trust_score_education_weight: float = Field(default=0.30, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EDUCATION_WEIGHT"))
+    trust_score_require_consent: bool = Field(default=True, validation_alias=AliasChoices("TRUST_SCORE_REQUIRE_CONSENT"))
     otp_verify_rate_limit_max_requests: int = Field(
         default=5, ge=1, le=100, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_MAX_REQUESTS")
     )
