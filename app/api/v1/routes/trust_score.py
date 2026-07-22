@@ -27,3 +27,11 @@ async def consent_to_trust_score(
     service: TrustScoreService = Depends(get_trust_score_service),
 ) -> None:
     await service.record_consent(current.id, payload)
+
+
+@router.delete("/consent", status_code=status.HTTP_204_NO_CONTENT, summary="Withdraw Trust Score calculation consent")
+async def withdraw_trust_score_consent(
+    current: CurrentUser = Depends(get_current_user),
+    service: TrustScoreService = Depends(get_trust_score_service),
+) -> None:
+    await service.withdraw_consent(current.id)

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import Education, Employment, User, UserDocument
+from app.models import Education, Employment, TrustScoreSnapshot, User, UserDocument
 from app.services.trust_score_service import TrustScoreService
 
 
@@ -31,6 +31,7 @@ class _Session:
         self.employments = employments or []
         self.educations = educations or []
         self.added = []
+        self.snapshot = None
 
     async def execute(self, statement):
         entity = statement.column_descriptions[0]["entity"]
@@ -39,11 +40,14 @@ class _Session:
             UserDocument: self.documents,
             Employment: self.employments,
             Education: self.educations,
+            TrustScoreSnapshot: self.snapshot,
         }
         return _Result(values[entity])
 
     def add(self, value):
         self.added.append(value)
+        if isinstance(value, TrustScoreSnapshot):
+            self.snapshot = value
 
     async def commit(self):
         return None
@@ -111,6 +115,34 @@ async def test_v1_scores_only_three_domains_and_explains_verified_inputs():
         "education_authoritative",
     }
     assert session.added[0].score_version == "v1"
+
+
+@pytest.mark.asyncio
+async def test_repeated_unchanged_calculation_reuses_latest_snapshot():
+    user = _user(trust_score_consent_at=datetime.now(UTC), trust_score_consent_version="v1-consent")
+    session = _Session(user)
+    service = TrustScoreService(session, _settings())
+
+    first = await service.calculate_trust_score(user.id)
+    session.snapshot.calculated_at = first.last_calculated_at
+    second = await service.calculate_trust_score(user.id)
+
+    assert len(session.added) == 1
+    assert second.last_calculated_at == first.last_calculated_at
+
+
+@pytest.mark.asyncio
+async def test_withdrawing_consent_hides_future_score_but_keeps_snapshot():
+    user = _user(trust_score_consent_at=datetime.now(UTC), trust_score_consent_version="v1-consent")
+    session = _Session(user)
+    service = TrustScoreService(session, _settings())
+    await service.calculate_trust_score(user.id)
+    await service.withdraw_consent(user.id)
+
+    response = await service.calculate_trust_score(user.id)
+    assert response.status == "consent_required"
+    assert response.overall is None
+    assert session.snapshot is not None
 
 
 def test_domain_score_is_floored_and_capped():

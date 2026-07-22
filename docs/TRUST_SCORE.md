@@ -5,10 +5,12 @@ The canonical source for Version 1 scoring is `Kairo_Trust_Score_Logic.md.pdf` s
 ## Source-of-truth rules
 
 - Scoring is blocked until the candidate records explicit Trust Score consent. The consent timestamp and consent version are stored on `users`.
+- This consent is purpose-specific to Kairo calculating and displaying the candidate's own Trust Score; it does not consent to verification-request evidence sharing or organization screening.
 - Version 1 scores only Identity, Employment, and Education. Documents are evidence, not a scored fourth domain.
 - Domain weights are configurable defaults: Identity `0.25`, Employment `0.45`, Education `0.30`.
 - The score is `Identity * 0.25 + Employment * 0.45 + Education * 0.30`, rounded to an integer for the overall display.
 - Each result is persisted in `trust_score_snapshots` with `score_version`, status, domain details, contributors, overrides, completeness, consent timestamp, and calculation time.
+- Repeated reads with unchanged inputs reuse the latest equivalent snapshot; a changed authoritative input creates a new auditable snapshot. Historical snapshots are retained when consent is withdrawn.
 - Profile Completion, Passport Completion, Verification Status, and Trust Score remain separate values.
 - The engine consumes existing verification outcomes. It does not create verification requests, approve records, update Passport records, or calculate in the frontend.
 
@@ -29,6 +31,7 @@ The specification's critical fraud overrides are represented by the response con
 
 - `GET /api/v1/trust-score` returns the current backend-owned result, status, three domain scores, domain details, contributors, overrides, version, completeness, and timestamp.
 - `POST /api/v1/trust-score/consent` records explicit consent with a caller-supplied policy version. It does not calculate or alter verification state.
+- `DELETE /api/v1/trust-score/consent` withdraws only Trust Score calculation consent. It does not delete historical snapshots and does not alter verification-request consent.
 - `GET /api/v1/public/profile/{slug}/trust-score` uses the same versioned backend result where public Passport permissions allow it.
 
 ## Maintenance

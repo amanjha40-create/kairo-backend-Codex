@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -38,6 +38,14 @@ class TrustScoreService:
             raise ValueError("User not found")
         user.trust_score_consent_at = datetime.now(UTC)
         user.trust_score_consent_version = payload.consent_version
+        await self._session.commit()
+
+    async def withdraw_consent(self, user_id: UUID) -> None:
+        user = await self._get_user(user_id)
+        if user is None:
+            raise ValueError("User not found")
+        user.trust_score_consent_at = None
+        user.trust_score_consent_version = None
         await self._session.commit()
 
     async def calculate_trust_score(self, user_id: UUID) -> TrustScoreResponse:
@@ -170,6 +178,15 @@ class TrustScoreService:
         return TrustScoreResponse(**kwargs)
 
     async def _persist(self, user: User, response: TrustScoreResponse) -> None:
+        latest = (await self._session.execute(
+            select(TrustScoreSnapshot)
+            .where(TrustScoreSnapshot.user_id == user.id)
+            .order_by(desc(TrustScoreSnapshot.calculated_at))
+            .limit(1)
+        )).scalar_one_or_none()
+        if latest is not None and self._snapshot_matches(latest, response, user):
+            response.last_calculated_at = latest.calculated_at
+            return
         self._session.add(TrustScoreSnapshot(
             user_id=user.id,
             score_version=response.score_version,
@@ -185,3 +202,18 @@ class TrustScoreService:
             calculated_at=response.last_calculated_at or datetime.now(UTC),
         ))
         await self._session.commit()
+
+    @staticmethod
+    def _snapshot_matches(snapshot: TrustScoreSnapshot, response: TrustScoreResponse, user: User) -> bool:
+        return (
+            snapshot.score_version == response.score_version
+            and snapshot.status == response.status
+            and snapshot.overall_score == response.overall
+            and snapshot.verification_completeness_percentage == response.verification_completeness_percentage
+            and snapshot.domain_scores == {key: value.model_dump() for key, value in response.domain_details.items()}
+            and snapshot.positive_contributors == [item.model_dump() for item in response.positive_contributors]
+            and snapshot.negative_contributors == [item.model_dump() for item in response.negative_contributors]
+            and snapshot.critical_overrides == [item.model_dump() for item in response.critical_overrides]
+            and snapshot.manual_review_reason == response.manual_review_reason
+            and snapshot.consent_at == user.trust_score_consent_at
+        )

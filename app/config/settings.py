@@ -8,6 +8,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 import re
+from math import isclose
 from typing import Self
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
@@ -512,6 +513,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def enforce_production_hardening(self) -> Self:
         """Stricter checks when APP_ENV=production."""
+
+        weights_total = (
+            self.trust_score_identity_weight
+            + self.trust_score_employment_weight
+            + self.trust_score_education_weight
+        )
+        if not isclose(weights_total, 1.0, abs_tol=1e-6):
+            raise ValueError("TRUST_SCORE_*_WEIGHT values must sum to exactly 1.0")
 
         if self.app_env == AppEnvironment.PRODUCTION:
             if len(self.jwt_secret_key) < 48:
