@@ -53,6 +53,15 @@ class UserDocument(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     # License / passport expiry — for proactive renewal reminders
     expires_at: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # Replacements retain the original row for audit and evidence history.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("user_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    replaces_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("user_documents.id", ondelete="SET NULL"), nullable=True
+    )
+
     # AI-extracted fields (name, DOB, etc.) — optional, populated by extraction worker
     extracted_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 

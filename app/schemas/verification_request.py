@@ -73,6 +73,12 @@ class VerificationRequestActionPayload(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class VerificationRequestInformationSubmissionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    response: str = Field(min_length=1, max_length=4000)
+
+
 class SubjectVerificationRequestCreateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -153,6 +159,11 @@ class VerificationRequestResponse(BaseModel):
     trust_context: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    candidate_response: str | None = None
+    candidate_response_submitted_at: datetime | None = None
+    accepted_at: datetime | None = None
+    consented_fields: list[str] = Field(default_factory=list)
+    consented_evidence_scope: list[str] = Field(default_factory=list)
 
 
 class VerificationRequestEvidenceResponse(BaseModel):

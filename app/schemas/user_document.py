@@ -28,6 +28,9 @@ class UserDocumentResponse(BaseModel):
     verified_by_user_id: uuid.UUID | None = None
     reviewer_note: str | None = None
     expires_at: date | None = None
+    superseded_at: datetime | None = None
+    superseded_by_id: uuid.UUID | None = None
+    replaces_document_id: uuid.UUID | None = None
     extracted_payload: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
@@ -40,6 +43,7 @@ class UserDocumentUploadIntentRequest(BaseModel):
     byte_size: int = Field(gt=0)
     document_number: str | None = Field(default=None, max_length=128)
     expires_at: date | None = None
+    replaces_document_id: uuid.UUID | None = None
 
     @field_validator("original_filename")
     @classmethod

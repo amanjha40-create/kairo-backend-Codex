@@ -19,6 +19,7 @@ from app.schemas.verification_request import (
     VerificationRequestEvidenceResponse,
     VerificationRequestEvidenceUpdateRequest,
     VerificationRequestResponse,
+    VerificationRequestInformationSubmissionRequest,
     VerificationRequestTimelineResponse,
     VerificationContactRequest,
     VerificationContactResponse,
@@ -193,6 +194,24 @@ async def request_verification_information(
     svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
 ) -> VerificationRequestResponse:
     return await svc.request_information(current.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/verification-requests/{verification_request_public_id}/submit-information",
+    response_model=VerificationRequestResponse,
+)
+async def submit_verification_information(
+    verification_request_public_id: UUID,
+    payload: VerificationRequestInformationSubmissionRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await svc.submit_information(
+        current.id,
+        current.email,
+        verification_request_public_id,
+        payload,
+    )
 
 
 @router.post("/verification-requests/{verification_request_public_id}/verify", response_model=VerificationRequestResponse)

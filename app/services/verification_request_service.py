@@ -30,6 +30,7 @@ from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
     VerificationRequestActionPayload,
+    VerificationRequestInformationSubmissionRequest,
     VerificationRequestCorrectionResponse,
     VerificationRequestCreateRequest,
     VerificationRequestEvidenceCreateRequest,
@@ -387,13 +388,22 @@ class VerificationRequestService:
 
         if request.subject_user_id is None:
             request.subject_user_id = actor_user_id
+        accepted_at = datetime.now(tz=UTC)
+        request.accepted_at = accepted_at
+        request.consented_fields = [str(value) for value in request.trust_context.get("requested_fields", []) if value]
+        request.consented_evidence_scope = [
+            str(value) for value in request.trust_context.get("evidence_scope", []) if value
+        ]
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.ACCEPTED,
             actor_user_id=actor_user_id,
             event_type="verification_request_subject_accepted",
             event_source=VerificationRequestEventSource.CANDIDATE,
-            metadata={},
+            metadata={
+                "consented_fields": request.consented_fields,
+                "consented_evidence_scope": request.consented_evidence_scope,
+            },
         )
         await self._session.commit()
         await self._session.refresh(request)
@@ -434,6 +444,9 @@ class VerificationRequestService:
             document = await self._user_documents.get_owned(payload.document_id, actor_user_id)
             if document is None:
                 raise NotFoundError("User document not found")
+            existing = await self._evidence.get_by_document(request.id, payload.document_id)
+            if existing is not None:
+                return self._to_evidence_response(existing)
         if payload.employment_document_id is not None:
             await self._validate_employment_document_evidence(
                 request,
@@ -631,6 +644,30 @@ class VerificationRequestService:
             event_type="verification_request_information_requested",
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata=self._merge_note_metadata(payload),
+        )
+        return await self._commit_and_reload(request.public_id)
+
+    async def submit_information(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+        payload: VerificationRequestInformationSubmissionRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
+        if request.status != VerificationRequestStatus.AWAITING_INFORMATION:
+            raise ConflictError("Verification request is not awaiting candidate information")
+        if request.candidate_response_submitted_at is not None:
+            raise ConflictError("Candidate information has already been submitted")
+        request.candidate_response = payload.response
+        request.candidate_response_submitted_at = datetime.now(tz=UTC)
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.IN_PROGRESS,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_information_submitted",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"response_submitted": True},
         )
         return await self._commit_and_reload(request.public_id)
 
@@ -1043,6 +1080,11 @@ class VerificationRequestService:
             trust_context=request.trust_context,
             created_at=request.created_at,
             updated_at=request.updated_at,
+            accepted_at=request.accepted_at,
+            consented_fields=request.consented_fields,
+            consented_evidence_scope=request.consented_evidence_scope,
+            candidate_response=request.candidate_response,
+            candidate_response_submitted_at=request.candidate_response_submitted_at,
         )
 
     def _to_contact_response(self, contact: VerificationContact) -> VerificationContactResponse:

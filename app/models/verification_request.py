@@ -109,6 +109,13 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     organization_outreach_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_subject_resubmitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    candidate_response: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    candidate_response_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consented_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    consented_evidence_scope: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     registry_record_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("trust_registry_records.id", ondelete="SET NULL"),
