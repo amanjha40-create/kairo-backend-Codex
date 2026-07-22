@@ -38,7 +38,7 @@ class PortfolioService:
             user_id=user_id,
             title=payload.title,
             description=payload.description,
-            url=payload.url,
+            url=str(payload.url) if payload.url else None,
             tags=self._tags_to_str(payload.tags),
             verification_status="pending",
         )
@@ -61,6 +61,8 @@ class PortfolioService:
     ) -> PortfolioItem:
         item = await self.get_owned(user_id, item_id)
         data = payload.model_dump(exclude_unset=True)
+        if data.get("url") is not None:
+            data["url"] = str(data["url"])
         for field, value in data.items():
             if field == "tags":
                 item.tags = self._tags_to_str(value)

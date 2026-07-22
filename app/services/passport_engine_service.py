@@ -19,6 +19,8 @@ from app.models import (
     PassportShareLink,
     PassportShareView,
     PortfolioItem,
+    Project,
+    Skill,
     User,
     UserDocument,
     VerificationAuditEvent,
@@ -67,6 +69,8 @@ class PassportEngineService:
                 include_gig_platforms=True,
                 include_portfolio=True,
                 include_certifications=True,
+                include_skills=True,
+                include_projects=True,
                 include_user_documents=True,
                 show_employer_names=True,
                 show_documents=True,
@@ -193,6 +197,8 @@ class PassportEngineService:
         gig_platforms = await self._status_summary(GigPlatform, GigPlatform.user_id == user_id)
         portfolio = await self._status_summary(PortfolioItem, PortfolioItem.user_id == user_id)
         certifications = await self._status_summary(Certification, Certification.user_id == user_id)
+        skills = await self._status_summary(Skill, Skill.user_id == user_id)
+        projects = await self._status_summary(Project, Project.user_id == user_id)
         user_documents = await self._status_summary(UserDocument, UserDocument.user_id == user_id)
 
         overall_statuses: dict[str, int] = {}
@@ -204,6 +210,8 @@ class PassportEngineService:
             gig_platforms,
             portfolio,
             certifications,
+            skills,
+            projects,
             user_documents,
         ]
         total = 0
@@ -222,6 +230,8 @@ class PassportEngineService:
             gig_platforms=gig_platforms,
             portfolio=portfolio,
             certifications=certifications,
+            skills=skills,
+            projects=projects,
             user_documents=user_documents,
         )
 
@@ -302,6 +312,8 @@ class PassportEngineService:
         gig_platforms = verification_summary.gig_platforms.total
         portfolio = verification_summary.portfolio.total
         certifications = verification_summary.certifications.total
+        skills = verification_summary.skills.total
+        projects = verification_summary.projects.total
         user_documents = verification_summary.user_documents.total
 
         return DashboardVaultSummary(
@@ -313,6 +325,8 @@ class PassportEngineService:
                 + gig_platforms
                 + portfolio
                 + certifications
+                + skills
+                + projects
                 + user_documents
             ),
             employments=employments,
@@ -322,6 +336,8 @@ class PassportEngineService:
             gig_platforms=gig_platforms,
             portfolio=portfolio,
             certifications=certifications,
+            skills=skills,
+            projects=projects,
             user_documents=user_documents,
         )
 

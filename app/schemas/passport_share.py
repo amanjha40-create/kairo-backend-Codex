@@ -18,6 +18,8 @@ class PassportSharePermissions(BaseModel):
     include_gig_platforms: bool = True
     include_portfolio: bool = True
     include_certifications: bool = True
+    include_skills: bool = False
+    include_projects: bool = False
     include_user_documents: bool = False
     show_employer_names: bool = True
     show_documents: bool = False

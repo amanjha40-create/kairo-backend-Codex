@@ -321,6 +321,16 @@ def get_certification_service(
     return CertificationService(session, settings)
 
 
+def get_skill_service(session: AsyncSession = Depends(get_session)):
+    from app.services.skill_service import SkillService
+    return SkillService(session)
+
+
+def get_project_service(session: AsyncSession = Depends(get_session)):
+    from app.services.project_service import ProjectService
+    return ProjectService(session)
+
+
 def get_secondary_doc_service(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),

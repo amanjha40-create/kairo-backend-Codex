@@ -36,7 +36,7 @@ class CertificationService:
             expiry_date=payload.expiry_date,
             does_not_expire=payload.does_not_expire,
             credential_id=payload.credential_id,
-            credential_url=payload.credential_url,
+            credential_url=str(payload.credential_url) if payload.credential_url else None,
         )
         result = await self._repo.create(item)
         await self._session.commit()
@@ -65,7 +65,7 @@ class CertificationService:
             expiry_date=payload.expiry_date,
             does_not_expire=payload.does_not_expire,
             credential_id=payload.credential_id,
-            credential_url=payload.credential_url,
+            credential_url=str(payload.credential_url) if payload.credential_url else None,
             object_key=object_key,
             original_filename=payload.original_filename,
             content_type=payload.content_type,
@@ -115,7 +115,10 @@ class CertificationService:
         item = await self._repo.get_owned(cert_id, user_id)
         if item is None:
             raise NotFoundError("Certification not found")
-        for field, value in payload.model_dump(exclude_unset=True).items():
+        data = payload.model_dump(exclude_unset=True)
+        if data.get("credential_url") is not None:
+            data["credential_url"] = str(data["credential_url"])
+        for field, value in data.items():
             setattr(item, field, value)
         await self._session.commit()
         await self._session.refresh(item)

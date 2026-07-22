@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.exceptions import NotFoundError
-from app.models import Certification, Education, Employment, GigPlatform, Internship, PortfolioItem, UserDocument
+from app.models import Certification, Education, Employment, GigPlatform, Internship, PortfolioItem, Project, Skill, UserDocument
 from app.models.employment_document import EmploymentDocument
 from app.models.freelance_contract import FreelanceContract
 from app.models.passport_share_link import PassportShareLink
@@ -18,6 +18,8 @@ from app.repositories.passport_share import PassportShareRepository
 from app.schemas.passport_share import PassportSharePermissions
 from app.schemas.public_passport import (
     PublicPassportCertification,
+    PublicPassportProject,
+    PublicPassportSkill,
     PublicPassportDocument,
     PublicPassportEducation,
     PublicPassportEmployment,
@@ -279,6 +281,29 @@ class PublicPassportService:
                 for row in rows
             ]
 
+        skills = []
+        if permissions.include_skills:
+            skill_rows = (await self._session.execute(
+                select(Skill).where(Skill.user_id == user_id, Skill.deleted_at.is_(None)).order_by(Skill.name.asc())
+            )).scalars().all()
+            skills = [PublicPassportSkill(name=row.name, verification_status=row.verification_status) for row in skill_rows]
+
+        projects = []
+        if permissions.include_projects:
+            project_rows = (await self._session.execute(
+                select(Project).where(Project.user_id == user_id, Project.deleted_at.is_(None))
+                .order_by(Project.is_ongoing.desc(), Project.start_date.desc().nullslast(), Project.created_at.desc())
+            )).scalars().all()
+            projects = [
+                PublicPassportProject(
+                    id=row.id, title=row.title, role=row.role, description=row.description,
+                    start_date=row.start_date, end_date=row.end_date, is_ongoing=row.is_ongoing,
+                    project_url=row.project_url, repository_url=row.repository_url,
+                    organization_name=row.organization_name, verification_status=row.verification_status,
+                )
+                for row in project_rows
+            ]
+
         return PublicPassportVault(
             employments=employments,
             educations=educations,
@@ -288,6 +313,8 @@ class PublicPassportService:
             portfolio=portfolio,
             certifications=certifications,
             user_documents=user_documents,
+            skills=skills,
+            projects=projects,
         )
 
     def _hash_token(self, raw_token: str) -> str:

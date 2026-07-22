@@ -12,6 +12,8 @@ from app.api.v1.routes import (
     admin_verification,
     auth,
     certifications,
+    projects,
+    skills,
     credential_verification,
     dashboard,
     documents,
@@ -87,4 +89,6 @@ api_router.include_router(trust_invitations.router)
 api_router.include_router(verification_requests.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(certifications.router)
+api_router.include_router(projects.router)
+api_router.include_router(skills.router)
 api_router.include_router(trust_score.router)

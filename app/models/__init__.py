@@ -27,6 +27,8 @@ from app.models.pending_signup import PendingSignup
 from app.models.profile_view import ProfileView
 from app.models.profile_language import ProfileLanguage
 from app.models.profile_link import ProfileLink
+from app.models.project import Project
+from app.models.skill import Skill
 from app.models.refresh_token import RefreshToken
 from app.models.resume_document import ResumeDocument
 from app.models.resume_processing_job import ResumeProcessingJob
@@ -86,6 +88,8 @@ __all__ = [
     "ProfileView",
     "ProfileLanguage",
     "ProfileLink",
+    "Project",
+    "Skill",
     "PortfolioItem",
     "RefreshToken",
     "ResumeDocument",
