@@ -109,6 +109,7 @@ class DashboardActivityItem(BaseModel):
 
 class DashboardResponse(BaseModel):
     profile_completion: OnboardingStatusResponse
+    profile_completion_percentage: int = 0
     trust_score: TrustScoreResponse
     verification_summary: PassportVerificationSummary
     vault_summary: DashboardVaultSummary

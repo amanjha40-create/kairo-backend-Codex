@@ -100,12 +100,14 @@ class PassportEngineService:
         trust_score = await self._trust.calculate_trust_score(user_id)
         verification_summary = await self._build_verification_summary(user_id)
         profile_completion = await self._build_onboarding_status(user)
+        profile = await self._users.get_public_profile(user_id)
         active_passport_shares = await self._build_active_passport_shares(user_id)
         recent_share_analytics = await self._build_recent_share_analytics(user_id)
         recent_activity = await self._build_recent_activity(user_id)
 
         return DashboardResponse(
             profile_completion=profile_completion,
+            profile_completion_percentage=profile.profile_completion_percentage,
             trust_score=trust_score,
             verification_summary=verification_summary,
             vault_summary=self._build_vault_summary(verification_summary),
