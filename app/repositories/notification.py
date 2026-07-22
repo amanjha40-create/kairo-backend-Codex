@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -33,6 +35,41 @@ class NotificationRepository:
             .where(Notification.public_id == notification_public_id)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_dedupe_key(self, dedupe_key: str) -> Notification | None:
+        return (await self._session.execute(select(Notification).where(Notification.dedupe_key == dedupe_key))).scalar_one_or_none()
+
+    async def list_for_user(self, user_id: UUID, *, offset: int, limit: int) -> list[Notification]:
+        stmt = (
+            select(Notification)
+            .where(Notification.recipient_user_id == user_id)
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def count_for_user(self, user_id: UUID, *, unread_only: bool = False) -> int:
+        conditions = [Notification.recipient_user_id == user_id]
+        if unread_only:
+            conditions.append(Notification.read_at.is_(None))
+        return int((await self._session.execute(select(func.count(Notification.id)).where(*conditions))).scalar_one())
+
+    async def mark_read(self, user_id: UUID, notification_public_id: UUID) -> bool:
+        result = await self._session.execute(
+            update(Notification)
+            .where(Notification.recipient_user_id == user_id, Notification.public_id == notification_public_id)
+            .values(read_at=datetime.now(UTC))
+        )
+        return bool(result.rowcount)
+
+    async def mark_all_read(self, user_id: UUID) -> int:
+        result = await self._session.execute(
+            update(Notification)
+            .where(Notification.recipient_user_id == user_id, Notification.read_at.is_(None))
+            .values(read_at=datetime.now(UTC))
+        )
+        return int(result.rowcount or 0)
 
     async def list_all(self) -> list[Notification]:
         stmt = (

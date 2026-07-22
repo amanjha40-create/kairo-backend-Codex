@@ -26,6 +26,10 @@ class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     public_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True)
     notification_type: Mapped[str] = mapped_column(String(64), nullable=False)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="system", server_default="system", index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False, default="Kairo notification", server_default="Kairo notification")
+    body: Mapped[str] = mapped_column(String(500), nullable=False, default="You have a new notification.", server_default="You have a new notification.")
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
     priority: Mapped[str] = mapped_column(String(32), nullable=False, default="normal", server_default="normal")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending", index=True)
     recipient_user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -55,6 +59,7 @@ class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     deliveries: Mapped[list["NotificationDelivery"]] = relationship(
         "NotificationDelivery",
