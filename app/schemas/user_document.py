@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.user_documents.enums import UserDocumentType, UserDocumentVerificationStatus
 
@@ -40,6 +40,29 @@ class UserDocumentUploadIntentRequest(BaseModel):
     byte_size: int = Field(gt=0)
     document_number: str | None = Field(default=None, max_length=128)
     expires_at: date | None = None
+
+    @field_validator("original_filename")
+    @classmethod
+    def validate_filename(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned or "/" in cleaned or "\\" in cleaned or any(ord(char) < 32 for char in cleaned):
+            raise ValueError("filename must be a plain file name")
+        return cleaned
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"application/pdf", "image/jpeg", "image/png", "image/webp"}:
+            raise ValueError("unsupported document type")
+        return normalized
+
+    @field_validator("byte_size")
+    @classmethod
+    def validate_byte_size(cls, value: int) -> int:
+        if value > 50 * 1024 * 1024:
+            raise ValueError("document exceeds the 50 MB limit")
+        return value
 
 
 class UserDocumentUploadIntentResponse(BaseModel):
