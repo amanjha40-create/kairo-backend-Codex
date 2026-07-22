@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
+import time
 import zipfile
 from abc import ABC, abstractmethod
 from typing import Any
@@ -19,12 +21,26 @@ logger = logging.getLogger(__name__)
 
 class DocumentExtractor(ABC):
     @abstractmethod
-    async def extract(self, content: bytes, content_type: str) -> str: ...
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        *,
+        storage_bucket: str | None = None,
+        storage_key: str | None = None,
+    ) -> str: ...
 
 
 class DeterministicDocxExtractor(DocumentExtractor):
-    async def extract(self, content: bytes, content_type: str) -> str:
-        del content_type
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        *,
+        storage_bucket: str | None = None,
+        storage_key: str | None = None,
+    ) -> str:
+        del content_type, storage_bucket, storage_key
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             xml = archive.read("word/document.xml")
         root = ElementTree.fromstring(xml)
@@ -40,11 +56,49 @@ class TextractDocumentExtractor(DocumentExtractor):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def extract(self, content: bytes, content_type: str) -> str:
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        *,
+        storage_bucket: str | None = None,
+        storage_key: str | None = None,
+    ) -> str:
         if content_type != "application/pdf":
             raise ValueError("Textract provider supports PDF only")
         client = boto3.client("textract", region_name=self._settings.aws_region)
-        response = client.detect_document_text(Document={"Bytes": content})
+        if storage_bucket and storage_key:
+            return await asyncio.to_thread(self._extract_from_s3, client, storage_bucket, storage_key)
+        response = await asyncio.to_thread(client.detect_document_text, Document={"Bytes": content})
+        return self._lines(response)
+
+    def _extract_from_s3(self, client: Any, bucket: str, key: str) -> str:
+        response = client.start_document_text_detection(
+            DocumentLocation={"S3Object": {"Bucket": bucket, "Name": key}},
+        )
+        job_id = response["JobId"]
+        deadline = time.monotonic() + self._settings.textract_timeout_seconds
+        blocks: list[dict[str, Any]] = []
+        next_token: str | None = None
+        while time.monotonic() < deadline:
+            params: dict[str, str] = {"JobId": job_id}
+            if next_token:
+                params["NextToken"] = next_token
+            result = client.get_document_text_detection(**params)
+            status = result.get("JobStatus")
+            if status == "SUCCEEDED":
+                blocks.extend(result.get("Blocks", []))
+                next_token = result.get("NextToken")
+                if next_token:
+                    continue
+                return self._lines({"Blocks": blocks})
+            if status in {"FAILED", "PARTIAL_SUCCESS"}:
+                raise RuntimeError("Textract document processing did not complete successfully")
+            time.sleep(2)
+        raise TimeoutError("Textract document processing timed out")
+
+    @staticmethod
+    def _lines(response: dict[str, Any]) -> str:
         return "\n".join(
             block.get("Text", "") for block in response.get("Blocks", []) if block.get("BlockType") == "LINE"
         )

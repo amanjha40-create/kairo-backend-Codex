@@ -351,6 +351,7 @@ class Settings(BaseSettings):
     bedrock_model_id: str | None = Field(default=None, validation_alias=AliasChoices("BEDROCK_MODEL_ID"))
     resume_parser_provider: str = Field(default="nova", validation_alias=AliasChoices("RESUME_PARSER_PROVIDER"))
     bedrock_timeout_seconds: int = Field(default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS"))
+    textract_timeout_seconds: int = Field(default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS"))
     resume_parser_schema_version: str = Field(
         default="1",
         validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION", "BEDROCK_SCHEMA_VERSION"),

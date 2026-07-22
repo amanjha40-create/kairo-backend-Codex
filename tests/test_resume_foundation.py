@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser, _parse_model_json
+from app.resumes.providers import DeterministicDocxExtractor, NovaResumeParser, TextractDocumentExtractor, _parse_model_json
 from app.exceptions import ConflictError, NotFoundError
 from app.resumes.enums import ResumeProcessingStatus
 from app.resumes.schemas import (
@@ -52,6 +52,50 @@ def test_resume_declaration_and_signatures_are_strict() -> None:
 async def test_docx_extraction_is_deterministic_and_does_not_call_shell() -> None:
     text = await DeterministicDocxExtractor().extract(_docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     assert text == "Kairo\nEngineer"
+
+
+@pytest.mark.asyncio
+async def test_textract_uses_async_s3_flow_for_staged_pdf_processing() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+            self.polls = 0
+
+        def start_document_text_detection(self, **kwargs: object) -> dict[str, str]:
+            self.calls.append(("start", kwargs))
+            return {"JobId": "synthetic-textract-job"}
+
+        def get_document_text_detection(self, **kwargs: object) -> dict[str, object]:
+            self.calls.append(("get", kwargs))
+            self.polls += 1
+            if self.polls == 1:
+                return {"JobStatus": "IN_PROGRESS"}
+            return {
+                "JobStatus": "SUCCEEDED",
+                "Blocks": [{"BlockType": "LINE", "Text": "Synthetic resume"}],
+            }
+
+    client = Client()
+    settings = SimpleNamespace(aws_region="us-east-1", textract_timeout_seconds=30)
+    extractor = TextractDocumentExtractor(settings)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: client)
+    try:
+        text = await extractor.extract(
+            b"%PDF-1.7 synthetic",
+            "application/pdf",
+            storage_bucket="staging-documents",
+            storage_key="resumes/synthetic/resume.pdf",
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert text == "Synthetic resume"
+    assert client.calls[0] == (
+        "start",
+        {"DocumentLocation": {"S3Object": {"Bucket": "staging-documents", "Name": "resumes/synthetic/resume.pdf"}}},
+    )
+    assert client.calls[-1] == ("get", {"JobId": "synthetic-textract-job"})
 
 
 def test_parsed_claims_are_candidate_provided_and_unverified() -> None:
