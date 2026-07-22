@@ -1001,6 +1001,7 @@ class VerificationRequestService:
             VerificationRequestStatus.ACCEPTED,
             VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
             VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+            VerificationRequestStatus.AWAITING_INFORMATION,
         }:
             raise ConflictError("Verification request is not editable by the subject in its current status")
         return request

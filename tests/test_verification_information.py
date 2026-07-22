@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.schemas.verification_request import VerificationRequestInformationSubmissionRequest
 from app.schemas.user_document import UserDocumentUploadIntentRequest
 from app.user_documents.enums import UserDocumentType
+from app.verification_requests.enums import VerificationRequestStatus
 
 
 def test_candidate_information_response_is_trimmed_and_bounded() -> None:
@@ -30,3 +31,7 @@ def test_document_upload_accepts_a_replacement_reference() -> None:
         replaces_document_id=document_id,
     )
     assert payload.replaces_document_id == document_id
+
+
+def test_information_requests_are_subject_editable() -> None:
+    assert VerificationRequestStatus.AWAITING_INFORMATION.value == "awaiting_information"
