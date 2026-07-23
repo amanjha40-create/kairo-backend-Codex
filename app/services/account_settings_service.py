@@ -45,7 +45,20 @@ class AccountSettingsService:
                 version=user.trust_score_consent_version,
                 consented_at=user.trust_score_consent_at,
             ),
-            notification_preferences=[NotificationPreferenceResponse.model_validate(item, from_attributes=True) for item in preferences],
+            notification_preferences=[
+                NotificationPreferenceResponse(
+                    public_id=item.public_id,
+                    user_id=item.user_id,
+                    event_type=item.event_type,
+                    enabled=item.enabled,
+                    preferred_channels=item.preferred_channels,
+                    quiet_hours=item.quiet_hours,
+                    metadata=item.metadata_payload,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                )
+                for item in preferences
+            ],
             app_version=self._settings.app_version,
             api_version=self._settings.api_v1_prefix,
             trust_score_version=self._settings.trust_score_version,
