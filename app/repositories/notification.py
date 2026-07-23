@@ -118,6 +118,14 @@ class NotificationPreferenceRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def list_for_user(self, user_id: UUID) -> list[NotificationPreference]:
+        stmt = (
+            select(NotificationPreference)
+            .where(NotificationPreference.user_id == user_id)
+            .order_by(NotificationPreference.event_type.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
 
 class NotificationDeliveryRepository:
     def __init__(self, session: AsyncSession) -> None:

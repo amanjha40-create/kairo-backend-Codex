@@ -10,6 +10,7 @@ from app.api.v1.routes import (
     admin_employer_verifications,
     admin_directory,
     admin_verification,
+    account_settings,
     auth,
     certifications,
     projects,
@@ -50,6 +51,7 @@ from app.api.v1.routes import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(account_settings.router)
 api_router.include_router(users.router)
 api_router.include_router(resumes.router)
 api_router.include_router(resume_reviews.resume_router)
