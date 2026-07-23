@@ -36,7 +36,7 @@ class AccountSettingsService:
 
     async def get(self, user_id: UUID) -> AccountSettingsResponse:
         user = await self._require_user(user_id)
-        profile = await UserService(self._session).get_public_profile(user_id)
+        profile = await UserService(self._session, self._settings).get_public_profile(user_id)
         preferences = await self._preference_repo.list_for_user(user_id)
         return AccountSettingsResponse(
             profile=profile,
@@ -80,7 +80,7 @@ class AccountSettingsService:
         .all())
         return [
             AccountSessionResponse(
-                id=row.public_id,
+                id=row.id,
                 created_at=row.created_at,
                 expires_at=row.expires_at,
                 last_active_at=row.updated_at,
@@ -93,7 +93,7 @@ class AccountSettingsService:
         row = await self._session.scalar(
             select(RefreshToken).where(
                 RefreshToken.user_id == user_id,
-                RefreshToken.public_id == session_public_id,
+                RefreshToken.id == session_public_id,
                 RefreshToken.revoked_at.is_(None),
             )
         )
