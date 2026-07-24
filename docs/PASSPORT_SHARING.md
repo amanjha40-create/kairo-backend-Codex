@@ -29,7 +29,21 @@ The QR image is generated locally for presentation only; no token is sent to a t
 
 ## URL configuration
 
-The backend builds the share URL from `APP_PUBLIC_BASE_URL`. That value must be an HTTPS, web-capable canonical host for the recipient experience. Staging currently uses the configured staging host; if that host serves API-only responses, deployment configuration must point `APP_PUBLIC_BASE_URL` at the approved staging web host before external sharing. No frontend hostname is invented in code.
+The backend builds the share URL from `APP_PUBLIC_BASE_URL`. That value is an HTTPS origin only; the backend appends `/passport/{token}` for each share. No frontend hostname is invented in code.
+
+## Staging public web deployment
+
+The staging recipient experience is served from the frontend repository at `/Users/Aman/Desktop/work/kairo-frontend` as a static SPA. The isolated staging deployment uses:
+
+- S3 bucket: `kairo-public-passport-staging-285515885083` with public access blocked
+- CloudFront distribution: `E30WK48ZZUR6EV`
+- Staging web origin: `https://d3kpvsn9kfajzc.cloudfront.net`
+- Public route: `/passport/{token}`
+- Public data source: `GET /api/v1/public/passport/{token}` on the staging API
+
+The CloudFront origin access control is the only reader of the private S3 bucket. Unknown SPA paths are rewritten to `index.html` so the client router can render the public route. The staging API CORS allowlist includes the CloudFront origin; credentials are not required for public Passport reads.
+
+For a staging deployment, build the frontend with the staging API base URL, copy `dist/client/_shell.html` to `dist/client/index.html`, upload the static output to the isolated bucket, and invalidate the CloudFront distribution. Set the staging backend `APP_PUBLIC_BASE_URL` to the CloudFront origin and deploy the backend revision before creating new shares. Production uses separate deployment configuration and is not changed by this setup.
 
 ## QA checklist
 
