@@ -89,6 +89,16 @@ def test_import_plan_blocks_unsupported_and_incomplete_claims() -> None:
     ) == []
 
 
+def test_incomplete_resume_claims_are_deferred_to_career_completion() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    assert service._required_blockers("education", {
+        "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
+    }) == ["missing_education_level", "missing_start_date"]
+    assert service._required_blockers("certification", {
+        "title": "Synthetic Certificate",
+    }) == ["missing_issued_date", "missing_issuing_organization"]
+
+
 def test_import_plan_accepts_nullable_employment_location() -> None:
     service = ResumeReviewService(SimpleNamespace())
 

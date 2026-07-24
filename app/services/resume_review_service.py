@@ -172,6 +172,7 @@ class ResumeReviewService:
         review = await self._owned_review(user_id, review_id, for_update=True)
         self._check_version(review.version, payload.expected_version)
         self._ensure_mutable(review)
+        await self._skip_incomplete_items(review)
         plan = await self._build_plan(review)
         review.status = ResumeReviewStatus.READY_TO_IMPORT.value if plan.ready else ResumeReviewStatus.REVIEWING.value
         review.reviewed_at = datetime.now(UTC)
@@ -180,6 +181,37 @@ class ResumeReviewService:
         plan.version = review.version
         logger.info("resume_import_plan_validated", extra={"review_session_id": str(review.id), "user_id": str(user_id), "ready": plan.ready})
         return plan
+
+    async def _skip_incomplete_items(self, review: ResumeReviewSession) -> None:
+        """Keep incomplete claims reviewable without blocking valid imports.
+
+        Resume claims are candidate-provided drafts. Required fields for a persisted
+        Career record can be completed later from the normal Career editors.
+        """
+        items = (
+            await self.session.scalars(
+                select(ResumeReviewItem).where(
+                    ResumeReviewItem.review_session_id == review.id,
+                    ResumeReviewItem.selected.is_(True),
+                    ResumeReviewItem.import_action == "create_new",
+                )
+            )
+        ).all()
+        skipped = 0
+        for item in items:
+            blockers = self._required_blockers(item.claim_type, item.edited_payload)
+            if not blockers:
+                continue
+            item.selected = False
+            item.import_action = "skip"
+            item.review_status = "skipped"
+            item.conflict_warnings = sorted(set(item.conflict_warnings + ["needs_completion_in_career"]))
+            skipped += 1
+        if skipped:
+            logger.info(
+                "resume_review_incomplete_claims_deferred",
+                extra={"review_session_id": str(review.id), "deferred_count": skipped},
+            )
 
     async def import_review(self, user_id: UUID, review_id: UUID, payload: ReviewImportRequest) -> ImportBatchResponse:
         review = await self._owned_review(user_id, review_id, for_update=True)
