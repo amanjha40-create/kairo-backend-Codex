@@ -29,6 +29,7 @@ from app.services import (
     NotificationPreferenceService,
     NotificationService,
     NotificationTemplateResolver,
+    OrganizationPersonService,
     OrganizationService,
     PassportEngineService,
     PassportShareService,
@@ -44,6 +45,7 @@ from app.services import (
     VerificationRequestService,
     VerificationQueueService,
     VerificationService,
+    WorkspaceService,
 )
 from app.services.resume_service import ResumeService
 from app.services.resume_review_service import ResumeReviewService
@@ -152,6 +154,17 @@ def get_organization_service(session: AsyncSession = Depends(get_session)) -> Or
     return OrganizationService(session)
 
 
+def get_organization_person_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OrganizationPersonService:
+    return OrganizationPersonService(session, settings)
+
+
+def get_workspace_service(session: AsyncSession = Depends(get_session)) -> WorkspaceService:
+    return WorkspaceService(session)
+
+
 def get_trust_invitation_service(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -230,8 +243,9 @@ def get_trust_registry_resolution_service(
 
 def get_verification_request_service(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> VerificationRequestService:
-    return VerificationRequestService(session)
+    return VerificationRequestService(session, settings=settings)
 
 
 def get_connector_registry_service(

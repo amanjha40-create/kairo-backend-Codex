@@ -28,6 +28,7 @@ from app.api.v1.routes import (
     notifications,
     onboarding,
     organizations,
+    organization_people,
     passport,
     passport_shares,
     portfolio,
@@ -44,6 +45,7 @@ from app.api.v1.routes import (
     verification_connectors,
     user_documents,
     users,
+    workspace,
     resumes,
     resume_reviews,
 )
@@ -59,6 +61,8 @@ api_router.include_router(resume_reviews.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
+api_router.include_router(organization_people.router)
+api_router.include_router(workspace.router)
 api_router.include_router(trust_invitations.org_router)
 api_router.include_router(verification_requests.org_router)
 api_router.include_router(employments.router)

@@ -14,11 +14,13 @@ from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
 from app.schemas.pagination import filter_sort_paginate
 from app.schemas.verification_request import (
+    VerificationRequestAssignReviewerRequest,
+    VerificationRequestInternalNoteUpdateRequest,
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
-from app.services.verification_request_service import is_internal_admin_note_event
+from app.services.verification_request_service import is_internal_admin_note_event, is_private_organization_event
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestStatus,
@@ -32,6 +34,45 @@ def test_internal_admin_note_events_are_private_to_admin_timeline() -> None:
         {"visibility": "internal", "note_public_id": str(uuid4())},
     )
     assert not is_internal_admin_note_event("admin_requested_corrections", {"visibility": "candidate"})
+
+
+def test_private_organization_events_are_hidden_from_subject_timeline() -> None:
+    assert is_private_organization_event(
+        "verification_request_internal_note_updated",
+        {"visibility": "organization_internal"},
+    )
+    assert is_private_organization_event(
+        "verification_request_reviewer_assigned",
+        {},
+    )
+    assert not is_private_organization_event("verification_request_verified", {})
+
+
+def test_assign_reviewer_request_accepts_organization_member_public_id() -> None:
+    member_public_id = uuid4()
+
+    payload = VerificationRequestAssignReviewerRequest(
+        organization_member_public_id=member_public_id,
+    )
+
+    assert payload.organization_member_public_id == member_public_id
+    assert payload.assignee_user_id is None
+
+
+def test_assign_reviewer_request_rejects_both_member_and_user_identifiers() -> None:
+    with pytest.raises(ValueError, match="Provide only one of"):
+        VerificationRequestAssignReviewerRequest(
+            organization_member_public_id=uuid4(),
+            assignee_user_id=uuid4(),
+        )
+
+
+def test_openapi_exposes_membership_based_reviewer_assignment() -> None:
+    schema = app.openapi()["components"]["schemas"]["VerificationRequestAssignReviewerRequest"]
+    properties = schema["properties"]
+
+    assert "organization_member_public_id" in properties
+    assert "assignee_user_id" in properties
 
 
 class FakeVerificationRequestService:
@@ -85,6 +126,14 @@ class FakeVerificationRequestService:
     async def get_detail(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
         if verification_request_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
             raise NotFoundError("Verification request not found")
+        return self._response(VerificationRequestStatus.ACCEPTED)
+
+    async def assign_reviewer(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        assert isinstance(payload, VerificationRequestAssignReviewerRequest)
+        return self._response(VerificationRequestStatus.ACCEPTED)
+
+    async def update_internal_note(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        assert isinstance(payload, VerificationRequestInternalNoteUpdateRequest)
         return self._response(VerificationRequestStatus.ACCEPTED)
 
     async def accept(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
@@ -235,6 +284,79 @@ async def test_subject_can_read_request_detail() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_org_member_can_assign_verification_request_reviewer() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    member_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.put(
+            f"/api/v1/verification-requests/{request_public_id}/reviewer",
+            json={"organization_member_public_id": str(member_public_id)},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_org_member_can_assign_verification_request_reviewer_with_legacy_user_identifier() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.put(
+            f"/api/v1/verification-requests/{request_public_id}/reviewer",
+            json={"assignee_user_id": str(uuid4())},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_assign_reviewer_rejects_conflicting_member_and_user_identifiers() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.put(
+            f"/api/v1/verification-requests/{request_public_id}/reviewer",
+            json={
+                "organization_member_public_id": str(uuid4()),
+                "assignee_user_id": str(uuid4()),
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+@pytest.mark.asyncio
+async def test_org_member_can_update_verification_request_internal_note() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.put(
+            f"/api/v1/verification-requests/{request_public_id}/internal-note",
+            json={"note": "Cross-check against HRIS before responding."},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

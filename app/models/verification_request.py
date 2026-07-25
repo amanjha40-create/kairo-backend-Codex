@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, text
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +25,7 @@ from app.verification_requests.enums import (
 
 if TYPE_CHECKING:
     from app.models.employment import Employment
+    from app.models.organization_person import OrganizationPerson
     from app.models.verification_connector_run import VerificationConnectorRun
     from app.models.organization import Organization
     from app.models.trust_registry_record import TrustRegistryRecord
@@ -50,6 +51,12 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    organization_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organization_people.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -95,6 +102,7 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    organization_internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     trust_context: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -144,6 +152,10 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     organization: Mapped["Organization | None"] = relationship("Organization", back_populates="verification_requests")
+    organization_person: Mapped["OrganizationPerson | None"] = relationship(
+        "OrganizationPerson",
+        back_populates="verification_requests",
+    )
     trust_invitation: Mapped["TrustInvitation | None"] = relationship("TrustInvitation", back_populates="verification_requests")
     employment: Mapped["Employment | None"] = relationship("Employment", back_populates="verification_requests")
     registry_record: Mapped["TrustRegistryRecord | None"] = relationship("TrustRegistryRecord", back_populates="verification_requests")

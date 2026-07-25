@@ -194,6 +194,8 @@ Trust invitation notes:
 | `POST` | `/verification-requests` | Bearer | Subject-initiated request |
 | `GET` | `/verification-requests/me` | Bearer | List subject-owned requests |
 | `GET` | `/verification-requests/{verification_request_public_id}` | Bearer | Read one request |
+| `PUT` | `/verification-requests/{verification_request_public_id}/reviewer` | Bearer | Assign or clear organization reviewer |
+| `PUT` | `/verification-requests/{verification_request_public_id}/internal-note` | Bearer | Save organization-private internal note |
 | `POST` | `/verification-requests/{verification_request_public_id}/accept` | Bearer | Subject acceptance |
 | `POST` | `/verification-requests/{verification_request_public_id}/submit-for-review` | Bearer | Submit to admin review |
 | `POST` | `/verification-requests/{verification_request_public_id}/resubmit` | Bearer | Subject resubmission after corrections |
@@ -217,6 +219,9 @@ Verification request notes:
 - the workflow object is the canonical record for trust verification lifecycle
 - status transitions are owned by the workflow service, not mutated directly in routes
 - evidence and correction objects use stable `public_id` values
+- reviewer assignment accepts `organization_member_public_id`; legacy `assignee_user_id` remains supported for backward compatibility
+- organization reviewer assignment and internal notes are organization-private fields
+- suspended organizations and suspended memberships are fail-closed for organization-scoped verification access
 
 ## Admin Review APIs
 

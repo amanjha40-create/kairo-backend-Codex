@@ -514,7 +514,7 @@ class ResumeReviewService:
             "internship": ("company_name", "role", "start_date"),
             "freelance": ("client_name", "project_title", "start_date"),
             "gig_platform": ("platform_name", "partner_role", "start_date"),
-            "certification": ("title", "issuing_organization", "issued_date"),
+            "certification": ("title", "issued_date", "issuing_organization"),
             "portfolio": ("title", "url"),
         }
         blockers = [f"missing_{field}" for field in required.get(claim_type, ()) if not p.get(field)]

@@ -15,6 +15,7 @@ from app.schemas.organization import (
     OrganizationMemberResponse,
     OrganizationMemberUpdateRequest,
     OrganizationResponse,
+    OrganizationUpdateRequest,
 )
 from app.schemas.pagination import ListQueryParams, Page
 from app.services.organization_service import OrganizationService
@@ -47,6 +48,16 @@ async def get_organization(
     svc: Annotated[OrganizationService, Depends(get_organization_service)],
 ) -> OrganizationResponse:
     return await svc.get_organization(current.id, org_public_id)
+
+
+@router.patch("/{org_public_id}", response_model=OrganizationResponse)
+async def update_organization(
+    org_public_id: UUID,
+    payload: OrganizationUpdateRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[OrganizationService, Depends(get_organization_service)],
+) -> OrganizationResponse:
+    return await svc.update_organization(current.id, org_public_id, payload)
 
 
 @router.post("/{org_public_id}/members", response_model=OrganizationMemberResponse, status_code=status.HTTP_201_CREATED)

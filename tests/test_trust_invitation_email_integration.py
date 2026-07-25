@@ -41,26 +41,65 @@ class FakeTrustInvitationRepository:
     def __init__(self, organization) -> None:  # noqa: ANN001
         self.organization = organization
         self.invitation = None
+        self.events = []
 
     async def create(self, invitation):  # noqa: ANN001
+        invitation.id = 1
         invitation.public_id = uuid4()
         invitation.created_at = datetime.now(tz=UTC)
         invitation.updated_at = invitation.created_at
         self.invitation = invitation
         return invitation
 
-    async def get_by_public_id(self, invitation_public_id):  # noqa: ANN001
+    async def add_event(self, event):  # noqa: ANN001
+        event.id = uuid4()
+        event.occurred_at = datetime.now(tz=UTC)
+        self.events.append(event)
+        return event
+
+    async def get_by_public_id(self, invitation_public_id, include_events: bool = False):  # noqa: ANN001
         if self.invitation is None or self.invitation.public_id != invitation_public_id:
             return None
+        created_by_user = SimpleNamespace(
+            id=self.invitation.created_by_user_id,
+            email="owner@example.com",
+            full_name="Owner User",
+        )
+        events = []
+        if include_events:
+            for event in self.events:
+                events.append(
+                    SimpleNamespace(
+                        id=event.id,
+                        event_type=event.event_type,
+                        occurred_at=event.occurred_at,
+                        actor_user_id=event.actor_user_id,
+                        actor_user=created_by_user if event.actor_user_id else None,
+                        metadata_payload=event.metadata_payload,
+                    )
+                )
         return SimpleNamespace(
+            id=self.invitation.id,
             public_id=self.invitation.public_id,
             organization=self.organization,
             subject_name=self.invitation.subject_name,
             subject_email=self.invitation.subject_email,
+            subject_phone=self.invitation.subject_phone,
+            purpose=self.invitation.purpose,
+            requested_verification_types=self.invitation.requested_verification_types,
+            message=self.invitation.message,
             status=self.invitation.status,
+            delivery_method=self.invitation.delivery_method,
+            delivery_state=self.invitation.delivery_state,
             expires_at=self.invitation.expires_at,
+            sent_at=self.invitation.sent_at,
+            opened_at=self.invitation.opened_at,
             accepted_at=self.invitation.accepted_at,
             cancelled_at=self.invitation.cancelled_at,
+            created_by_user=created_by_user,
+            accepted_by_user=None,
+            verification_requests=[],
+            events=events,
             created_at=self.invitation.created_at,
             updated_at=self.invitation.updated_at,
         )
@@ -86,6 +125,11 @@ class FakeNotificationService:
             raise RuntimeError("notifications down")
 
 
+class FakeOrganizationPersonService:
+    async def resolve_for_trust_invitation(self, invitation, *, actor_user_id=None):  # noqa: ANN001
+        return invitation
+
+
 @pytest.mark.asyncio
 async def test_create_trust_invitation_dispatches_notification_without_changing_response_shape() -> None:
     session = FakeSession()
@@ -102,6 +146,7 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
         repo=repo,  # type: ignore[arg-type]
         organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
         notifications=notifications,  # type: ignore[arg-type]
+        people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
     )
 
     response = await service.create(
@@ -141,6 +186,7 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
         repo=repo,  # type: ignore[arg-type]
         organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
         notifications=notifications,  # type: ignore[arg-type]
+        people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
     )
 
     response = await service.create(

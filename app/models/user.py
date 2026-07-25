@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, String
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import Role
@@ -48,6 +49,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     trust_score_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     trust_score_consent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    active_organization_id: Mapped[str | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken",

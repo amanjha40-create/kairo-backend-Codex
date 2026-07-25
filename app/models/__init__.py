@@ -14,7 +14,12 @@ from app.models.notification_delivery import NotificationDelivery
 from app.models.notification_event import NotificationEvent
 from app.models.notification_preference import NotificationPreference
 from app.models.organization import Organization
+from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization_member import OrganizationMember
+from app.models.organization_person import OrganizationPerson
+from app.models.organization_person_identifier import OrganizationPersonIdentifier
+from app.models.organization_person_note import OrganizationPersonNote
+from app.models.organization_person_passport_access import OrganizationPersonPassportAccess
 from app.models.passport_share_link import PassportShareLink
 from app.models.passport_share_view import PassportShareView
 from app.models.password_reset_token import PasswordResetToken
@@ -39,6 +44,7 @@ from app.models.resume_import_batch import ResumeImportBatch
 from app.models.resume_import_result import ResumeImportResult
 from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.trust_invitation import TrustInvitation
+from app.models.trust_invitation_event import TrustInvitationEvent
 from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.trust_registry_alias import TrustRegistryAlias
 from app.models.trust_registry_capability import TrustRegistryCapability
@@ -81,7 +87,12 @@ __all__ = [
     "NotificationEvent",
     "NotificationPreference",
     "Organization",
+    "OrganizationInvitation",
     "OrganizationMember",
+    "OrganizationPerson",
+    "OrganizationPersonIdentifier",
+    "OrganizationPersonNote",
+    "OrganizationPersonPassportAccess",
     "PassportShareLink",
     "PassportShareView",
     "PasswordResetToken",
@@ -102,6 +113,7 @@ __all__ = [
     "ResumeImportResult",
     "ResumeRecordProvenance",
     "TrustInvitation",
+    "TrustInvitationEvent",
     "TrustScoreSnapshot",
     "TrustRegistryAlias",
     "TrustRegistryCapability",

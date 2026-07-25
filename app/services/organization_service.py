@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
-from app.organization.enums import OrganizationRole
+from app.organization.enums import OrganizationRole, OrganizationVerificationState
+from app.organization.permissions import is_organization_manager
 from app.repositories.organization import OrganizationRepository
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.repositories.user import UserRepository
@@ -19,6 +21,7 @@ from app.schemas.organization import (
     OrganizationMemberResponse,
     OrganizationMemberUpdateRequest,
     OrganizationResponse,
+    OrganizationUpdateRequest,
 )
 
 
@@ -35,18 +38,29 @@ class OrganizationService:
         actor_user_id: UUID,
         payload: OrganizationCreateRequest,
     ) -> OrganizationResponse:
+        actor = await self._users.get_by_id(actor_user_id)
+        if actor is None:
+            raise NotFoundError("User not found")
+
         organization = Organization(
             created_by_user_id=actor_user_id,
             name=payload.name,
             organization_type=payload.organization_type,
+            website=payload.website,
+            industry=payload.industry,
+            location=payload.location,
+            work_email=str(payload.work_email).lower() if payload.work_email is not None else None,
+            domain=payload.domain,
             verification_capabilities=payload.verification_capabilities,
         )
+        self._apply_setup_state(organization)
         membership = OrganizationMember(
             organization=organization,
             user_id=actor_user_id,
             role=OrganizationRole.OWNER,
         )
         await self._organizations.create(organization, membership)
+        actor.active_organization_id = organization.id
         await self._session.commit()
         await self._session.refresh(organization)
         await self._session.refresh(membership)
@@ -73,6 +87,36 @@ class OrganizationService:
 
     async def get_organization(self, actor_user_id: UUID, org_public_id: UUID) -> OrganizationResponse:
         organization, membership = await self.require_org_member(actor_user_id, org_public_id)
+        return await self._to_organization_response(organization, membership)
+
+    async def update_organization(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        payload: OrganizationUpdateRequest,
+    ) -> OrganizationResponse:
+        organization, membership = await self.require_org_manager(actor_user_id, org_public_id)
+
+        if payload.name is not None:
+            organization.name = payload.name
+        if payload.organization_type is not None:
+            organization.organization_type = payload.organization_type
+        if payload.website is not None:
+            organization.website = payload.website
+        if payload.industry is not None:
+            organization.industry = payload.industry
+        if payload.location is not None:
+            organization.location = payload.location
+        if payload.work_email is not None:
+            organization.work_email = str(payload.work_email).lower()
+        if payload.domain is not None:
+            organization.domain = payload.domain
+        if payload.verification_capabilities is not None:
+            organization.verification_capabilities = payload.verification_capabilities
+
+        self._apply_setup_state(organization)
+        await self._session.commit()
+        await self._session.refresh(organization)
         return await self._to_organization_response(organization, membership)
 
     async def add_member(
@@ -163,7 +207,7 @@ class OrganizationService:
         org_public_id: UUID,
     ) -> tuple[Organization, OrganizationMember]:
         organization, membership = await self.require_org_member(actor_user_id, org_public_id)
-        if membership.role not in {OrganizationRole.OWNER, OrganizationRole.ADMIN}:
+        if not is_organization_manager(membership.role):
             raise ForbiddenError("Only organization owners or admins can manage members")
         return organization, membership
 
@@ -177,6 +221,16 @@ class OrganizationService:
             public_id=organization.public_id,
             name=organization.name,
             organization_type=organization.organization_type,
+            website=organization.website,
+            industry=organization.industry,
+            location=organization.location,
+            work_email=organization.work_email,
+            domain=organization.domain,
+            domain_verified_at=organization.domain_verified_at,
+            verification_state=organization.verification_state,
+            setup_completed_at=organization.setup_completed_at,
+            suspended_at=organization.suspended_at,
+            suspension_reason=organization.suspension_reason,
             verification_capabilities=list(organization.verification_capabilities or []),
             my_role=membership.role,
             member_count=member_count,
@@ -195,6 +249,17 @@ class OrganizationService:
             role=membership.role,
             user_email=membership.user.email,
             user_full_name=membership.user.full_name,
+            suspended_at=membership.suspended_at,
+            suspension_reason=membership.suspension_reason,
             created_at=membership.created_at,
             updated_at=membership.updated_at,
         )
+
+    def _apply_setup_state(self, organization: Organization) -> None:
+        has_required_setup = bool(organization.name and organization.organization_type and organization.work_email and organization.domain)
+        if not has_required_setup:
+            return
+        if organization.setup_completed_at is None:
+            organization.setup_completed_at = datetime.now(tz=UTC)
+        if organization.verification_state == OrganizationVerificationState.SETUP_INCOMPLETE:
+            organization.verification_state = OrganizationVerificationState.VERIFICATION_PENDING

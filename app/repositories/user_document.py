@@ -28,6 +28,13 @@ class UserDocumentRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_active_by_id(self, document_id: UUID) -> UserDocument | None:
+        stmt = select(UserDocument).where(
+            UserDocument.id == document_id,
+            UserDocument.deleted_at.is_(None),
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_user(
         self,
         user_id: UUID,
