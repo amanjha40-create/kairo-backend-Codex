@@ -13,12 +13,15 @@ from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
     VerificationRequestActionPayload,
+    VerificationRequestAssignReviewerRequest,
     VerificationRequestCorrectionResponse,
     VerificationRequestCreateRequest,
     VerificationRequestEvidenceCreateRequest,
     VerificationRequestEvidenceResponse,
+    VerificationRequestInternalNoteUpdateRequest,
     VerificationRequestEvidenceUpdateRequest,
     VerificationRequestResponse,
+    VerificationRequestInformationSubmissionRequest,
     VerificationRequestTimelineResponse,
     VerificationContactRequest,
     VerificationContactResponse,
@@ -74,6 +77,32 @@ async def get_verification_request(
     svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
 ) -> VerificationRequestResponse:
     return await svc.get_detail(current.id, current.email, verification_request_public_id)
+
+
+@router.put(
+    "/verification-requests/{verification_request_public_id}/reviewer",
+    response_model=VerificationRequestResponse,
+)
+async def assign_verification_request_reviewer(
+    verification_request_public_id: UUID,
+    payload: VerificationRequestAssignReviewerRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await svc.assign_reviewer(current.id, verification_request_public_id, payload)
+
+
+@router.put(
+    "/verification-requests/{verification_request_public_id}/internal-note",
+    response_model=VerificationRequestResponse,
+)
+async def update_verification_request_internal_note(
+    verification_request_public_id: UUID,
+    payload: VerificationRequestInternalNoteUpdateRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await svc.update_internal_note(current.id, verification_request_public_id, payload)
 
 
 @router.get(
@@ -193,6 +222,24 @@ async def request_verification_information(
     svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
 ) -> VerificationRequestResponse:
     return await svc.request_information(current.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/verification-requests/{verification_request_public_id}/submit-information",
+    response_model=VerificationRequestResponse,
+)
+async def submit_verification_information(
+    verification_request_public_id: UUID,
+    payload: VerificationRequestInformationSubmissionRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await svc.submit_information(
+        current.id,
+        current.email,
+        verification_request_public_id,
+        payload,
+    )
 
 
 @router.post("/verification-requests/{verification_request_public_id}/verify", response_model=VerificationRequestResponse)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +55,14 @@ class UserDocumentService:
         if not bucket:
             raise ServiceUnavailableError("Document storage is not configured")
 
+        replaced = None
+        if payload.replaces_document_id is not None:
+            replaced = await self._docs.get_owned(payload.replaces_document_id, user_id)
+            if replaced is None:
+                raise NotFoundError("Document to replace not found")
+            if replaced.superseded_at is not None:
+                raise NotFoundError("Document to replace is no longer current")
+
         document_id = uuid.uuid4()
         prefix = self._settings.s3_document_key_prefix.rstrip("/")
         object_key = f"{prefix}/user-documents/{user_id}/{document_id}/{payload.original_filename}"
@@ -71,6 +80,8 @@ class UserDocumentService:
             checksum_sha256="",  # filled at complete-upload step
             verification_status="pending",
             expires_at=payload.expires_at,
+            superseded_by_id=None,
+            replaces_document_id=replaced.id if replaced is not None else None,
         )
         await self._docs.create(doc)
 
@@ -105,6 +116,11 @@ class UserDocumentService:
         if doc is None:
             raise NotFoundError("User document not found")
         doc.checksum_sha256 = checksum_sha256
+        if doc.replaces_document_id is not None:
+            previous = await self._docs.get_owned(doc.replaces_document_id, user_id)
+            if previous is not None and previous.superseded_at is None:
+                previous.superseded_at = datetime.now(UTC)
+                previous.superseded_by_id = doc.id
         await self._session.commit()
         await self._session.refresh(doc)
         return doc

@@ -80,6 +80,9 @@ class NotificationResponse(BaseModel):
     public_id: UUID
     notification_type: str
     event_type: str
+    category: str = "system"
+    title: str = "Kairo notification"
+    body: str = "You have a new notification."
     priority: str
     status: str
     recipient_user_id: UUID | None
@@ -93,8 +96,24 @@ class NotificationResponse(BaseModel):
     scheduled_at: datetime | None
     sent_at: datetime | None
     failed_at: datetime | None
+    read_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class UserNotificationResponse(BaseModel):
+    public_id: UUID
+    category: str
+    event_type: str
+    title: str
+    body: str
+    metadata: dict[str, Any]
+    read_at: datetime | None
+    created_at: datetime
+
+
+class NotificationUnreadCountResponse(BaseModel):
+    unread_count: int
 
 
 class NotificationDetailResponse(NotificationResponse):

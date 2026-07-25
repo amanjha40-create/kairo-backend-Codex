@@ -26,6 +26,8 @@ from app.schemas.notification import (
     NotificationEventResponse,
     NotificationResponse,
     NotificationStatisticsResponse,
+    NotificationUnreadCountResponse,
+    UserNotificationResponse,
 )
 from app.services.notification_channel_registry import NotificationChannelRegistry
 from app.services.notification_dispatcher import NotificationDispatcher
@@ -37,6 +39,24 @@ from app.services.email_delivery_service import EmailDeliveryService
 
 class NotificationService:
     """Creates, dispatches, tracks, and reports platform notifications."""
+
+    _PRESENTATION_BY_EVENT: dict[str, tuple[str, str, str]] = {
+        "verification_completed": (
+            "verification",
+            "Verification completed",
+            "Your verification request has been completed.",
+        ),
+        "trust_invitation_created": (
+            "verification",
+            "Trust invitation",
+            "You have received a Trust Passport verification invitation.",
+        ),
+        "password_reset_requested": (
+            "security",
+            "Password reset requested",
+            "A password reset was requested for your Kairo account.",
+        ),
+    }
 
     def __init__(
         self,
@@ -68,7 +88,12 @@ class NotificationService:
         *,
         actor_user_id: UUID | None = None,
     ) -> NotificationDetailResponse:
+        if request.dedupe_key:
+            existing = await self._notifications.get_by_dedupe_key(request.dedupe_key)
+            if existing is not None:
+                return await self.get_detail(existing.public_id)
         template_key, template_version = self._template_resolver.resolve(request)
+        category, title, body = self._presentation(request)
         preference = await self._preferences.evaluate(
             recipient_user_id=request.recipient_user_id,
             event_type=request.normalized_event_type(),
@@ -77,6 +102,10 @@ class NotificationService:
         notification = Notification(
             notification_type=request.notification_type.strip().lower(),
             event_type=request.normalized_event_type(),
+            category=category,
+            title=title,
+            body=body,
+            dedupe_key=request.dedupe_key,
             priority=request.priority.strip().lower(),
             status=NotificationStatus.PENDING.value,
             recipient_user_id=request.recipient_user_id,
@@ -122,6 +151,38 @@ class NotificationService:
         await self._dispatch_notification(notification, actor_user_id=actor_user_id)
         await self._session.commit()
         return await self.get_detail(notification.public_id)
+
+    @classmethod
+    def _presentation(cls, request: NotificationRequest) -> tuple[str, str, str]:
+        default = cls._PRESENTATION_BY_EVENT.get(request.normalized_event_type())
+        if default is None:
+            return request.category.strip().lower(), request.title.strip(), request.body.strip()
+        category, default_title, default_body = default
+        title = request.title.strip()
+        body = request.body.strip()
+        return category, default_title if title == "Kairo notification" else title, default_body if body == "You have a new notification." else body
+
+    async def list_user_notifications(self, user_id: UUID, params: ListQueryParams) -> Page[UserNotificationResponse]:
+        items = await self._notifications.list_for_user(user_id, offset=params.slice_start, limit=params.limit or 20)
+        total = await self._notifications.count_for_user(user_id)
+        return Page[UserNotificationResponse].create(
+            items=[self._to_user_response(item) for item in items],
+            total=total,
+            params=params,
+        )
+
+    async def unread_count(self, user_id: UUID) -> NotificationUnreadCountResponse:
+        return NotificationUnreadCountResponse(unread_count=await self._notifications.count_for_user(user_id, unread_only=True))
+
+    async def mark_user_read(self, user_id: UUID, notification_public_id: UUID) -> None:
+        if not await self._notifications.mark_read(user_id, notification_public_id):
+            raise NotFoundError("Notification not found")
+        await self._session.commit()
+
+    async def mark_user_read_all(self, user_id: UUID) -> int:
+        count = await self._notifications.mark_all_read(user_id)
+        await self._session.commit()
+        return count
 
     async def get_detail(self, notification_public_id: UUID) -> NotificationDetailResponse:
         notification = await self._require_notification(notification_public_id)
@@ -306,6 +367,9 @@ class NotificationService:
             public_id=notification.public_id,
             notification_type=notification.notification_type,
             event_type=notification.event_type,
+            category=notification.category,
+            title=notification.title,
+            body=notification.body,
             priority=notification.priority,
             status=notification.status,
             recipient_user_id=notification.recipient_user_id,
@@ -319,8 +383,22 @@ class NotificationService:
             scheduled_at=notification.scheduled_at,
             sent_at=notification.sent_at,
             failed_at=notification.failed_at,
+            read_at=notification.read_at,
             created_at=notification.created_at,
             updated_at=notification.updated_at,
+        )
+
+    @staticmethod
+    def _to_user_response(notification: Notification) -> UserNotificationResponse:
+        return UserNotificationResponse(
+            public_id=notification.public_id,
+            category=notification.category,
+            event_type=notification.event_type,
+            title=notification.title,
+            body=notification.body,
+            metadata=notification.metadata_payload,
+            read_at=notification.read_at,
+            created_at=notification.created_at,
         )
 
     def _to_delivery_response(self, delivery: NotificationDelivery) -> NotificationDeliveryResponse:

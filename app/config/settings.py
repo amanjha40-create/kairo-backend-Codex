@@ -8,6 +8,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 import re
+from math import isclose
 from typing import Self
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
@@ -193,6 +194,12 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(
         default=60, ge=1, le=3600, validation_alias=AliasChoices("AUTH_RATE_LIMIT_WINDOW_SECONDS")
     )
+    # --- Versioned Trust Score configuration ---
+    trust_score_version: str = Field(default="v1", validation_alias=AliasChoices("TRUST_SCORE_VERSION"))
+    trust_score_identity_weight: float = Field(default=0.25, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_IDENTITY_WEIGHT"))
+    trust_score_employment_weight: float = Field(default=0.45, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EMPLOYMENT_WEIGHT"))
+    trust_score_education_weight: float = Field(default=0.30, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EDUCATION_WEIGHT"))
+    trust_score_require_consent: bool = Field(default=True, validation_alias=AliasChoices("TRUST_SCORE_REQUIRE_CONSENT"))
     otp_verify_rate_limit_max_requests: int = Field(
         default=5, ge=1, le=100, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_MAX_REQUESTS")
     )
@@ -351,6 +358,7 @@ class Settings(BaseSettings):
     bedrock_model_id: str | None = Field(default=None, validation_alias=AliasChoices("BEDROCK_MODEL_ID"))
     resume_parser_provider: str = Field(default="nova", validation_alias=AliasChoices("RESUME_PARSER_PROVIDER"))
     bedrock_timeout_seconds: int = Field(default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS"))
+    textract_timeout_seconds: int = Field(default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS"))
     resume_parser_schema_version: str = Field(
         default="1",
         validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION", "BEDROCK_SCHEMA_VERSION"),
@@ -505,6 +513,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def enforce_production_hardening(self) -> Self:
         """Stricter checks when APP_ENV=production."""
+
+        weights_total = (
+            self.trust_score_identity_weight
+            + self.trust_score_employment_weight
+            + self.trust_score_education_weight
+        )
+        if not isclose(weights_total, 1.0, abs_tol=1e-6):
+            raise ValueError("TRUST_SCORE_*_WEIGHT values must sum to exactly 1.0")
 
         if self.app_env == AppEnvironment.PRODUCTION:
             if len(self.jwt_secret_key) < 48:

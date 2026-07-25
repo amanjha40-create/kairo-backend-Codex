@@ -97,6 +97,13 @@ class S3UploadService:
 
         return meta
 
+    async def head_object(self, *, object_key: str) -> dict[str, Any]:
+        """Read upload metadata without exposing the object or a signed URL."""
+        bucket = self._settings.s3_documents_bucket
+        if not bucket:
+            raise ValidationAppError("Document uploads are not configured")
+        return await head_object_meta(bucket=bucket, object_key=object_key, settings=self._settings)
+
     async def delete_object_best_effort(self, *, object_key: str) -> None:
         """Remove S3 object after DB soft-delete — failures are logged, not raised."""
 

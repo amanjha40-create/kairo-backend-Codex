@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.resumes.normalization import date_ranges_overlap, normalize_date, normalize_text, normalize_url, payload_hash, stable_claim_id
+from app.resumes.normalization import date_ranges_overlap, normalize_date, normalize_review_date, normalize_text, normalize_url, payload_hash, stable_claim_id
 from app.resumes.review_schemas import (
     EmploymentReviewClaim,
     ReviewImportRequest,
@@ -78,19 +78,25 @@ def test_import_plan_blocks_unsupported_and_incomplete_claims() -> None:
     assert service._required_blockers("employment", {"company_name": "Synthetic"}) == [
         "missing_role_title",
         "missing_start_date",
-        "missing_location",
     ]
     assert service._required_blockers("employment", {
-        "company_name": "Synthetic",
-        "role_title": "Engineer",
-        "start_date": "2024-01-01",
-        "location": {"country": "India"},
-    }) == ["invalid_work_location_country"]
+        "company_name": "Synthetic", "role_title": "Engineer", "start_date": "2024-01-01",
+    }) == []
     assert service._action_blockers(
         "link_existing",
         "education",
         {"institution_name": "Synthetic", "degree": "Synthetic"},
     ) == []
+
+
+def test_incomplete_resume_claims_are_deferred_to_career_completion() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    assert service._required_blockers("education", {
+        "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
+    }) == ["missing_education_level", "missing_start_date"]
+    assert service._required_blockers("certification", {
+        "title": "Synthetic Certificate",
+    }) == ["missing_issued_date", "missing_issuing_organization"]
 
 
 def test_import_plan_accepts_nullable_employment_location() -> None:
@@ -100,6 +106,58 @@ def test_import_plan_accepts_nullable_employment_location() -> None:
         "employment",
         {"company_name": "Synthetic Company", "location": None},
     ) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "display", "is_end", "expected"),
+    [
+        (None, "Apr 2023", False, ("2023-04-01", "month")),
+        (None, "Jan 2025", True, ("2025-01-31", "month")),
+        ("2023", None, False, ("2023-01-01", "year")),
+        ("2025", None, True, ("2025-12-31", "year")),
+        ("Present", None, True, (None, None)),
+    ],
+)
+def test_resume_review_date_normalization(value, display, is_end, expected) -> None:
+    assert normalize_review_date(value, display, is_end=is_end) == expected
+
+
+def test_edited_employment_dates_are_normalized_before_review_validation() -> None:
+    payload = ResumeReviewService._normalize_review_payload("employment", {
+        "claim_type": "employment", "company_name": "Synthetic", "role_title": "Engineer",
+        "start_date": None, "start_date_display": "Apr 2023", "end_date": None,
+        "end_date_display": "Jan 2025", "is_current": False,
+    })
+    assert payload["start_date"] == "2023-04-01"
+    assert payload["end_date"] == "2025-01-31"
+    assert payload["start_date_precision"] == "month"
+    assert payload["end_date_precision"] == "month"
+
+
+def test_resume_import_does_not_require_location_but_normal_career_contract_still_validates_country() -> None:
+    from app.schemas.employment.requests import CreateEmploymentRequest
+
+    assert ResumeReviewService._required_blockers("employment", {
+        "company_name": "Synthetic", "role_title": "Engineer", "start_date": "2024-01-01", "location": None,
+    }) == []
+    assert CreateEmploymentRequest(
+        subject_full_name="Synthetic Candidate", employer_legal_name="Synthetic", job_title="Engineer",
+        start_date="2024-01-01", work_location_country="IN",
+    ).work_location_country == "IN"
+    with pytest.raises(ValidationError):
+        CreateEmploymentRequest(
+            subject_full_name="Synthetic Candidate", employer_legal_name="Synthetic", job_title="Engineer",
+            start_date="2024-01-01", work_location_country="India",
+        )
+
+
+def test_review_payload_bounds_profile_headline_to_canonical_user_limit() -> None:
+    payload = ResumeReviewService._review_payload(
+        "profile",
+        {"professional_headline": "A" * 300},
+    )
+
+    assert len(payload["professional_headline"]) == 255
 
 
 def test_review_accepts_extracted_country_name_for_candidate_correction() -> None:

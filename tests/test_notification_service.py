@@ -150,6 +150,29 @@ def _trust_invitation_request() -> NotificationRequest:
     )
 
 
+def test_known_event_uses_notification_center_presentation() -> None:
+    category, title, body = NotificationService._presentation(
+        NotificationRequest(event_type="verification_completed")
+    )
+
+    assert category == "verification"
+    assert title == "Verification completed"
+    assert body == "Your verification request has been completed."
+
+
+def test_custom_notification_presentation_is_preserved() -> None:
+    category, title, body = NotificationService._presentation(
+        NotificationRequest(
+            event_type="custom_event",
+            category="security",
+            title="Account update",
+            body="Review your account.",
+        )
+    )
+
+    assert (category, title, body) == ("security", "Account update", "Review your account.")
+
+
 @pytest.mark.asyncio
 async def test_create_and_dispatch_records_sent_notification_delivery() -> None:
     dispatcher = FakeDispatcher(

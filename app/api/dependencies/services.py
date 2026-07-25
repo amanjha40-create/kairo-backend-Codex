@@ -29,6 +29,7 @@ from app.services import (
     NotificationPreferenceService,
     NotificationService,
     NotificationTemplateResolver,
+    OrganizationPersonService,
     OrganizationService,
     PassportEngineService,
     PassportShareService,
@@ -44,6 +45,7 @@ from app.services import (
     VerificationRequestService,
     VerificationQueueService,
     VerificationService,
+    WorkspaceService,
 )
 from app.services.resume_service import ResumeService
 from app.services.resume_review_service import ResumeReviewService
@@ -141,12 +143,26 @@ def get_education_service(
     return EducationService(session, settings)
 
 
-def get_trust_score_service(session: AsyncSession = Depends(get_session)) -> TrustScoreService:
-    return TrustScoreService(session)
+def get_trust_score_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TrustScoreService:
+    return TrustScoreService(session, settings)
 
 
 def get_organization_service(session: AsyncSession = Depends(get_session)) -> OrganizationService:
     return OrganizationService(session)
+
+
+def get_organization_person_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OrganizationPersonService:
+    return OrganizationPersonService(session, settings)
+
+
+def get_workspace_service(session: AsyncSession = Depends(get_session)) -> WorkspaceService:
+    return WorkspaceService(session)
 
 
 def get_trust_invitation_service(
@@ -227,8 +243,9 @@ def get_trust_registry_resolution_service(
 
 def get_verification_request_service(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> VerificationRequestService:
-    return VerificationRequestService(session)
+    return VerificationRequestService(session, settings=settings)
 
 
 def get_connector_registry_service(
@@ -319,6 +336,16 @@ def get_certification_service(
 ):
     from app.services.certification_service import CertificationService
     return CertificationService(session, settings)
+
+
+def get_skill_service(session: AsyncSession = Depends(get_session)):
+    from app.services.skill_service import SkillService
+    return SkillService(session)
+
+
+def get_project_service(session: AsyncSession = Depends(get_session)):
+    from app.services.project_service import ProjectService
+    return ProjectService(session)
 
 
 def get_secondary_doc_service(

@@ -5,9 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.core.constants import Role
+from app.schemas.profile import ProfileLanguageResponse, ProfileLinkResponse
 
 
 class UserPublic(BaseModel):
@@ -22,6 +23,9 @@ class UserPublic(BaseModel):
     industry: str | None = None
     years_of_experience: int | None = None
     location: str | None = None
+    location_city: str | None = None
+    location_region: str | None = None
+    location_country: str | None = None
     headline: str | None = None
     bio: str | None = None
     date_of_birth: date | None = None
@@ -29,7 +33,11 @@ class UserPublic(BaseModel):
     role: Role
     is_active: bool
     phone_verified_at: datetime | None = None
+    email_verified_at: datetime | None = None
     employment_onboarding_completed_at: datetime | None = None
+    languages: list[ProfileLanguageResponse] = Field(default_factory=list)
+    professional_links: list[ProfileLinkResponse] = Field(default_factory=list)
+    profile_completion_percentage: int = 0
     created_at: datetime
 
 
@@ -50,9 +58,17 @@ class UserUpdate(BaseModel):
     industry: str | None = Field(default=None, max_length=255)
     years_of_experience: int | None = Field(default=None, ge=0, le=80)
     location: str | None = Field(default=None, max_length=255)
+    location_city: str | None = Field(default=None, max_length=128)
+    location_region: str | None = Field(default=None, max_length=128)
+    location_country: str | None = Field(default=None, min_length=2, max_length=2)
     headline: str | None = Field(default=None, max_length=255)
     bio: str | None = Field(default=None, max_length=500)
     date_of_birth: date | None = None
+
+    @field_validator("location_country")
+    @classmethod
+    def normalize_country(cls, value: str | None) -> str | None:
+        return value.upper() if value else None
 
 
 class UserCreateInternal(BaseModel):

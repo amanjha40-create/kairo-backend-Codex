@@ -122,7 +122,7 @@ class PassportShareService:
 
     def _build_share_url(self, raw_token: str) -> str:
         base = self._settings.app_public_base_url.rstrip("/")
-        return f"{base}/p/{raw_token}"
+        return f"{base}/passport/{raw_token}"
 
     def _state(self, link: PassportShareLink) -> str:
         if link.revoked_at is not None:

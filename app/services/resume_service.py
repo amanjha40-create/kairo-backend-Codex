@@ -187,7 +187,12 @@ class ResumeService:
         try:
             content = await self._read_object(row)
             if row.content_type == "application/pdf":
-                extracted = await TextractDocumentExtractor(self.settings).extract(content, row.content_type)
+                extracted = await TextractDocumentExtractor(self.settings).extract(
+                    content,
+                    row.content_type,
+                    storage_bucket=row.storage_bucket,
+                    storage_key=row.storage_key,
+                )
             else:
                 extracted = await DeterministicDocxExtractor().extract(content, row.content_type)
             logger.info(

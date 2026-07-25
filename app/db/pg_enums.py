@@ -22,8 +22,27 @@ from app.employment.enums import (
     VerificationAuditAction,
     VerificationStatus,
 )
-from app.organization.enums import OrganizationRole, OrganizationType
-from app.trust_invitations.enums import TrustInvitationStatus
+from app.organization.enums import (
+    OrganizationInvitationStatus,
+    OrganizationRole,
+    OrganizationType,
+    OrganizationVerificationState,
+)
+from app.organization_people.enums import (
+    OrganizationPersonIdentifierType,
+    OrganizationPersonInvitationStatusSummary,
+    OrganizationPersonLifecycleStatus,
+    OrganizationPersonPassportAccessState,
+    OrganizationPersonPassportStatusSummary,
+    OrganizationPersonRelationship,
+    OrganizationPersonTrustState,
+    OrganizationPersonVerificationStatusSummary,
+)
+from app.trust_invitations.enums import (
+    TrustInvitationDeliveryMethod,
+    TrustInvitationDeliveryState,
+    TrustInvitationStatus,
+)
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -96,9 +115,93 @@ organization_role_enum = ENUM(
     create_type=False,
 )
 
+organization_verification_state_enum = ENUM(
+    *[m.value for m in OrganizationVerificationState],
+    name="organization_verification_state_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_invitation_status_enum = ENUM(
+    *[m.value for m in OrganizationInvitationStatus],
+    name="organization_invitation_status_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_relationship_enum = ENUM(
+    *[m.value for m in OrganizationPersonRelationship],
+    name="organization_person_relationship_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_lifecycle_status_enum = ENUM(
+    *[m.value for m in OrganizationPersonLifecycleStatus],
+    name="organization_person_lifecycle_status_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_trust_state_enum = ENUM(
+    *[m.value for m in OrganizationPersonTrustState],
+    name="organization_person_trust_state_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_invitation_status_summary_enum = ENUM(
+    *[m.value for m in OrganizationPersonInvitationStatusSummary],
+    name="organization_person_invitation_status_summary_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_verification_status_summary_enum = ENUM(
+    *[m.value for m in OrganizationPersonVerificationStatusSummary],
+    name="organization_person_verification_status_summary_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_passport_status_summary_enum = ENUM(
+    *[m.value for m in OrganizationPersonPassportStatusSummary],
+    name="organization_person_passport_status_summary_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_passport_access_state_enum = ENUM(
+    *[m.value for m in OrganizationPersonPassportAccessState],
+    name="organization_person_passport_access_state_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+organization_person_identifier_type_enum = ENUM(
+    *[m.value for m in OrganizationPersonIdentifierType],
+    name="organization_person_identifier_type_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
 trust_invitation_status_enum = ENUM(
     *[m.value for m in TrustInvitationStatus],
     name="trust_invitation_status_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+trust_invitation_delivery_method_enum = ENUM(
+    *[m.value for m in TrustInvitationDeliveryMethod],
+    name="trust_invitation_delivery_method_enum",
+    metadata=Base.metadata,
+    create_type=False,
+)
+
+trust_invitation_delivery_state_enum = ENUM(
+    *[m.value for m in TrustInvitationDeliveryState],
+    name="trust_invitation_delivery_state_enum",
     metadata=Base.metadata,
     create_type=False,
 )

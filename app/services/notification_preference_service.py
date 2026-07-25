@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.notifications.contracts import NotificationPreferenceDecision
 from app.notifications.enums import NotificationChannel
+from app.exceptions import ConflictError
 from app.repositories.notification import NotificationPreferenceRepository
 from app.schemas.notification import NotificationPreferenceUpsertRequest
 from app.models.notification_preference import NotificationPreference
@@ -15,6 +16,18 @@ from app.models.notification_preference import NotificationPreference
 
 class NotificationPreferenceService:
     """Evaluates and manages per-user notification preferences."""
+
+    _CRITICAL_EVENT_TYPES = frozenset(
+        {
+            "account_security",
+            "email_verification",
+            "password_reset_requested",
+            "phone_verification",
+            "security_alert",
+            "signup_otp_email",
+            "signup_phone_otp",
+        }
+    )
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -53,6 +66,8 @@ class NotificationPreferenceService:
         user_id: UUID,
         payload: NotificationPreferenceUpsertRequest,
     ) -> NotificationPreference:
+        if payload.event_type in self._CRITICAL_EVENT_TYPES and not payload.enabled:
+            raise ConflictError("Critical security notifications cannot be disabled")
         preference = await self._preferences.get_for_user_event(user_id, payload.event_type)
         if preference is None:
             preference = NotificationPreference(

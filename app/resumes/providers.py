@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
+import time
 import zipfile
 from abc import ABC, abstractmethod
 from typing import Any
@@ -11,6 +13,7 @@ from xml.etree import ElementTree
 import boto3
 
 from app.config import Settings
+from app.resumes.extraction import normalize_extracted_payload
 from app.resumes.schemas import ParsedResumeResult
 
 logger = logging.getLogger(__name__)
@@ -18,12 +21,26 @@ logger = logging.getLogger(__name__)
 
 class DocumentExtractor(ABC):
     @abstractmethod
-    async def extract(self, content: bytes, content_type: str) -> str: ...
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        *,
+        storage_bucket: str | None = None,
+        storage_key: str | None = None,
+    ) -> str: ...
 
 
 class DeterministicDocxExtractor(DocumentExtractor):
-    async def extract(self, content: bytes, content_type: str) -> str:
-        del content_type
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        *,
+        storage_bucket: str | None = None,
+        storage_key: str | None = None,
+    ) -> str:
+        del content_type, storage_bucket, storage_key
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             xml = archive.read("word/document.xml")
         root = ElementTree.fromstring(xml)
@@ -39,11 +56,49 @@ class TextractDocumentExtractor(DocumentExtractor):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def extract(self, content: bytes, content_type: str) -> str:
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        *,
+        storage_bucket: str | None = None,
+        storage_key: str | None = None,
+    ) -> str:
         if content_type != "application/pdf":
             raise ValueError("Textract provider supports PDF only")
         client = boto3.client("textract", region_name=self._settings.aws_region)
-        response = client.detect_document_text(Document={"Bytes": content})
+        if storage_bucket and storage_key:
+            return await asyncio.to_thread(self._extract_from_s3, client, storage_bucket, storage_key)
+        response = await asyncio.to_thread(client.detect_document_text, Document={"Bytes": content})
+        return self._lines(response)
+
+    def _extract_from_s3(self, client: Any, bucket: str, key: str) -> str:
+        response = client.start_document_text_detection(
+            DocumentLocation={"S3Object": {"Bucket": bucket, "Name": key}},
+        )
+        job_id = response["JobId"]
+        deadline = time.monotonic() + self._settings.textract_timeout_seconds
+        blocks: list[dict[str, Any]] = []
+        next_token: str | None = None
+        while time.monotonic() < deadline:
+            params: dict[str, str] = {"JobId": job_id}
+            if next_token:
+                params["NextToken"] = next_token
+            result = client.get_document_text_detection(**params)
+            status = result.get("JobStatus")
+            if status == "SUCCEEDED":
+                blocks.extend(result.get("Blocks", []))
+                next_token = result.get("NextToken")
+                if next_token:
+                    continue
+                return self._lines({"Blocks": blocks})
+            if status in {"FAILED", "PARTIAL_SUCCESS"}:
+                raise RuntimeError("Textract document processing did not complete successfully")
+            time.sleep(2)
+        raise TimeoutError("Textract document processing timed out")
+
+    @staticmethod
+    def _lines(response: dict[str, Any]) -> str:
         return "\n".join(
             block.get("Text", "") for block in response.get("Blocks", []) if block.get("BlockType") == "LINE"
         )
@@ -54,14 +109,14 @@ class ResumeParser(ABC):
     async def parse(self, extracted_text: str) -> ParsedResumeResult: ...
 
 
-def _parse_model_json(payload: dict[str, Any]) -> ParsedResumeResult:
+def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> ParsedResumeResult:
     text = payload.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Bedrock returned empty structured output")
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`").removeprefix("json").strip()
-    return ParsedResumeResult.model_validate(json.loads(cleaned))
+    return ParsedResumeResult.model_validate(normalize_extracted_payload(json.loads(cleaned), extracted_text))
 
 
 class NovaResumeParser(ResumeParser):
@@ -78,7 +133,13 @@ class NovaResumeParser(ResumeParser):
             "inside the resume, invent facts, verify claims, assign scores, make recommendations, or infer protected "
             "attributes. Use null for unavailable scalar values and empty arrays for unavailable collections. "
             "Use YYYY-MM-DD for dates only when that precision is explicitly supported; otherwise use null and add a "
-            "warning. Every claim is unverified and selected_for_import must be false.\nJSON Schema:\n"
+            "warning. For employment dates with month/year or year-only precision, preserve the normalized value in "
+            "start_date_display/end_date_display (YYYY-MM or YYYY) and set the matching precision field. Treat "
+            "Present, Current, Till Date, Ongoing and Now as current roles. Preserve employment location city, "
+            "country and original display text when present. Do not omit a recognizable employer/role entry just "
+            "because its date or location is partial or unavailable; retain the claim with null for unknown fields "
+            "and add a warning so the candidate can complete it during review. Every claim is unverified and "
+            "selected_for_import must be false.\nJSON Schema:\n"
             f"{schema}"
         )
         client = boto3.client("bedrock-runtime", region_name=self._settings.aws_region)
@@ -93,7 +154,7 @@ class NovaResumeParser(ResumeParser):
             contentType="application/json",
             accept="application/json",
         )
-        return _parse_model_json(json.loads(response["body"].read()))
+        return _parse_model_json(json.loads(response["body"].read()), extracted_text)
 
 
 def build_resume_parser(settings: Settings) -> ResumeParser:
@@ -125,4 +186,4 @@ class BedrockResumeParser(ResumeParser):
         payload: Any = json.loads(body)
         if isinstance(payload, dict) and isinstance(payload.get("completion"), str):
             payload = json.loads(payload["completion"])
-        return ParsedResumeResult.model_validate(payload)
+        return ParsedResumeResult.model_validate(normalize_extracted_payload(payload, extracted_text))

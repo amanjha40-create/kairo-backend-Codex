@@ -92,7 +92,7 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
     async def require_subject(*_args):
         return request
 
-    async def commit_and_reload(_public_id):
+    async def commit_reload_subject_response(_public_id):
         return request
 
     class EvidenceRepository:
@@ -109,7 +109,7 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
             target.status = target_status
 
     service._require_subject_request = require_subject
-    service._commit_and_reload = commit_and_reload
+    service._commit_reload_subject_response = commit_reload_subject_response
     service._evidence = EvidenceRepository()
     service._contacts = ContactRepository()
     service._workflow = Workflow()

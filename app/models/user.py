@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, String
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import Role
@@ -31,6 +32,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
     years_of_experience: Mapped[int | None] = mapped_column(nullable=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    location_city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    location_region: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    location_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     headline: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
     date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -42,6 +46,14 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     employment_onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+    trust_score_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trust_score_consent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    active_organization_id: Mapped[str | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(

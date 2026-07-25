@@ -9,7 +9,11 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
+from app.config import Settings, get_settings
+from app.employment.enums import DocumentVerificationStatus
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError
+from app.infrastructure.s3.presign import generate_presigned_get_url
+from app.models.organization_member import OrganizationMember
 from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
@@ -30,11 +34,19 @@ from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
     VerificationRequestActionPayload,
+    VerificationRequestAssignReviewerRequest,
+    VerificationRequestEmploymentClaimResponse,
+    VerificationRequestEvidenceSummaryResponse,
+    VerificationRequestInformationSubmissionRequest,
+    VerificationRequestInternalNoteUpdateRequest,
+    VerificationRequestOrganizationSummary,
     VerificationRequestCorrectionResponse,
     VerificationRequestCreateRequest,
     VerificationRequestEvidenceCreateRequest,
     VerificationRequestEvidenceResponse,
     VerificationRequestEvidenceUpdateRequest,
+    VerificationRequestTargetResponse,
+    VerificationReviewerSummary,
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
@@ -47,6 +59,7 @@ from app.services.connector_execution_service import ConnectorExecutionService
 from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
 from app.services.connector_selection_service import ConnectorSelectionService
+from app.services.organization_person_service import OrganizationPersonService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_connectors.enums import VerificationConnectorResultStatus
 from app.verification_requests.enums import (
@@ -59,7 +72,13 @@ from app.verification_requests.enums import (
 
 def is_internal_admin_note_event(event_type: str, metadata: dict | None) -> bool:
     return event_type == "verification_request_admin_note_added" and (metadata or {}).get("visibility") == "internal"
-from app.employment.enums import DocumentVerificationStatus
+
+
+def is_private_organization_event(event_type: str, metadata: dict | None) -> bool:
+    return event_type in {
+        "verification_request_reviewer_assigned",
+        "verification_request_internal_note_updated",
+    } or (metadata or {}).get("visibility") == "organization_internal"
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +90,11 @@ class VerificationRequestService:
         self,
         session: AsyncSession,
         *,
+        settings: Settings | None = None,
         notifications: NotificationService | None = None,
     ) -> None:
         self._session = session
+        self._settings = settings or get_settings()
         self._requests = VerificationRequestRepository(session)
         self._organizations = OrganizationRepository(session)
         self._users = UserRepository(session)
@@ -94,6 +115,7 @@ class VerificationRequestService:
             self._connector_normalizer,
         )
         self._notifications = notifications or NotificationService(session)
+        self._people = OrganizationPersonService(session, self._settings)
 
     async def create_employment_verification_draft(
         self,
@@ -108,7 +130,7 @@ class VerificationRequestService:
         if existing is not None:
             if existing.subject_user_id != actor_user_id:
                 raise NotFoundError("Employment verification request not found")
-            return self._to_response(existing)
+            return await self._to_subject_response(existing)
         subject = await self._require_subject_user(actor_user_id)
         request = await self._requests.create(
             VerificationRequest(
@@ -172,7 +194,12 @@ class VerificationRequestService:
                 event_source=VerificationRequestEventSource.CANDIDATE,
                 metadata={"evidence_public_id": str(evidence.public_id), "employment_document_id": str(document.id)},
             )
-        return await self._commit_and_reload(request.public_id)
+        await self._people.resolve_for_verification_request(
+            request,
+            actor_user_id=actor_user_id,
+            employment=employment,
+        )
+        return await self._commit_reload_subject_response(request.public_id)
 
     async def get_employment_verification_request(
         self,
@@ -185,7 +212,7 @@ class VerificationRequestService:
         request = await self._requests.get_active_for_employment(employment_id)
         if request is None or request.subject_user_id != actor_user_id:
             raise NotFoundError("Employment verification request not found")
-        return self._to_response(request)
+        return await self._to_subject_response(request)
 
     async def get_verification_contact(
         self,
@@ -246,7 +273,7 @@ class VerificationRequestService:
         organization_public_id: UUID,
         payload: VerificationRequestCreateRequest,
     ) -> VerificationRequestResponse:
-        organization = await self._require_organization_member(actor_user_id, organization_public_id)
+        organization = await self._require_organization_member(actor_user_id, organization_public_id, require_active=True)
         subject_name, subject_email, subject_user_id, trust_invitation = await self._resolve_subject_details(
             organization_id=organization.id,
             payload=payload,
@@ -261,6 +288,7 @@ class VerificationRequestService:
         request = VerificationRequest(
             origin_type=origin_type,
             organization_id=organization.id,
+            organization_person_id=trust_invitation.organization_person_id if trust_invitation is not None else None,
             subject_user_id=subject_user_id,
             trust_invitation_id=trust_invitation.id if trust_invitation is not None else None,
             subject_name=subject_name,
@@ -282,12 +310,8 @@ class VerificationRequestService:
                 "origin_type": origin_type.value,
             },
         )
-        await self._session.commit()
-        await self._session.refresh(request)
-        refreshed = await self._requests.get_by_public_id(request.public_id)
-        if refreshed is None:
-            raise NotFoundError("Verification request not found")
-        return self._to_response(refreshed)
+        await self._people.resolve_for_verification_request(request, actor_user_id=actor_user_id)
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def create_subject_request(
         self,
@@ -328,12 +352,8 @@ class VerificationRequestService:
                 "origin_type": VerificationRequestOriginType.SUBJECT_INITIATED.value,
             },
         )
-        await self._session.commit()
-        await self._session.refresh(request)
-        refreshed = await self._requests.get_by_public_id(request.public_id)
-        if refreshed is None:
-            raise NotFoundError("Verification request not found")
-        return self._to_response(refreshed)
+        await self._people.resolve_for_verification_request(request, actor_user_id=actor_user_id)
+        return await self._commit_reload_subject_response(request.public_id)
 
     async def list_mine(
         self,
@@ -341,7 +361,7 @@ class VerificationRequestService:
         params: ListQueryParams | None = None,
     ) -> list[VerificationRequestResponse] | Page[VerificationRequestResponse]:
         items = await self._requests.list_for_subject(actor_user_id)
-        responses = [self._to_response(item) for item in items]
+        responses = [await self._to_subject_response(item) for item in items]
         if params is None:
             return responses
         return self._filter_request_responses(responses, params)
@@ -352,9 +372,9 @@ class VerificationRequestService:
         organization_public_id: UUID,
         params: ListQueryParams | None = None,
     ) -> list[VerificationRequestResponse] | Page[VerificationRequestResponse]:
-        organization = await self._require_organization_member(actor_user_id, organization_public_id)
+        organization = await self._require_organization_member(actor_user_id, organization_public_id, require_active=True)
         items = await self._requests.list_for_organization(organization.id)
-        responses = [self._to_response(item) for item in items]
+        responses = [await self._to_org_response(item, actor_user_id) for item in items]
         if params is None:
             return responses
         return self._filter_request_responses(responses, params)
@@ -365,12 +385,87 @@ class VerificationRequestService:
         actor_email: str,
         verification_request_public_id: UUID,
     ) -> VerificationRequestResponse:
-        request = await self._get_accessible_request(
+        request, membership, is_subject = await self._get_access_context(
             actor_user_id=actor_user_id,
             actor_email=actor_email,
             verification_request_public_id=verification_request_public_id,
         )
-        return self._to_response(request)
+        if membership is not None:
+            return await self._to_org_response(request, actor_user_id)
+        if is_subject:
+            return await self._to_subject_response(request)
+        raise NotFoundError("Verification request not found")
+
+    async def assign_reviewer(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: VerificationRequestAssignReviewerRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._require_manageable_request(actor_user_id, verification_request_public_id)
+        assignee = None
+        resolved_assignee_user_id = payload.assignee_user_id
+        if payload.organization_member_public_id is not None:
+            assignee_membership = await self._organizations.get_member_by_public_id(
+                request.organization_id,
+                payload.organization_member_public_id,
+            )
+            if assignee_membership is None:
+                raise NotFoundError("Assignee membership not found")
+            if assignee_membership.suspended_at is not None:
+                raise ForbiddenError("Assignee membership is suspended")
+            resolved_assignee_user_id = assignee_membership.user_id
+            assignee = assignee_membership.user
+        elif payload.assignee_user_id is not None:
+            assignee_membership = await self._organizations.get_membership(request.organization_id, payload.assignee_user_id)
+            if assignee_membership is None:
+                raise NotFoundError("Assignee is not a member of this organization")
+            if assignee_membership.suspended_at is not None:
+                raise ForbiddenError("Assignee membership is suspended")
+            assignee = await self._users.get_by_id(payload.assignee_user_id)
+            if assignee is None:
+                raise NotFoundError("Assignee user not found")
+
+        request.assigned_to_user_id = resolved_assignee_user_id
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_reviewer_assigned",
+            event_source=VerificationRequestEventSource.ORGANIZATION,
+            metadata={
+                "visibility": "organization_internal",
+                "organization_member_public_id": (
+                    str(payload.organization_member_public_id)
+                    if payload.organization_member_public_id is not None
+                    else None
+                ),
+                "assignee_user_id": (
+                    str(resolved_assignee_user_id)
+                    if resolved_assignee_user_id is not None
+                    else None
+                ),
+                "assignee_email": assignee.email if assignee is not None else None,
+                "assigned": resolved_assignee_user_id is not None,
+            },
+        )
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
+
+    async def update_internal_note(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: VerificationRequestInternalNoteUpdateRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._require_manageable_request(actor_user_id, verification_request_public_id)
+        request.organization_internal_note = payload.note.strip() if payload.note else None
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_internal_note_updated",
+            event_source=VerificationRequestEventSource.ORGANIZATION,
+            metadata={"visibility": "organization_internal"},
+        )
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def accept(
         self,
@@ -387,20 +482,25 @@ class VerificationRequestService:
 
         if request.subject_user_id is None:
             request.subject_user_id = actor_user_id
+        accepted_at = datetime.now(tz=UTC)
+        request.accepted_at = accepted_at
+        request.consented_fields = [str(value) for value in request.trust_context.get("requested_fields", []) if value]
+        request.consented_evidence_scope = [
+            str(value) for value in request.trust_context.get("evidence_scope", []) if value
+        ]
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.ACCEPTED,
             actor_user_id=actor_user_id,
             event_type="verification_request_subject_accepted",
             event_source=VerificationRequestEventSource.CANDIDATE,
-            metadata={},
+            metadata={
+                "consented_fields": request.consented_fields,
+                "consented_evidence_scope": request.consented_evidence_scope,
+            },
         )
-        await self._session.commit()
-        await self._session.refresh(request)
-        refreshed = await self._requests.get_by_public_id(request.public_id)
-        if refreshed is None:
-            raise NotFoundError("Verification request not found")
-        return self._to_response(refreshed)
+        await self._people.resolve_for_verification_request(request, actor_user_id=actor_user_id)
+        return await self._commit_reload_access_response(request.public_id, actor_user_id, actor_email)
 
     async def list_evidence(
         self,
@@ -409,9 +509,22 @@ class VerificationRequestService:
         verification_request_public_id: UUID,
         params: ListQueryParams | None = None,
     ) -> list[VerificationRequestEvidenceResponse] | Page[VerificationRequestEvidenceResponse]:
-        request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
+        request, membership, is_subject = await self._get_access_context(
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+            verification_request_public_id=verification_request_public_id,
+            require_active_org_access=True,
+        )
+        if membership is None and not is_subject:
+            raise NotFoundError("Verification request not found")
         items = await self._evidence.list_for_request(request.id)
-        responses = [self._to_evidence_response(item) for item in items]
+        responses = [
+            await self._to_evidence_response(
+                item,
+                include_download_url=membership is not None,
+            )
+            for item in items
+        ]
         if params is None:
             return responses
         return filter_sort_paginate(
@@ -434,6 +547,9 @@ class VerificationRequestService:
             document = await self._user_documents.get_owned(payload.document_id, actor_user_id)
             if document is None:
                 raise NotFoundError("User document not found")
+            existing = await self._evidence.get_by_document(request.id, payload.document_id)
+            if existing is not None:
+                return await self._to_evidence_response(existing, include_download_url=False)
         if payload.employment_document_id is not None:
             await self._validate_employment_document_evidence(
                 request,
@@ -468,7 +584,7 @@ class VerificationRequestService:
         refreshed = await self._evidence.get_by_public_id(evidence.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request evidence not found")
-        return self._to_evidence_response(refreshed)
+        return await self._to_evidence_response(refreshed, include_download_url=False)
 
     async def update_evidence(
         self,
@@ -524,7 +640,7 @@ class VerificationRequestService:
         refreshed = await self._evidence.get_by_public_id(evidence.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request evidence not found")
-        return self._to_evidence_response(refreshed)
+        return await self._to_evidence_response(refreshed, include_download_url=False)
 
     async def submit_for_review(
         self,
@@ -557,7 +673,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.CANDIDATE,
             metadata={"evidence_count": len(evidence_items)},
         )
-        return await self._commit_and_reload(request.public_id)
+        return await self._commit_reload_subject_response(request.public_id)
 
     async def list_corrections(
         self,
@@ -606,7 +722,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.CANDIDATE,
             metadata={"resolved_correction_count": len(corrections)},
         )
-        return await self._commit_and_reload(request.public_id)
+        return await self._commit_reload_subject_response(request.public_id)
 
     async def request_information(
         self,
@@ -632,7 +748,31 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata=self._merge_note_metadata(payload),
         )
-        return await self._commit_and_reload(request.public_id)
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
+
+    async def submit_information(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+        payload: VerificationRequestInformationSubmissionRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
+        if request.status != VerificationRequestStatus.AWAITING_INFORMATION:
+            raise ConflictError("Verification request is not awaiting candidate information")
+        if request.candidate_response_submitted_at is not None:
+            raise ConflictError("Candidate information has already been submitted")
+        request.candidate_response = payload.response
+        request.candidate_response_submitted_at = datetime.now(tz=UTC)
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.IN_PROGRESS,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_information_submitted",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"response_submitted": True},
+        )
+        return await self._commit_reload_access_response(request.public_id, actor_user_id, actor_email)
 
     async def verify(
         self,
@@ -764,7 +904,7 @@ class VerificationRequestService:
         else:
             await self._session.commit()
             raise ServiceUnavailableError("Verification connector is unavailable")
-        return await self._commit_and_reload(request.public_id)
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def reject(
         self,
@@ -791,7 +931,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata=self._merge_note_metadata(payload),
         )
-        return await self._commit_and_reload(request.public_id)
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def cancel(
         self,
@@ -808,7 +948,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata=self._merge_note_metadata(payload),
         )
-        return await self._commit_and_reload(request.public_id)
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def get_timeline(
         self,
@@ -817,10 +957,11 @@ class VerificationRequestService:
         verification_request_public_id: UUID,
         params: ListQueryParams | None = None,
     ) -> VerificationRequestTimelineResponse:
-        request = await self._get_accessible_request(
+        request, membership, is_subject = await self._get_access_context(
             actor_user_id=actor_user_id,
             actor_email=actor_email,
             verification_request_public_id=verification_request_public_id,
+            require_active_org_access=True,
         )
         rows = await self._requests.list_timeline(request.id)
         timeline_items = [
@@ -835,6 +976,7 @@ class VerificationRequestService:
             )
             for row in rows
             if not is_internal_admin_note_event(row.event_type, row.metadata_payload)
+            and (membership is not None or not is_private_organization_event(row.event_type, row.metadata_payload))
         ]
         effective_params = params or ListQueryParams()
         page = filter_sort_paginate(
@@ -859,12 +1001,44 @@ class VerificationRequestService:
             limit=page.limit,
         )
 
-    async def _commit_and_reload(self, request_public_id: UUID) -> VerificationRequestResponse:
-        await self._session.commit()
+    async def _reload_request(self, request_public_id: UUID) -> VerificationRequest:
         refreshed = await self._requests.get_by_public_id(request_public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_response(refreshed)
+        return refreshed
+
+    async def _commit_reload_subject_response(self, request_public_id: UUID) -> VerificationRequestResponse:
+        await self._session.commit()
+        refreshed = await self._reload_request(request_public_id)
+        return await self._to_subject_response(refreshed)
+
+    async def _commit_reload_org_response(
+        self,
+        request_public_id: UUID,
+        actor_user_id: UUID,
+    ) -> VerificationRequestResponse:
+        await self._session.commit()
+        refreshed = await self._reload_request(request_public_id)
+        return await self._to_org_response(refreshed, actor_user_id)
+
+    async def _commit_reload_access_response(
+        self,
+        request_public_id: UUID,
+        actor_user_id: UUID,
+        actor_email: str,
+    ) -> VerificationRequestResponse:
+        await self._session.commit()
+        refreshed = await self._reload_request(request_public_id)
+        request, membership, is_subject = await self._get_access_context(
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+            verification_request_public_id=request_public_id,
+        )
+        if membership is not None:
+            return await self._to_org_response(request, actor_user_id)
+        if is_subject:
+            return await self._to_subject_response(refreshed)
+        raise NotFoundError("Verification request not found")
 
     async def _transition_to_in_progress_if_needed(
         self,
@@ -917,13 +1091,21 @@ class VerificationRequestService:
             raise NotFoundError("User not found")
         return user
 
-    async def _require_organization_member(self, actor_user_id: UUID, organization_public_id: UUID):
+    async def _require_organization_member(
+        self,
+        actor_user_id: UUID,
+        organization_public_id: UUID,
+        *,
+        require_active: bool = False,
+    ):
         organization = await self._organizations.get_by_public_id(organization_public_id)
         if organization is None:
             raise NotFoundError("Organization not found")
         membership = await self._organizations.get_membership(organization.id, actor_user_id)
         if membership is None:
             raise NotFoundError("Organization not found")
+        if require_active:
+            self._assert_active_membership_access(organization.suspended_at, membership)
         return organization
 
     async def _require_manageable_request(
@@ -937,6 +1119,10 @@ class VerificationRequestService:
             if request.subject_user_id == actor_user_id:
                 raise ForbiddenError("The request subject cannot perform this action")
             raise NotFoundError("Verification request not found")
+        self._assert_active_membership_access(
+            request.organization.suspended_at if request.organization is not None else None,
+            membership,
+        )
         return request
 
     async def _require_subject_request(
@@ -950,6 +1136,10 @@ class VerificationRequestService:
             return request
         membership = await self._get_membership_for_request(request, actor_user_id)
         if membership is not None:
+            self._assert_active_membership_access(
+                request.organization.suspended_at if request.organization is not None else None,
+                membership,
+            )
             raise ForbiddenError("Only the request subject can access this route")
         raise NotFoundError("Verification request not found")
 
@@ -964,9 +1154,31 @@ class VerificationRequestService:
             VerificationRequestStatus.ACCEPTED,
             VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
             VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+            VerificationRequestStatus.AWAITING_INFORMATION,
         }:
             raise ConflictError("Verification request is not editable by the subject in its current status")
         return request
+
+    async def _get_access_context(
+        self,
+        *,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+        require_active_org_access: bool = False,
+    ) -> tuple[VerificationRequest, OrganizationMember | None, bool]:
+        request = await self._get_required_request(verification_request_public_id)
+        membership = await self._get_membership_for_request(request, actor_user_id)
+        if membership is not None:
+            if require_active_org_access:
+                self._assert_active_membership_access(
+                    request.organization.suspended_at if request.organization is not None else None,
+                    membership,
+                )
+            return request, membership, False
+        if self._is_subject_actor(request, actor_user_id, actor_email):
+            return request, None, True
+        raise NotFoundError("Verification request not found")
 
     async def _get_accessible_request(
         self,
@@ -975,11 +1187,12 @@ class VerificationRequestService:
         actor_email: str,
         verification_request_public_id: UUID,
     ) -> VerificationRequest:
-        request = await self._get_required_request(verification_request_public_id)
-        membership = await self._get_membership_for_request(request, actor_user_id)
-        if membership is not None or self._is_subject_actor(request, actor_user_id, actor_email):
-            return request
-        raise NotFoundError("Verification request not found")
+        request, _, _ = await self._get_access_context(
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+            verification_request_public_id=verification_request_public_id,
+        )
+        return request
 
     async def _get_required_request(self, verification_request_public_id: UUID) -> VerificationRequest:
         request = await self._requests.get_by_public_id(verification_request_public_id)
@@ -1009,10 +1222,24 @@ class VerificationRequestService:
         if existing is not None and existing.public_id != exclude_evidence_public_id:
             raise ConflictError("Employment document is already attached as evidence")
 
-    async def _get_membership_for_request(self, request: VerificationRequest, actor_user_id: UUID):
+    async def _get_membership_for_request(
+        self,
+        request: VerificationRequest,
+        actor_user_id: UUID,
+    ) -> OrganizationMember | None:
         if request.organization_id is None:
             return None
         return await self._organizations.get_membership(request.organization_id, actor_user_id)
+
+    def _assert_active_membership_access(
+        self,
+        organization_suspended_at,
+        membership: OrganizationMember,
+    ) -> None:
+        if membership.suspended_at is not None:
+            raise ForbiddenError("Organization membership is suspended")
+        if organization_suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
 
     def _is_subject_actor(
         self,
@@ -1026,7 +1253,39 @@ class VerificationRequestService:
             return True
         return False
 
-    def _to_response(self, request: VerificationRequest) -> VerificationRequestResponse:
+    async def _to_subject_response(self, request: VerificationRequest) -> VerificationRequestResponse:
+        return await self._to_response(request, viewer_user_id=None, include_org_private=False)
+
+    async def _to_org_response(
+        self,
+        request: VerificationRequest,
+        viewer_user_id: UUID,
+    ) -> VerificationRequestResponse:
+        return await self._to_response(request, viewer_user_id=viewer_user_id, include_org_private=True)
+
+    async def _to_response(
+        self,
+        request: VerificationRequest,
+        *,
+        viewer_user_id: UUID | None,
+        include_org_private: bool,
+    ) -> VerificationRequestResponse:
+        evidence_items = await self._evidence.list_for_request(request.id)
+        employment = (
+            await self._employments.get_active_by_id(request.employment_id)
+            if request.employment_id is not None
+            else None
+        )
+        assigned_reviewer = None
+        if include_org_private and request.assigned_to_user_id is not None:
+            assigned_user = await self._users.get_by_id(request.assigned_to_user_id)
+            if assigned_user is not None:
+                assigned_reviewer = VerificationReviewerSummary(
+                    user_id=assigned_user.id,
+                    full_name=assigned_user.full_name,
+                    email=assigned_user.email,
+                    role=assigned_user.role,
+                )
         return VerificationRequestResponse(
             public_id=request.public_id,
             employment_id=request.employment_id,
@@ -1043,6 +1302,56 @@ class VerificationRequestService:
             trust_context=request.trust_context,
             created_at=request.created_at,
             updated_at=request.updated_at,
+            accepted_at=request.accepted_at,
+            consented_fields=list(request.consented_fields or []),
+            consented_evidence_scope=list(request.consented_evidence_scope or []),
+            candidate_response=request.candidate_response,
+            candidate_response_submitted_at=request.candidate_response_submitted_at,
+            target_organization_metadata=dict(request.target_organization_metadata or {}),
+            organization_summary=(
+                VerificationRequestOrganizationSummary(
+                    public_id=request.organization.public_id,
+                    name=request.organization.name,
+                    organization_type=request.organization.organization_type,
+                    verification_state=request.organization.verification_state,
+                    suspended_at=request.organization.suspended_at,
+                )
+                if request.organization is not None
+                else None
+            ),
+            verification_target=VerificationRequestTargetResponse(
+                organization_name=request.target_organization_name,
+                organization_email=request.target_organization_email,
+                metadata=dict(request.target_organization_metadata or {}),
+            ),
+            employment_claim=(
+                VerificationRequestEmploymentClaimResponse(
+                    employer_name=employment.employer_legal_name,
+                    role=employment.job_title,
+                    start_date=employment.start_date,
+                    end_date=employment.end_date,
+                    employment_type=employment.employment_type,
+                    work_location_country=employment.work_location_country,
+                    work_location_region=employment.work_location_region,
+                )
+                if employment is not None
+                else None
+            ),
+            evidence_summary=VerificationRequestEvidenceSummaryResponse(
+                total_items=len(evidence_items),
+                document_items=sum(
+                    1 for item in evidence_items if item.document_id is not None or item.employment_document_id is not None
+                ),
+                field_keys=sorted({item.field_key for item in evidence_items}),
+            ),
+            assigned_reviewer=assigned_reviewer,
+            review_status=self._derive_review_status(request) if include_org_private else None,
+            is_assigned_to_current_user=(
+                request.assigned_to_user_id == viewer_user_id
+                if include_org_private and viewer_user_id is not None
+                else None
+            ),
+            organization_internal_note=request.organization_internal_note if include_org_private else None,
         )
 
     def _to_contact_response(self, contact: VerificationContact) -> VerificationContactResponse:
@@ -1060,7 +1369,31 @@ class VerificationRequestService:
             updated_at=contact.updated_at,
         )
 
-    def _to_evidence_response(self, evidence: VerificationRequestEvidence) -> VerificationRequestEvidenceResponse:
+    async def _to_evidence_response(
+        self,
+        evidence: VerificationRequestEvidence,
+        *,
+        include_download_url: bool,
+    ) -> VerificationRequestEvidenceResponse:
+        document = None
+        if evidence.employment_document_id is not None:
+            document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
+        elif evidence.document_id is not None:
+            document = await self._user_documents.get_active_by_id(evidence.document_id)
+
+        download_url = None
+        download_url_expires_in_seconds = None
+        if include_download_url and document is not None:
+            bucket = self._settings.s3_documents_bucket
+            if bucket and getattr(document, "object_key", None):
+                download_url_expires_in_seconds = 300
+                download_url = await generate_presigned_get_url(
+                    bucket=bucket,
+                    object_key=document.object_key,
+                    ttl_seconds=download_url_expires_in_seconds,
+                    settings=self._settings,
+                )
+
         return VerificationRequestEvidenceResponse(
             public_id=evidence.public_id,
             evidence_type=evidence.evidence_type,
@@ -1071,6 +1404,13 @@ class VerificationRequestService:
             status=evidence.status,
             created_at=evidence.created_at,
             updated_at=evidence.updated_at,
+            document_type=getattr(document, "document_type", None),
+            original_filename=getattr(document, "original_filename", None),
+            mime_type=getattr(document, "content_type", None),
+            file_size=getattr(document, "byte_size", None),
+            upload_status=getattr(document, "verification_status", None),
+            download_url=download_url,
+            download_url_expires_in_seconds=download_url_expires_in_seconds,
         )
 
     def _to_correction_response(self, correction) -> VerificationRequestCorrectionResponse:  # noqa: ANN001
@@ -1117,6 +1457,22 @@ class VerificationRequestService:
         if payload.note:
             metadata["note"] = payload.note
         return metadata
+
+    def _derive_review_status(self, request: VerificationRequest) -> str | None:
+        if request.status in {
+            VerificationRequestStatus.VERIFIED,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.EXPIRED,
+        }:
+            return "completed"
+        if request.status == VerificationRequestStatus.AWAITING_INFORMATION:
+            return "clarification_requested"
+        if request.assigned_to_user_id is not None:
+            return "assigned"
+        if request.organization_id is not None:
+            return "unassigned"
+        return None
 
     def _normalize_email(self, email: str) -> str:
         return email.strip().lower()

@@ -10,8 +10,11 @@ from app.api.v1.routes import (
     admin_employer_verifications,
     admin_directory,
     admin_verification,
+    account_settings,
     auth,
     certifications,
+    projects,
+    skills,
     credential_verification,
     dashboard,
     documents,
@@ -25,6 +28,7 @@ from app.api.v1.routes import (
     notifications,
     onboarding,
     organizations,
+    organization_people,
     passport,
     passport_shares,
     portfolio,
@@ -41,6 +45,7 @@ from app.api.v1.routes import (
     verification_connectors,
     user_documents,
     users,
+    workspace,
     resumes,
     resume_reviews,
 )
@@ -48,6 +53,7 @@ from app.api.v1.routes import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(account_settings.router)
 api_router.include_router(users.router)
 api_router.include_router(resumes.router)
 api_router.include_router(resume_reviews.resume_router)
@@ -55,6 +61,8 @@ api_router.include_router(resume_reviews.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
+api_router.include_router(organization_people.router)
+api_router.include_router(workspace.router)
 api_router.include_router(trust_invitations.org_router)
 api_router.include_router(verification_requests.org_router)
 api_router.include_router(employments.router)
@@ -73,6 +81,7 @@ api_router.include_router(admin_employer_verifications.router)
 api_router.include_router(admin_directory.router)
 api_router.include_router(admin_verification.router)
 api_router.include_router(notifications.admin_router)
+api_router.include_router(notifications.user_router)
 api_router.include_router(verification_connectors.admin_router)
 api_router.include_router(trust_registry.admin_router)
 api_router.include_router(trust_registry.internal_router)
@@ -87,4 +96,6 @@ api_router.include_router(trust_invitations.router)
 api_router.include_router(verification_requests.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(certifications.router)
+api_router.include_router(projects.router)
+api_router.include_router(skills.router)
 api_router.include_router(trust_score.router)

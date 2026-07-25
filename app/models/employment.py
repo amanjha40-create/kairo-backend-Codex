@@ -18,6 +18,7 @@ from app.employment.enums import EmploymentType, VerificationMethod, Verificatio
 if TYPE_CHECKING:
     from app.models.employer_verification_request import EmployerVerificationRequest
     from app.models.employment_document import EmploymentDocument
+    from app.models.organization_person import OrganizationPerson
     from app.models.verification_audit import VerificationAuditEvent
     from app.models.verification_request import VerificationRequest
 
@@ -39,6 +40,12 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         index=True,
         nullable=False,
     )
+    organization_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organization_people.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     subject_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     subject_email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
     employer_legal_name: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
@@ -52,7 +59,7 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    work_location_country: Mapped[str] = mapped_column(String(2), nullable=False)
+    work_location_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     work_location_region: Mapped[str | None] = mapped_column(String(128), nullable=True)
     verification_method: Mapped[str] = mapped_column(
         String(32),
@@ -92,6 +99,10 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         back_populates="employment",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+    organization_person: Mapped["OrganizationPerson | None"] = relationship(
+        "OrganizationPerson",
+        back_populates="employments",
     )
     documents: Mapped[list["EmploymentDocument"]] = relationship(
         "EmploymentDocument",

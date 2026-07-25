@@ -13,6 +13,8 @@ from app.repositories.notification import (
     NotificationRepository,
 )
 from app.repositories.organization import OrganizationRepository
+from app.repositories.organization_invitation import OrganizationInvitationRepository
+from app.repositories.organization_person import OrganizationPersonRepository
 from app.repositories.password_reset_token import PasswordResetTokenRepository
 from app.repositories.passport_share import PassportShareRepository
 from app.repositories.passport_share_view import PassportShareViewRepository
@@ -39,6 +41,8 @@ __all__ = [
     "NotificationPreferenceRepository",
     "NotificationRepository",
     "OrganizationRepository",
+    "OrganizationInvitationRepository",
+    "OrganizationPersonRepository",
     "PasswordResetTokenRepository",
     "PassportShareRepository",
     "PassportShareViewRepository",

@@ -19,6 +19,7 @@ from app.services.notification_email_channel import NotificationEmailChannel
 from app.services.notification_preference_service import NotificationPreferenceService
 from app.services.notification_service import NotificationService
 from app.services.notification_template_resolver import NotificationTemplateResolver
+from app.services.organization_person_service import OrganizationPersonService
 from app.services.organization_service import OrganizationService
 from app.services.passport_engine_service import PassportEngineService
 from app.services.passport_share_service import PassportShareService
@@ -35,6 +36,7 @@ from app.services.verification_request_service import VerificationRequestService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.services.verification_queue_service import VerificationQueueService
 from app.services.verification_service import VerificationService
+from app.services.workspace_service import WorkspaceService
 from app.services.resume_service import ResumeService
 
 __all__ = [
@@ -58,6 +60,7 @@ __all__ = [
     "NotificationPreferenceService",
     "NotificationService",
     "NotificationTemplateResolver",
+    "OrganizationPersonService",
     "OrganizationService",
     "PassportEngineService",
     "PassportShareService",
@@ -74,5 +77,6 @@ __all__ = [
     "VerificationRequestWorkflowService",
     "VerificationQueueService",
     "VerificationService",
+    "WorkspaceService",
     "ResumeService",
 ]

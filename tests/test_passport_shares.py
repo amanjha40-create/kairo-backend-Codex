@@ -35,7 +35,7 @@ class FakePassportShareService:
 
     async def create(self, owner_user_id, payload) -> PassportShareCreateResponse:  # noqa: ANN001
         base = self._base_response()
-        return PassportShareCreateResponse(**base.model_dump(), share_url="https://app.example.com/p/raw-token")
+        return PassportShareCreateResponse(**base.model_dump(), share_url="https://app.example.com/passport/raw-token")
 
     async def list_for_user(self, owner_user_id, *, offset=0, limit=20):  # noqa: ANN001
         return [self._base_response()], 1
@@ -70,7 +70,7 @@ async def test_create_passport_share_returns_share_url_once() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 201
     body = response.json()
-    assert body["share_url"] == "https://app.example.com/p/raw-token"
+    assert body["share_url"] == "https://app.example.com/passport/raw-token"
     assert body["state"] == "active"
 
 

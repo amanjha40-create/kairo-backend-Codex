@@ -10,16 +10,25 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_trust_invitation_service
-from app.exceptions import ForbiddenError, NotFoundError
+from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
 from app.schemas.pagination import filter_sort_paginate
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
     TrustInvitationCreateResponse,
+    TrustInvitationDetailResponse,
     TrustInvitationPublicLookupResponse,
     TrustInvitationResponse,
+    TrustInvitationSummaryResponse,
+    TrustInvitationTimelineEventResponse,
 )
-from app.trust_invitations.enums import TrustInvitationStatus
+from app.trust_invitations.enums import (
+    TrustInvitationDeliveryMethod,
+    TrustInvitationDeliveryState,
+    TrustInvitationEventType,
+    TrustInvitationStatus,
+    TrustInvitationVerificationType,
+)
 
 
 class FakeTrustInvitationService:
@@ -28,41 +37,143 @@ class FakeTrustInvitationService:
         self._invitation_public_id = uuid4()
         self._now = datetime.now(tz=UTC)
 
-    def _response(self, status: TrustInvitationStatus = TrustInvitationStatus.PENDING) -> TrustInvitationResponse:
+    def _timeline(self) -> list[TrustInvitationTimelineEventResponse]:
+        return [
+            TrustInvitationTimelineEventResponse(
+                id=uuid4(),
+                event_type=TrustInvitationEventType.CREATED,
+                occurred_at=self._now - timedelta(days=1),
+                actor_user_id=uuid4(),
+                actor_email="owner@example.com",
+                actor_full_name="Owner User",
+                metadata={},
+            ),
+            TrustInvitationTimelineEventResponse(
+                id=uuid4(),
+                event_type=TrustInvitationEventType.SENT,
+                occurred_at=self._now - timedelta(hours=20),
+                actor_user_id=uuid4(),
+                actor_email="owner@example.com",
+                actor_full_name="Owner User",
+                metadata={},
+            ),
+        ]
+
+    def _response(
+        self,
+        status: TrustInvitationStatus = TrustInvitationStatus.PENDING,
+        *,
+        delivery_state: TrustInvitationDeliveryState = TrustInvitationDeliveryState.DELIVERED,
+    ) -> TrustInvitationResponse:
         accepted_at = self._now if status == TrustInvitationStatus.ACCEPTED else None
         cancelled_at = self._now if status == TrustInvitationStatus.CANCELLED else None
+        opened_at = self._now if delivery_state == TrustInvitationDeliveryState.OPENED else None
+        sent_at = self._now - timedelta(hours=20) if status != TrustInvitationStatus.DRAFT else None
         return TrustInvitationResponse(
             public_id=self._invitation_public_id,
             organization_public_id=self._org_public_id,
             subject_name="Aman Jha",
             subject_email="aman3@test.com",
+            subject_phone="+919999999999",
+            purpose="Software Engineer Hiring",
+            requested_verification_types=[
+                TrustInvitationVerificationType.IDENTITY,
+                TrustInvitationVerificationType.EMPLOYMENT,
+            ],
+            message="Please complete this verification.",
             status=status,
+            delivery_method=TrustInvitationDeliveryMethod.EMAIL,
+            delivery_state=delivery_state,
+            created_by_email="owner@example.com",
+            created_by_full_name="Owner User",
             expires_at=self._now + timedelta(days=3),
+            sent_at=sent_at,
+            opened_at=opened_at,
             accepted_at=accepted_at,
             cancelled_at=cancelled_at,
-            created_at=self._now,
+            related_verification_request_public_id=uuid4() if status == TrustInvitationStatus.ACCEPTED else None,
+            created_at=self._now - timedelta(days=1),
             updated_at=self._now,
         )
 
     async def create(self, actor_user_id, org_public_id, payload):  # noqa: ANN001
+        status = TrustInvitationStatus.DRAFT if payload.mode == "draft" else TrustInvitationStatus.PENDING
+        delivery_state = (
+            TrustInvitationDeliveryState.QUEUED
+            if status == TrustInvitationStatus.DRAFT
+            else TrustInvitationDeliveryState.DELIVERED
+        )
         return TrustInvitationCreateResponse(
-            **self._response().model_dump(),
-            invitation_url="https://api.example.com/api/v1/trust-invitations/raw-token",
+            **self._response(status, delivery_state=delivery_state).model_dump(),
+            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+        )
+
+    async def get_summary(self, actor_user_id, org_public_id):  # noqa: ANN001
+        return TrustInvitationSummaryResponse(
+            active_count=4,
+            accepted_count=2,
+            cancelled_count=1,
+            expiring_soon_count=1,
+            draft_count=1,
         )
 
     async def list_for_organization(self, actor_user_id, org_public_id, params=None):  # noqa: ANN001
         if org_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
             raise NotFoundError("Organization not found")
-        items = [self._response(), self._response(TrustInvitationStatus.ACCEPTED)]
+        items = [
+            self._response(),
+            self._response(TrustInvitationStatus.ACCEPTED, delivery_state=TrustInvitationDeliveryState.OPENED),
+        ]
         if params:
             return filter_sort_paginate(
                 items,
                 params=params,
-                search_fields=("subject_name", "subject_email", "status"),
-                allowed_sort_fields=("created_at", "updated_at", "expires_at", "subject_name", "subject_email", "status"),
+                search_fields=("subject_name", "subject_email", "purpose", "status", "delivery_state"),
+                allowed_sort_fields=(
+                    "created_at",
+                    "updated_at",
+                    "expires_at",
+                    "subject_name",
+                    "subject_email",
+                    "purpose",
+                    "status",
+                    "delivery_state",
+                    "sent_at",
+                    "opened_at",
+                ),
                 default_sort_by="created_at",
             )
         return items
+
+    async def get_detail(self, actor_user_id, invitation_public_id):  # noqa: ANN001
+        if invitation_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
+            raise NotFoundError("Trust invitation not found")
+        return TrustInvitationDetailResponse(
+            **self._response().model_dump(),
+            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            timeline=self._timeline(),
+        )
+
+    async def send(self, actor_user_id, invitation_public_id):  # noqa: ANN001
+        return TrustInvitationDetailResponse(
+            **self._response().model_dump(),
+            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            timeline=self._timeline(),
+        )
+
+    async def resend(self, actor_user_id, invitation_public_id):  # noqa: ANN001
+        if invitation_public_id == UUID("00000000-0000-0000-0000-00000000dddd"):
+            raise ConflictError("Expired trust invitations are no longer actionable")
+        return TrustInvitationDetailResponse(
+            **self._response().model_dump(),
+            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            timeline=self._timeline(),
+        )
+
+    async def delete(self, actor_user_id, invitation_public_id):  # noqa: ANN001
+        if invitation_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
+            raise NotFoundError("Trust invitation not found")
+        return None
 
     async def get_public_by_token(self, raw_token: str) -> TrustInvitationPublicLookupResponse:
         if raw_token in {"unknown-token", "accepted-token", "expired-token", "cancelled-token"}:
@@ -71,6 +182,11 @@ class FakeTrustInvitationService:
             public_id=self._invitation_public_id,
             organization_name="Kairo Verification Ops",
             subject_name="Aman Jha",
+            purpose="Software Engineer Hiring",
+            requested_verification_types=[
+                TrustInvitationVerificationType.IDENTITY,
+                TrustInvitationVerificationType.EMPLOYMENT,
+            ],
             expires_at=self._now + timedelta(days=3),
             status=TrustInvitationStatus.PENDING,
         )
@@ -115,6 +231,10 @@ async def test_create_trust_invitation_returns_url_once() -> None:
             json={
                 "subject_name": "Aman Jha",
                 "subject_email": "aman3@test.com",
+                "purpose": "Software Engineer Hiring",
+                "requested_verification_types": ["identity", "employment"],
+                "delivery_method": "email",
+                "mode": "send",
                 "expires_at": (datetime.now(tz=UTC) + timedelta(days=3)).isoformat(),
             },
         )
@@ -122,7 +242,8 @@ async def test_create_trust_invitation_returns_url_once() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 201
     body = response.json()
-    assert body["invitation_url"] == "https://api.example.com/api/v1/trust-invitations/raw-token"
+    assert body["invitation_url"] == "https://api.example.com/api/v1/trust-invitations/v2.token.signature"
+    assert body["purpose"] == "Software Engineer Hiring"
 
 
 @pytest.mark.asyncio
@@ -140,6 +261,7 @@ async def test_list_trust_invitations_omits_url() -> None:
     body = response.json()
     assert len(body) == 2
     assert "invitation_url" not in body[0]
+    assert body[0]["delivery_state"] == "delivered"
 
 
 @pytest.mark.asyncio
@@ -159,6 +281,78 @@ async def test_list_trust_invitations_supports_paginated_mode() -> None:
     body = response.json()
     assert body["total"] == 2
     assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_endpoint_returns_workspace_counts() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/organizations/{org_public_id}/trust-invitations/summary")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["active_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_authenticated_detail_returns_timeline_and_url() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/trust-invitations/by-id/{uuid4()}")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["invitation_url"] == "https://api.example.com/api/v1/trust-invitations/v2.token.signature"
+    assert body["timeline"][0]["event_type"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_send_endpoint_returns_detail_payload() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(f"/api/v1/trust-invitations/{uuid4()}/send")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_resend_endpoint_maps_conflict() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/trust-invitations/00000000-0000-0000-0000-00000000dddd/resend")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_delete_draft_returns_no_content() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete(f"/api/v1/trust-invitations/{uuid4()}")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 204
 
 
 @pytest.mark.asyncio
@@ -188,6 +382,7 @@ async def test_public_lookup_returns_sanitized_payload() -> None:
     body = response.json()
     assert body["organization_name"] == "Kairo Verification Ops"
     assert "subject_email" not in body
+    assert body["requested_verification_types"] == ["identity", "employment"]
 
 
 @pytest.mark.asyncio

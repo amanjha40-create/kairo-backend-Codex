@@ -70,7 +70,7 @@ class EmployerPortalEmployment(BaseModel):
     employment_type: str
     start_date: str
     end_date: str | None = None
-    country: str
+    country: str | None
     region: str | None = None
 
 

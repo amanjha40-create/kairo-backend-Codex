@@ -6,7 +6,7 @@ from typing import Literal
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.public_passport import PublicPassportVault
 from app.schemas.trust_score import TrustScoreResponse
@@ -27,6 +27,8 @@ class PassportVerificationSummary(BaseModel):
     gig_platforms: PassportSectionStatusSummary
     portfolio: PassportSectionStatusSummary
     certifications: PassportSectionStatusSummary
+    skills: PassportSectionStatusSummary = Field(default_factory=lambda: PassportSectionStatusSummary(total=0, statuses={}))
+    projects: PassportSectionStatusSummary = Field(default_factory=lambda: PassportSectionStatusSummary(total=0, statuses={}))
     user_documents: PassportSectionStatusSummary
 
 
@@ -72,6 +74,8 @@ class DashboardVaultSummary(BaseModel):
     gig_platforms: int
     portfolio: int
     certifications: int
+    skills: int = 0
+    projects: int = 0
     user_documents: int
 
 
@@ -109,6 +113,7 @@ class DashboardActivityItem(BaseModel):
 
 class DashboardResponse(BaseModel):
     profile_completion: OnboardingStatusResponse
+    profile_completion_percentage: int = 0
     trust_score: TrustScoreResponse
     verification_summary: PassportVerificationSummary
     vault_summary: DashboardVaultSummary

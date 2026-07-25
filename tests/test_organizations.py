@@ -12,7 +12,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_organization_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
-from app.organization.enums import OrganizationRole, OrganizationType
+from app.organization.enums import OrganizationRole, OrganizationType, OrganizationVerificationState
 from app.schemas.organization import OrganizationMemberResponse, OrganizationResponse
 from app.schemas.pagination import filter_sort_paginate
 
@@ -28,6 +28,16 @@ class FakeOrganizationService:
             public_id=self._org_public_id,
             name="Kairo Labs",
             organization_type=OrganizationType.EMPLOYER,
+            website="https://kairo.example",
+            industry="Software",
+            location="Bengaluru, IN",
+            work_email="owner@kairo.example",
+            domain="kairo.example",
+            domain_verified_at=None,
+            verification_state=OrganizationVerificationState.VERIFICATION_PENDING,
+            setup_completed_at=self._now,
+            suspended_at=None,
+            suspension_reason=None,
             verification_capabilities=["employment"],
             my_role=OrganizationRole.OWNER,
             member_count=2,
@@ -42,6 +52,8 @@ class FakeOrganizationService:
             role=role,
             user_email="member@example.com",
             user_full_name="Team Member",
+            suspended_at=None,
+            suspension_reason=None,
             created_at=self._now,
             updated_at=self._now,
         )
@@ -62,6 +74,11 @@ class FakeOrganizationService:
         return items
 
     async def get_organization(self, actor_user_id, org_public_id: UUID):  # noqa: ANN001
+        if org_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
+            raise NotFoundError("Organization not found")
+        return self._organization()
+
+    async def update_organization(self, actor_user_id, org_public_id, payload):  # noqa: ANN001
         if org_public_id == UUID("00000000-0000-0000-0000-00000000ffff"):
             raise NotFoundError("Organization not found")
         return self._organization()
@@ -257,6 +274,26 @@ async def test_member_without_manage_access_is_blocked() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "forbidden"
+
+
+@pytest.mark.asyncio
+async def test_update_organization_returns_updated_shape() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch(
+            f"/api/v1/organizations/{org_public_id}",
+            json={"website": "https://kairo.example", "domain": "kairo.example"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["website"] == "https://kairo.example"
+    assert body["verification_state"] == "verification_pending"
 
 
 @pytest.mark.asyncio

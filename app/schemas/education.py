@@ -47,6 +47,14 @@ class EducationUpdateRequest(BaseModel):
     end_date: date | None = None
     is_currently_studying: bool | None = None
 
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        if self.is_currently_studying is True and self.end_date is not None:
+            raise ValueError("end_date must be null when is_currently_studying is true")
+        return self
+
 
 class EducationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)

@@ -5,20 +5,20 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
 
 
 class PortfolioItemCreateRequest(BaseModel):
-    title: str
-    description: str | None = None
-    url: str | None = None
+    title: str = Field(min_length=1, max_length=512)
+    description: str | None = Field(default=None, max_length=5000)
+    url: AnyHttpUrl | None = None
     tags: list[str] | None = None  # will be stored comma-separated
 
 
 class PortfolioItemUpdateRequest(BaseModel):
-    title: str | None = None
-    description: str | None = None
-    url: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    description: str | None = Field(default=None, max_length=5000)
+    url: AnyHttpUrl | None = None
     tags: list[str] | None = None
 
 

@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
+from app.organization.enums import OrganizationType, OrganizationVerificationState
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -71,6 +72,34 @@ class VerificationRequestActionPayload(BaseModel):
 
     note: str | None = Field(default=None, max_length=1000)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VerificationRequestAssignReviewerRequest(BaseModel):
+    organization_member_public_id: UUID | None = None
+    assignee_user_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_assignment_target(self) -> "VerificationRequestAssignReviewerRequest":
+        if (
+            self.organization_member_public_id is not None
+            and self.assignee_user_id is not None
+        ):
+            raise ValueError(
+                "Provide only one of organization_member_public_id or assignee_user_id"
+            )
+        return self
+
+
+class VerificationRequestInternalNoteUpdateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    note: str | None = Field(default=None, max_length=5000)
+
+
+class VerificationRequestInformationSubmissionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    response: str = Field(min_length=1, max_length=4000)
 
 
 class SubjectVerificationRequestCreateRequest(BaseModel):
@@ -137,6 +166,43 @@ class VerificationRequestEvidenceUpdateRequest(BaseModel):
         return self
 
 
+class VerificationReviewerSummary(BaseModel):
+    user_id: UUID
+    full_name: str | None
+    email: EmailStr
+    role: str
+
+
+class VerificationRequestOrganizationSummary(BaseModel):
+    public_id: UUID
+    name: str
+    organization_type: OrganizationType
+    verification_state: OrganizationVerificationState
+    suspended_at: datetime | None
+
+
+class VerificationRequestTargetResponse(BaseModel):
+    organization_name: str | None = None
+    organization_email: EmailStr | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VerificationRequestEmploymentClaimResponse(BaseModel):
+    employer_name: str | None = None
+    role: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    employment_type: str | None = None
+    work_location_country: str | None = None
+    work_location_region: str | None = None
+
+
+class VerificationRequestEvidenceSummaryResponse(BaseModel):
+    total_items: int = 0
+    document_items: int = 0
+    field_keys: list[str] = Field(default_factory=list)
+
+
 class VerificationRequestResponse(BaseModel):
     public_id: UUID
     employment_id: UUID | None = None
@@ -153,6 +219,22 @@ class VerificationRequestResponse(BaseModel):
     trust_context: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    candidate_response: str | None = None
+    candidate_response_submitted_at: datetime | None = None
+    accepted_at: datetime | None = None
+    consented_fields: list[str] = Field(default_factory=list)
+    consented_evidence_scope: list[str] = Field(default_factory=list)
+    target_organization_metadata: dict[str, Any] = Field(default_factory=dict)
+    organization_summary: VerificationRequestOrganizationSummary | None = None
+    verification_target: VerificationRequestTargetResponse | None = None
+    employment_claim: VerificationRequestEmploymentClaimResponse | None = None
+    evidence_summary: VerificationRequestEvidenceSummaryResponse = Field(
+        default_factory=VerificationRequestEvidenceSummaryResponse
+    )
+    assigned_reviewer: VerificationReviewerSummary | None = None
+    review_status: str | None = None
+    is_assigned_to_current_user: bool | None = None
+    organization_internal_note: str | None = None
 
 
 class VerificationRequestEvidenceResponse(BaseModel):
@@ -165,6 +247,13 @@ class VerificationRequestEvidenceResponse(BaseModel):
     status: VerificationRequestEvidenceStatus
     created_at: datetime
     updated_at: datetime
+    document_type: str | None = None
+    original_filename: str | None = None
+    mime_type: str | None = None
+    file_size: int | None = None
+    upload_status: str | None = None
+    download_url: str | None = None
+    download_url_expires_in_seconds: int | None = None
 
 
 class VerificationRequestCorrectionResponse(BaseModel):

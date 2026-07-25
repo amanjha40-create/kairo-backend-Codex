@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.passport_share import PassportSharePermissions
 from app.schemas.trust_score import TrustScoreResponse
@@ -105,6 +105,25 @@ class PublicPassportCertification(BaseModel):
     verification_status: str
 
 
+class PublicPassportSkill(BaseModel):
+    name: str
+    verification_status: str
+
+
+class PublicPassportProject(BaseModel):
+    id: uuid.UUID
+    title: str
+    role: str | None
+    description: str | None
+    start_date: date | None
+    end_date: date | None
+    is_ongoing: bool
+    project_url: str | None
+    repository_url: str | None
+    organization_name: str | None
+    verification_status: str
+
+
 class PublicPassportUserDocument(BaseModel):
     id: uuid.UUID
     document_type: str
@@ -122,6 +141,8 @@ class PublicPassportVault(BaseModel):
     gig_platforms: list[PublicPassportGigPlatform]
     portfolio: list[PublicPassportPortfolioItem]
     certifications: list[PublicPassportCertification]
+    skills: list[PublicPassportSkill] = Field(default_factory=list)
+    projects: list[PublicPassportProject] = Field(default_factory=list)
     user_documents: list[PublicPassportUserDocument]
 
 

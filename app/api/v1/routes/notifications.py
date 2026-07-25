@@ -5,21 +5,59 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
+from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_notification_service
-from app.api.dependencies.verification_admin import CurrentUser, require_reviewer, require_view_cases
+from app.api.dependencies.verification_admin import require_reviewer, require_view_cases
 from app.schemas.notification import (
     NotificationDetailResponse,
     NotificationDeliveryResponse,
     NotificationEventResponse,
     NotificationResponse,
     NotificationStatisticsResponse,
+    NotificationUnreadCountResponse,
+    UserNotificationResponse,
 )
 from app.schemas.pagination import ListQueryParams, Page
 from app.services.notification_service import NotificationService
 
 admin_router = APIRouter(prefix="/admin/notifications", tags=["notifications"])
+user_router = APIRouter(prefix="/notifications", tags=["notifications"])
+
+
+@user_router.get("", response_model=Page[UserNotificationResponse])
+async def list_user_notifications(
+    params: Annotated[ListQueryParams, Depends()],
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> Page[UserNotificationResponse]:
+    return await svc.list_user_notifications(current.id, params)
+
+
+@user_router.get("/unread-count", response_model=NotificationUnreadCountResponse)
+async def get_unread_count(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> NotificationUnreadCountResponse:
+    return await svc.unread_count(current.id)
+
+
+@user_router.post("/{notification_public_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_notification_read(
+    notification_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> None:
+    await svc.mark_user_read(current.id, notification_public_id)
+
+
+@user_router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_all_notifications_read(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> None:
+    await svc.mark_user_read_all(current.id)
 
 
 @admin_router.get("/statistics/summary", response_model=NotificationStatisticsResponse)

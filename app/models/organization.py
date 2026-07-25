@@ -12,11 +12,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
-from app.db.pg_enums import organization_type_enum
-from app.organization.enums import OrganizationType
+from app.db.pg_enums import organization_type_enum, organization_verification_state_enum
+from app.organization.enums import OrganizationType, OrganizationVerificationState
 
 if TYPE_CHECKING:
+    from app.models.organization_invitation import OrganizationInvitation
     from app.models.organization_member import OrganizationMember
+    from app.models.organization_person import OrganizationPerson
     from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.trust_invitation import TrustInvitation
     from app.models.verification_request import VerificationRequest
@@ -36,6 +38,21 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     organization_type: Mapped[OrganizationType] = mapped_column(organization_type_enum, nullable=False)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    work_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    domain_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_state: Mapped[OrganizationVerificationState] = mapped_column(
+        organization_verification_state_enum,
+        nullable=False,
+        default=OrganizationVerificationState.SETUP_INCOMPLETE,
+        server_default=OrganizationVerificationState.SETUP_INCOMPLETE.value,
+    )
+    setup_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    suspension_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
     verification_capabilities: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
@@ -68,8 +85,18 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="organization",
         cascade="all, delete-orphan",
     )
+    invitations: Mapped[list["OrganizationInvitation"]] = relationship(
+        "OrganizationInvitation",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
     trust_invitations: Mapped[list["TrustInvitation"]] = relationship(
         "TrustInvitation",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    people: Mapped[list["OrganizationPerson"]] = relationship(
+        "OrganizationPerson",
         back_populates="organization",
         cascade="all, delete-orphan",
     )

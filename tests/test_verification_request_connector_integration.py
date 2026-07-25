@@ -193,12 +193,12 @@ async def test_verify_uses_connector_and_marks_request_verified() -> None:
         if req.status in allowed_current_statuses:
             req.status = VerificationRequestStatus.IN_PROGRESS
 
-    async def _commit_and_reload(request_public_id: UUID) -> VerificationRequestResponse:
+    async def _commit_reload_org_response(request_public_id: UUID, actor_user_id: UUID) -> VerificationRequestResponse:  # noqa: ARG001
         return _to_response(request)
 
     service._require_manageable_request = _require_manageable_request  # type: ignore[assignment]
     service._transition_to_in_progress_if_needed = _transition_to_in_progress_if_needed  # type: ignore[assignment]
-    service._commit_and_reload = _commit_and_reload  # type: ignore[assignment]
+    service._commit_reload_org_response = _commit_reload_org_response  # type: ignore[assignment]
 
     response = await service.verify(
         actor_user_id=uuid4(),
@@ -245,12 +245,12 @@ async def test_verify_marks_request_rejected_for_negative_connector_result() -> 
         if req.status in allowed_current_statuses:
             req.status = VerificationRequestStatus.IN_PROGRESS
 
-    async def _commit_and_reload(request_public_id: UUID) -> VerificationRequestResponse:  # noqa: ARG001
+    async def _commit_reload_org_response(request_public_id: UUID, actor_user_id: UUID) -> VerificationRequestResponse:  # noqa: ARG001
         return _to_response(request)
 
     service._require_manageable_request = _require_manageable_request  # type: ignore[assignment]
     service._transition_to_in_progress_if_needed = _transition_to_in_progress_if_needed  # type: ignore[assignment]
-    service._commit_and_reload = _commit_and_reload  # type: ignore[assignment]
+    service._commit_reload_org_response = _commit_reload_org_response  # type: ignore[assignment]
 
     response = await service.verify(
         actor_user_id=uuid4(),
@@ -325,12 +325,12 @@ async def test_verify_survives_notification_delivery_failure() -> None:
         if req.status in allowed_current_statuses:
             req.status = VerificationRequestStatus.IN_PROGRESS
 
-    async def _commit_and_reload(request_public_id: UUID) -> VerificationRequestResponse:  # noqa: ARG001
+    async def _commit_reload_org_response(request_public_id: UUID, actor_user_id: UUID) -> VerificationRequestResponse:  # noqa: ARG001
         return _to_response(request)
 
     service._require_manageable_request = _require_manageable_request  # type: ignore[assignment]
     service._transition_to_in_progress_if_needed = _transition_to_in_progress_if_needed  # type: ignore[assignment]
-    service._commit_and_reload = _commit_and_reload  # type: ignore[assignment]
+    service._commit_reload_org_response = _commit_reload_org_response  # type: ignore[assignment]
 
     response = await service.verify(
         actor_user_id=uuid4(),
