@@ -34,7 +34,6 @@ from app.services.notification_service import NotificationService
 from app.services.organization_person_service import OrganizationPersonService
 from app.services.organization_service import OrganizationService
 from app.trust_invitations.enums import (
-    TrustInvitationDeliveryMethod,
     TrustInvitationDeliveryState,
     TrustInvitationEventType,
     TrustInvitationStatus,

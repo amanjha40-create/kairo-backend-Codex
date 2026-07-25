@@ -16,7 +16,6 @@ from app.models.organization_person_passport_access import OrganizationPersonPas
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
 from app.models.verification_request import VerificationRequest
-from app.models.verification_request_event import VerificationRequestEvent
 
 
 class OrganizationPersonRepository:
