@@ -13,6 +13,9 @@ from app.main import app
 from app.schemas.auth import (
     ForgotPasswordResponse,
     LoginRequest,
+    OrganizationSignupEmailSendResponse,
+    OrganizationSignupEmailVerifyResponse,
+    OrganizationSignupStartResponse,
     SignupChannelSendResponse,
     SignupChannelVerifyResponse,
     SignupStartResponse,
@@ -21,6 +24,38 @@ from app.schemas.auth import (
 
 
 class FakeAuthService:
+    async def start_organization_signup(self, payload) -> OrganizationSignupStartResponse:  # noqa: ANN001
+        assert payload.work_email == "staff@example.com"
+        return OrganizationSignupStartResponse(
+            signup_session_id=uuid4(),
+            email_masked="st***@example.com",
+            email_resend_after_seconds=0,
+            expires_in_seconds=86400,
+        )
+
+    async def send_organization_signup_email_otp(self, payload) -> OrganizationSignupEmailSendResponse:  # noqa: ANN001
+        return OrganizationSignupEmailSendResponse(
+            signup_session_id=payload.signup_session_id,
+            email_masked="st***@example.com",
+            email_verified=False,
+            resend_after_seconds=30,
+            expires_in_seconds=300,
+        )
+
+    async def verify_organization_signup_email(self, payload) -> OrganizationSignupEmailVerifyResponse:  # noqa: ANN001
+        return OrganizationSignupEmailVerifyResponse(
+            signup_session_id=payload.signup_session_id,
+            email_verified=True,
+            message="Email verified",
+        )
+
+    async def complete_organization_signup(self, payload) -> TokenResponse:  # noqa: ANN001
+        return TokenResponse(
+            access_token="organization-access-token",
+            refresh_token="organization-refresh-token",
+            expires_in=900,
+        )
+
     async def start_signup(self, payload) -> SignupStartResponse:  # noqa: ANN001
         assert payload.phone == "+919876543210"
         return SignupStartResponse(
@@ -183,6 +218,46 @@ async def test_dual_signup_routes_expose_phase1_contract() -> None:
     assert complete.status_code == 200
     assert complete.json()["access_token"] == "access-token"
     assert complete.json()["refresh_token"] == "refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_organization_signup_routes_are_email_only_and_return_tokens() -> None:
+    fake = FakeAuthService()
+    app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
+    signup_session_id = str(uuid4())
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        start = await client.post(
+            "/api/v1/auth/organization/signup/start",
+            json={
+                "full_name": "Workspace Reviewer",
+                "work_email": "staff@example.com",
+                "password": "StrongPassword123!",
+            },
+        )
+        email_send = await client.post(
+            "/api/v1/auth/organization/signup/email/send",
+            json={"signup_session_id": signup_session_id},
+        )
+        email_verify = await client.post(
+            "/api/v1/auth/organization/signup/email/verify",
+            json={"signup_session_id": signup_session_id, "code": "123456"},
+        )
+        complete = await client.post(
+            "/api/v1/auth/organization/signup/complete",
+            json={"signup_session_id": signup_session_id},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert start.status_code == 201
+    assert "phone" not in start.json()
+    assert email_send.status_code == 200
+    assert email_verify.status_code == 200
+    assert complete.status_code == 200
+    assert complete.json()["access_token"] == "organization-access-token"
 
 
 @pytest.mark.asyncio

@@ -10,12 +10,13 @@ from typing import Literal
 from uuid import UUID
 
 from redis.asyncio import Redis
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.email_utils import mask_email, normalize_email
+from app.auth.passwords import hash_password, password_needs_rehash, verify_password
 from app.auth.phone_utils import mask_phone, normalize_phone
 from app.auth.provider_registry import get_provider
-from app.auth.passwords import hash_password, password_needs_rehash, verify_password
 from app.auth.signup_otp import SignupOtpStore, generate_otp_code
 from app.auth.tokens import (
     create_access_token,
@@ -23,9 +24,7 @@ from app.auth.tokens import (
     hash_refresh_token,
 )
 from app.config import Settings
-from app.core.constants import Role
-from sqlalchemy.exc import IntegrityError
-
+from app.core.constants import Role, SignupKind
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
@@ -44,18 +43,22 @@ from app.schemas.auth import (
     LoginRequest,
     OAuthAuthUrlResponse,
     OAuthCallbackRequest,
+    OrganizationSignupEmailSendResponse,
+    OrganizationSignupEmailVerifyResponse,
+    OrganizationSignupStartRequest,
+    OrganizationSignupStartResponse,
     RefreshRequest,
     RegisterRequest,
     ResetPasswordRequest,
     ResetPasswordResponse,
     SetPasswordRequest,
     SetPasswordResponse,
-    SignupResendRequest,
-    SignupResendResponse,
     SignupChannelRequest,
     SignupChannelSendResponse,
     SignupChannelVerifyResponse,
     SignupCompleteRequest,
+    SignupResendRequest,
+    SignupResendResponse,
     SignupStartResponse,
     SignupVerifyRequest,
     TokenResponse,
@@ -115,6 +118,7 @@ class AuthService:
             phone=phone,
             full_name=data.full_name,
             password_hash=hash_password(data.password),
+            signup_kind=SignupKind.CANDIDATE,
         )
         await self._session.commit()
 
@@ -130,29 +134,88 @@ class AuthService:
             message="Signup session created",
         )
 
+    async def start_organization_signup(
+        self,
+        data: OrganizationSignupStartRequest,
+    ) -> OrganizationSignupStartResponse:
+        """Create an email-only staged signup for organization workspace staff."""
+
+        email = normalize_email(str(data.work_email))
+        if await self._users.get_by_email(email) is not None:
+            raise ConflictError("An account already exists with this email")
+
+        pending = await self._get_or_prepare_pending_signup(
+            email=email,
+            phone=None,
+            full_name=data.full_name,
+            password_hash=hash_password(data.password),
+            signup_kind=SignupKind.ORGANIZATION,
+        )
+        await self._session.commit()
+        return OrganizationSignupStartResponse(
+            signup_session_id=pending.id,
+            email_masked=mask_email(email),
+            email_verified=pending.email_verified_at is not None,
+            email_resend_after_seconds=self._otp.seconds_until_resend_allowed(pending.email_last_otp_sent_at),
+            expires_in_seconds=int((pending.expires_at - datetime.now(tz=UTC)).total_seconds()),
+        )
+
+    async def send_organization_signup_email_otp(
+        self,
+        data: SignupChannelRequest,
+    ) -> OrganizationSignupEmailSendResponse:
+        pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.ORGANIZATION)
+        if pending.email_verified_at is not None:
+            return self._build_organization_email_send_response(pending, verified=True, message="Email already verified")
+        await self._send_channel_otp(pending, "email")
+        return self._build_organization_email_send_response(pending, verified=False, message="Verification code sent")
+
+    async def verify_organization_signup_email(
+        self,
+        data: SignupVerifyRequest,
+    ) -> OrganizationSignupEmailVerifyResponse:
+        pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.ORGANIZATION)
+        result = await self._verify_channel_otp(pending, "email", data.code)
+        return OrganizationSignupEmailVerifyResponse(
+            signup_session_id=result.signup_session_id,
+            email_verified=result.email_verified,
+            message=result.message,
+        )
+
+    async def complete_organization_signup(self, data: SignupCompleteRequest) -> TokenResponse:
+        pending = await self._load_active_pending(data.signup_session_id, allow_completed=True)
+        return await self._complete_pending_signup(pending, SignupKind.ORGANIZATION)
+
     async def send_signup_email_otp(self, data: SignupChannelRequest) -> SignupChannelSendResponse:
         pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         return await self._send_channel_otp(pending, "email")
 
     async def resend_signup_email_otp(self, data: SignupChannelRequest) -> SignupChannelSendResponse:
         pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         self._otp.assert_resend_allowed(pending.email_last_otp_sent_at)
         return await self._send_channel_otp(pending, "email")
 
     async def verify_signup_email(self, data: SignupVerifyRequest) -> SignupChannelVerifyResponse:
         pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         return await self._verify_channel_otp(pending, "email", data.code)
 
     async def send_signup_phone_otp(self, data: SignupChannelRequest) -> SignupChannelSendResponse:
         if not self._settings.phone_otp_enabled:
             raise ForbiddenError("Phone verification is not enabled")
         pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         return await self._send_channel_otp(pending, "phone")
 
     async def resend_signup_phone_otp(self, data: SignupChannelRequest) -> SignupChannelSendResponse:
         if not self._settings.phone_otp_enabled:
             raise ForbiddenError("Phone verification is not enabled")
         pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         self._otp.assert_resend_allowed(pending.phone_last_otp_sent_at)
         return await self._send_channel_otp(pending, "phone")
 
@@ -160,10 +223,15 @@ class AuthService:
         if not self._settings.phone_otp_enabled:
             raise ForbiddenError("Phone verification is not enabled")
         pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         return await self._verify_channel_otp(pending, "phone", data.code)
 
     async def complete_signup(self, data: SignupCompleteRequest) -> TokenResponse:
         pending = await self._load_active_pending(data.signup_session_id, allow_completed=True)
+        return await self._complete_pending_signup(pending, SignupKind.CANDIDATE)
+
+    async def _complete_pending_signup(self, pending: PendingSignup, signup_kind: SignupKind) -> TokenResponse:
+        self._assert_signup_kind(pending, signup_kind)
         if pending.completed_user_id is not None:
             user = await self._users.get_by_id(pending.completed_user_id)
             if user is None:
@@ -172,7 +240,9 @@ class AuthService:
             await self._session.commit()
             return tokens
 
-        if pending.email_verified_at is None or pending.phone_verified_at is None:
+        if pending.email_verified_at is None:
+            raise ConflictError("Email verification is required before signup completion")
+        if signup_kind == SignupKind.CANDIDATE and pending.phone_verified_at is None:
             raise ConflictError("Both email and phone verification are required before signup completion")
 
         now = datetime.now(tz=UTC)
@@ -184,10 +254,11 @@ class AuthService:
             full_name=pending.full_name,
             role=Role.USER.value,
             email_verified_at=pending.email_verified_at or now,
-            phone_verified_at=pending.phone_verified_at or now,
+            phone_verified_at=pending.phone_verified_at if signup_kind == SignupKind.CANDIDATE else None,
             profile_slug=_unique_slug(slug_base),
         )
         self._session.add(user)
+        pending_id = pending.id
 
         try:
             await self._session.flush()
@@ -197,10 +268,12 @@ class AuthService:
             if user is None and pending.phone:
                 user = await self._users.get_by_phone(pending.phone)
             if user is None:
-                raise ConflictError("An account already exists with this email or phone")
+                raise ConflictError("An account already exists with this email or phone") from None
             if user.email != pending.email or (pending.phone and user.phone != pending.phone):
-                raise ConflictError("An account already exists with this email or phone")
-            pending = await self._load_active_pending(data.signup_session_id, allow_completed=True)
+                raise ConflictError("An account already exists with this email or phone") from None
+            pending = await self._pending.get_by_id(pending_id)
+            if pending is None:
+                raise ConflictError("Signup session is no longer valid") from None
         else:
             pending.completed_user_id = user.id
             pending.completed_at = now
@@ -630,12 +703,13 @@ class AuthService:
         self,
         *,
         email: str,
-        phone: str,
+        phone: str | None,
         full_name: str | None,
         password_hash: str,
+        signup_kind: SignupKind,
     ) -> PendingSignup:
         pending_by_email = await self._pending.get_by_email(email)
-        pending_by_phone = await self._pending.get_by_phone(phone)
+        pending_by_phone = await self._pending.get_by_phone(phone) if phone is not None else None
 
         cleared_any = False
         seen_pending_ids: set[UUID] = set()
@@ -659,6 +733,10 @@ class AuthService:
         if pending_by_phone is not None and pending_by_phone.completed_user_id is not None:
             raise ConflictError("An account already exists with this email or phone")
 
+        for row in (pending_by_email, pending_by_phone):
+            if row is not None and row.signup_kind != signup_kind.value:
+                raise ConflictError("A signup is already pending for this email or phone")
+
         pending_ids = {row.id for row in [pending_by_email, pending_by_phone] if row is not None}
         if len(pending_ids) > 1:
             raise ConflictError("A signup is already pending for this email or phone")
@@ -680,12 +758,14 @@ class AuthService:
                 phone_otp_sent_count=0,
                 phone_verify_attempt_count=0,
                 phone_last_otp_sent_at=None,
+                signup_kind=signup_kind,
             )
             self._session.add(pending)
         else:
             await self._otp.clear_all(pending.id)
             pending.email = email
             pending.phone = phone
+            pending.signup_kind = signup_kind
             pending.password_hash = password_hash
             pending.full_name = full_name
             pending.expires_at = expires_at
@@ -727,6 +807,26 @@ class AuthService:
             phone_masked=mask_phone(pending.phone or ""),
             message=message,
         )
+
+    def _build_organization_email_send_response(
+        self,
+        pending: PendingSignup,
+        *,
+        verified: bool,
+        message: str,
+    ) -> OrganizationSignupEmailSendResponse:
+        return OrganizationSignupEmailSendResponse(
+            signup_session_id=pending.id,
+            email_masked=mask_email(pending.email),
+            email_verified=verified or pending.email_verified_at is not None,
+            resend_after_seconds=self._otp.seconds_until_resend_allowed(pending.email_last_otp_sent_at),
+            expires_in_seconds=self._settings.signup_otp_ttl_seconds,
+            message=message,
+        )
+
+    def _assert_signup_kind(self, pending: PendingSignup, expected: SignupKind) -> None:
+        if pending.signup_kind != expected.value:
+            raise ConflictError("Signup session is not valid for this flow")
 
     def _build_channel_verify_response(
         self,

@@ -45,6 +45,8 @@ class OrganizationCreateRequest(BaseModel):
     location: str | None = Field(default=None, max_length=255)
     work_email: EmailStr | None = None
     domain: str | None = Field(default=None, max_length=255)
+    organization_size: str | None = Field(default=None, max_length=64)
+    hiring_volume: str | None = Field(default=None, max_length=64)
     verification_capabilities: list[str] = Field(default_factory=list, max_length=25)
 
     @field_validator("verification_capabilities")
@@ -68,6 +70,8 @@ class OrganizationUpdateRequest(BaseModel):
     location: str | None = Field(default=None, max_length=255)
     work_email: EmailStr | None = None
     domain: str | None = Field(default=None, max_length=255)
+    organization_size: str | None = Field(default=None, max_length=64)
+    hiring_volume: str | None = Field(default=None, max_length=64)
     verification_capabilities: list[str] | None = Field(default=None, max_length=25)
 
     @field_validator("verification_capabilities")
@@ -92,6 +96,8 @@ class OrganizationResponse(BaseModel):
     location: str | None
     work_email: EmailStr | None
     domain: str | None
+    organization_size: str | None = None
+    hiring_volume: str | None = None
     domain_verified_at: datetime | None
     verification_state: OrganizationVerificationState
     setup_completed_at: datetime | None

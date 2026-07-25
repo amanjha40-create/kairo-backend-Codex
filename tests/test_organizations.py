@@ -33,6 +33,8 @@ class FakeOrganizationService:
             location="Bengaluru, IN",
             work_email="owner@kairo.example",
             domain="kairo.example",
+            organization_size=None,
+            hiring_volume=None,
             domain_verified_at=None,
             verification_state=OrganizationVerificationState.VERIFICATION_PENDING,
             setup_completed_at=self._now,
@@ -59,6 +61,9 @@ class FakeOrganizationService:
         )
 
     async def create_organization(self, actor_user_id, payload):  # noqa: ANN001
+        return self._organization()
+
+    async def complete_onboarding(self, actor_user_id, payload):  # noqa: ANN001
         return self._organization()
 
     async def list_my_organizations(self, actor_user_id, params=None):  # noqa: ANN001
@@ -133,6 +138,23 @@ async def test_create_organization_returns_owner_membership() -> None:
     body = response.json()
     assert body["my_role"] == "owner"
     assert body["public_id"]
+
+
+@pytest.mark.asyncio
+async def test_organization_onboarding_complete_returns_owner_membership() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/organizations/onboarding/complete",
+            json={"name": "Kairo University", "organization_type": "university"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 201
+    assert response.json()["my_role"] == "owner"
 
 
 @pytest.mark.asyncio

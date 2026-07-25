@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -19,8 +20,8 @@ if TYPE_CHECKING:
     from app.models.organization_invitation import OrganizationInvitation
     from app.models.organization_member import OrganizationMember
     from app.models.organization_person import OrganizationPerson
-    from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.trust_invitation import TrustInvitation
+    from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.verification_request import VerificationRequest
 
 
@@ -43,6 +44,8 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     work_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    organization_size: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    hiring_volume: Mapped[str | None] = mapped_column(String(64), nullable=True)
     domain_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_state: Mapped[OrganizationVerificationState] = mapped_column(
         organization_verification_state_enum,

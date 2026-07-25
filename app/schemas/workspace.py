@@ -8,7 +8,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
-from app.organization.enums import OrganizationInvitationStatus, OrganizationRole, OrganizationType, OrganizationVerificationState
+from app.organization.enums import (
+    OrganizationInvitationStatus,
+    OrganizationRole,
+    OrganizationType,
+    OrganizationVerificationState,
+)
 
 
 class WorkspaceAccessState(StrEnum):
@@ -48,6 +53,8 @@ class WorkspaceOrganizationSummary(BaseModel):
     location: str | None
     work_email: EmailStr | None
     domain: str | None
+    organization_size: str | None = None
+    hiring_volume: str | None = None
     domain_verified_at: datetime | None
     verification_state: OrganizationVerificationState
     setup_completed_at: datetime | None
