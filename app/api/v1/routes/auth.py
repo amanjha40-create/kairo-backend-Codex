@@ -19,6 +19,10 @@ from app.schemas.auth import (
     LoginRequest,
     OAuthAuthUrlResponse,
     OAuthCallbackRequest,
+    OrganizationSignupEmailSendResponse,
+    OrganizationSignupEmailVerifyResponse,
+    OrganizationSignupStartRequest,
+    OrganizationSignupStartResponse,
     RefreshRequest,
     RegisterRequest,
     ResetPasswordRequest,
@@ -39,6 +43,61 @@ from app.schemas.auth import (
 from app.services import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+organization_signup_router = APIRouter(prefix="/auth/organization/signup", tags=["organization-auth"])
+
+
+@organization_signup_router.post(
+    "/start",
+    response_model=OrganizationSignupStartResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start email-only organization staff signup",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def organization_signup_start(
+    payload: OrganizationSignupStartRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> OrganizationSignupStartResponse:
+    return await auth.start_organization_signup(payload)
+
+
+@organization_signup_router.post(
+    "/email/send",
+    response_model=OrganizationSignupEmailSendResponse,
+    summary="Send organization staff signup email OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def organization_signup_email_send(
+    payload: SignupChannelRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> OrganizationSignupEmailSendResponse:
+    return await auth.send_organization_signup_email_otp(payload)
+
+
+@organization_signup_router.post(
+    "/email/verify",
+    response_model=OrganizationSignupEmailVerifyResponse,
+    summary="Verify organization staff signup email OTP",
+    dependencies=[Depends(otp_verify_rate_limit)],
+)
+async def organization_signup_email_verify(
+    payload: SignupVerifyRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> OrganizationSignupEmailVerifyResponse:
+    return await auth.verify_organization_signup_email(payload)
+
+
+@organization_signup_router.post(
+    "/complete",
+    response_model=TokenResponse,
+    summary="Complete organization staff signup and create a session",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def organization_signup_complete(
+    payload: SignupCompleteRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> TokenResponse:
+    return await auth.complete_organization_signup(payload)
 
 
 # ---------------------------------------------------------------------------

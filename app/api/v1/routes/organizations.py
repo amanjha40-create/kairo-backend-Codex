@@ -32,6 +32,15 @@ async def create_organization(
     return await svc.create_organization(current.id, payload)
 
 
+@router.post("/onboarding/complete", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
+async def complete_organization_onboarding(
+    payload: OrganizationCreateRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[OrganizationService, Depends(get_organization_service)],
+) -> OrganizationResponse:
+    return await svc.complete_onboarding(current.id, payload)
+
+
 @router.get("/me", response_model=Page[OrganizationResponse] | list[OrganizationResponse])
 async def list_my_organizations(
     params: Annotated[ListQueryParams, Depends()],

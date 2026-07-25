@@ -243,6 +243,8 @@ class WorkspaceService:
             location=organization.location,
             work_email=organization.work_email,
             domain=organization.domain,
+            organization_size=organization.organization_size,
+            hiring_volume=organization.hiring_volume,
             domain_verified_at=organization.domain_verified_at,
             verification_state=organization.verification_state,
             setup_completed_at=organization.setup_completed_at,

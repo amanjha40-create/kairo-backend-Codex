@@ -20,6 +20,13 @@ class Role(StrEnum):
     SUPERADMIN = "superadmin"  # All permissions including role assignment
 
 
+class SignupKind(StrEnum):
+    """Signup context used to keep candidate and organization requirements distinct."""
+
+    CANDIDATE = "candidate"
+    ORGANIZATION = "organization"
+
+
 # ---------------------------------------------------------------------------
 # Legacy alias — kept for backward compatibility.
 # New code should use Permission-based guards instead of role tuple checks.

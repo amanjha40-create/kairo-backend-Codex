@@ -12,7 +12,12 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_workspace_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
-from app.organization.enums import OrganizationInvitationStatus, OrganizationRole, OrganizationType, OrganizationVerificationState
+from app.organization.enums import (
+    OrganizationInvitationStatus,
+    OrganizationRole,
+    OrganizationType,
+    OrganizationVerificationState,
+)
 from app.schemas.workspace import (
     WorkspaceAccessState,
     WorkspaceBootstrapResponse,
@@ -64,6 +69,8 @@ class FakeWorkspaceService:
                 location="Bengaluru, IN",
                 work_email="owner@kairo.example",
                 domain="kairo.example",
+                organization_size=None,
+                hiring_volume=None,
                 domain_verified_at=None,
                 verification_state=OrganizationVerificationState.VERIFICATION_PENDING,
                 setup_completed_at=self._now,

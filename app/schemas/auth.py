@@ -16,6 +16,38 @@ class RegisterRequest(BaseModel):
     full_name: str | None = Field(None, max_length=255)
 
 
+class OrganizationSignupStartRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    full_name: str = Field(..., min_length=1, max_length=255)
+    work_email: EmailStr
+    password: str = Field(..., min_length=12, max_length=128)
+
+
+class OrganizationSignupStartResponse(BaseModel):
+    signup_session_id: UUID
+    email_masked: str
+    email_verified: bool = False
+    email_resend_after_seconds: int
+    expires_in_seconds: int
+    message: str = "Organization signup session created"
+
+
+class OrganizationSignupEmailSendResponse(BaseModel):
+    signup_session_id: UUID
+    email_masked: str
+    email_verified: bool
+    resend_after_seconds: int
+    expires_in_seconds: int
+    message: str = "Verification code sent"
+
+
+class OrganizationSignupEmailVerifyResponse(BaseModel):
+    signup_session_id: UUID
+    email_verified: bool = True
+    message: str
+
+
 class SignupStartResponse(BaseModel):
     """Staged signup created — verify both channels before tokens are issued."""
 

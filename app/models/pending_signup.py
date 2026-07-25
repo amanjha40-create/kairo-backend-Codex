@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.constants import SignupKind
 from app.db.base import Base
 from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -18,6 +19,13 @@ class PendingSignup(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "pending_signups"
 
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+    signup_kind: Mapped[SignupKind] = mapped_column(
+        String(32),
+        nullable=False,
+        default=SignupKind.CANDIDATE,
+        server_default=text("'candidate'"),
+        index=True,
+    )
     phone: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

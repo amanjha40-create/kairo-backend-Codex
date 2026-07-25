@@ -7,13 +7,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
-from app.organization.enums import OrganizationRole, OrganizationVerificationState
+from app.organization.enums import OrganizationRole, OrganizationType, OrganizationVerificationState
 from app.organization.permissions import is_organization_manager
 from app.repositories.organization import OrganizationRepository
-from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.repositories.user import UserRepository
 from app.schemas.organization import (
     OrganizationCreateRequest,
@@ -23,6 +22,7 @@ from app.schemas.organization import (
     OrganizationResponse,
     OrganizationUpdateRequest,
 )
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 
 
 class OrganizationService:
@@ -51,6 +51,8 @@ class OrganizationService:
             location=payload.location,
             work_email=str(payload.work_email).lower() if payload.work_email is not None else None,
             domain=payload.domain,
+            organization_size=payload.organization_size,
+            hiring_volume=payload.hiring_volume,
             verification_capabilities=payload.verification_capabilities,
         )
         self._apply_setup_state(organization)
@@ -65,6 +67,20 @@ class OrganizationService:
         await self._session.refresh(organization)
         await self._session.refresh(membership)
         return await self._to_organization_response(organization, membership)
+
+    async def complete_onboarding(
+        self,
+        actor_user_id: UUID,
+        payload: OrganizationCreateRequest,
+    ) -> OrganizationResponse:
+        """Create the first organization for an authenticated workspace user."""
+
+        if payload.organization_type not in {OrganizationType.EMPLOYER, OrganizationType.UNIVERSITY}:
+            raise ValidationAppError("Organization onboarding supports employer or university workspaces")
+        existing = await self._organizations.list_for_user(actor_user_id)
+        if existing:
+            raise ConflictError("Organization onboarding is already complete")
+        return await self.create_organization(actor_user_id, payload)
 
     async def list_my_organizations(
         self,
@@ -113,6 +129,10 @@ class OrganizationService:
             organization.domain = payload.domain
         if payload.verification_capabilities is not None:
             organization.verification_capabilities = payload.verification_capabilities
+        if payload.organization_size is not None:
+            organization.organization_size = payload.organization_size
+        if payload.hiring_volume is not None:
+            organization.hiring_volume = payload.hiring_volume
 
         self._apply_setup_state(organization)
         await self._session.commit()
@@ -226,6 +246,8 @@ class OrganizationService:
             location=organization.location,
             work_email=organization.work_email,
             domain=organization.domain,
+            organization_size=organization.organization_size,
+            hiring_volume=organization.hiring_volume,
             domain_verified_at=organization.domain_verified_at,
             verification_state=organization.verification_state,
             setup_completed_at=organization.setup_completed_at,
