@@ -7,7 +7,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.organization.enums import OrganizationRole, OrganizationType, OrganizationVerificationState
+from app.organization.enums import (
+    OrganizationInvitationStatus,
+    OrganizationRole,
+    OrganizationType,
+    OrganizationVerificationState,
+)
 
 
 def _normalize_capabilities(values: list[str]) -> list[str]:
@@ -145,3 +150,56 @@ class OrganizationMemberResponse(BaseModel):
     suspension_reason: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class OrganizationInvitationCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    invitee_email: EmailStr
+    role: OrganizationRole = Field(default=OrganizationRole.MEMBER)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: OrganizationRole) -> OrganizationRole:
+        if value == OrganizationRole.OWNER:
+            raise ValueError("owner role cannot be assigned through invitation creation")
+        return value
+
+
+class OrganizationInvitationResponse(BaseModel):
+    public_id: UUID
+    organization_public_id: UUID
+    invitee_email: EmailStr
+    invitee_user_id: UUID | None
+    role: OrganizationRole
+    status: OrganizationInvitationStatus
+    invited_by_email: EmailStr
+    invited_by_full_name: str | None
+    invited_at: datetime
+    expires_at: datetime | None
+    accepted_at: datetime | None
+    declined_at: datetime | None
+    cancelled_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OrganizationMemberSuspendRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str | None = Field(default=None, max_length=512)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class OrganizationOwnershipTransferResponse(BaseModel):
+    organization_public_id: UUID
+    previous_owner_member_public_id: UUID
+    new_owner_member_public_id: UUID
+    transferred_at: datetime

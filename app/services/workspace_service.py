@@ -30,11 +30,18 @@ from app.schemas.workspace import (
 class WorkspaceService:
     """Resolve the current organization workspace for an authenticated user."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        organizations: OrganizationRepository | None = None,
+        invitations: OrganizationInvitationRepository | None = None,
+        users: UserRepository | None = None,
+    ) -> None:
         self._session = session
-        self._organizations = OrganizationRepository(session)
-        self._invitations = OrganizationInvitationRepository(session)
-        self._users = UserRepository(session)
+        self._organizations = organizations or OrganizationRepository(session)
+        self._invitations = invitations or OrganizationInvitationRepository(session)
+        self._users = users or UserRepository(session)
 
     async def bootstrap(self, actor_user_id: UUID) -> WorkspaceBootstrapResponse:
         user = await self._require_user(actor_user_id)
@@ -51,8 +58,12 @@ class WorkspaceService:
         permission_flags = WorkspacePermissionFlags(
             **build_workspace_permission_flags(
                 membership.role if membership is not None else None,
-                organization_suspended=organization.suspended_at is not None if organization is not None else False,
-                membership_suspended=membership.suspended_at is not None if membership is not None else False,
+                organization_suspended=organization.suspended_at is not None
+                if organization is not None
+                else False,
+                membership_suspended=membership.suspended_at is not None
+                if membership is not None
+                else False,
             )
         )
 
@@ -63,19 +74,31 @@ class WorkspaceService:
                 email=user.email,
                 full_name=user.full_name,
                 role=user.role,
-                active_organization_public_id=organization.public_id if organization is not None else None,
+                active_organization_public_id=organization.public_id
+                if organization is not None
+                else None,
             ),
             active_organization=self._to_organization_summary(organization),
             membership_role=membership.role if membership is not None else None,
-            organization_verification_state=organization.verification_state if organization is not None else None,
-            organization_suspended=organization.suspended_at is not None if organization is not None else False,
-            membership_suspended=membership.suspended_at is not None if membership is not None else False,
-            setup_completed=organization.setup_completed_at is not None if organization is not None else False,
+            organization_verification_state=organization.verification_state
+            if organization is not None
+            else None,
+            organization_suspended=organization.suspended_at is not None
+            if organization is not None
+            else False,
+            membership_suspended=membership.suspended_at is not None
+            if membership is not None
+            else False,
+            setup_completed=organization.setup_completed_at is not None
+            if organization is not None
+            else False,
             pending_organization_invitation=self._to_invitation_response(pending),
             permission_flags=permission_flags,
         )
 
-    async def list_invitations(self, actor_user_id: UUID) -> list[WorkspaceOrganizationInvitationResponse]:
+    async def list_invitations(
+        self, actor_user_id: UUID
+    ) -> list[WorkspaceOrganizationInvitationResponse]:
         user = await self._require_user(actor_user_id)
         invitations = await self._invitations.list_for_invitee(
             invitee_email=self._normalize_email(user.email),
@@ -108,6 +131,12 @@ class WorkspaceService:
                 role=invitation.role,
             )
             await self._organizations.add_member(membership)
+        elif membership.suspended_at is not None:
+            raise ConflictError("Suspended memberships cannot accept organization invitations")
+        elif membership.role != invitation.role:
+            raise ConflictError(
+                "Existing organization membership role does not match this invitation"
+            )
 
         invitation.invitee_user_id = user.id
         invitation.status = OrganizationInvitationStatus.ACCEPTED
@@ -182,7 +211,11 @@ class WorkspaceService:
     ) -> None:
         changed = False
         for invitation in invitations:
-            if invitation.status == OrganizationInvitationStatus.PENDING and invitation.expires_at is not None and invitation.expires_at <= now:
+            if (
+                invitation.status == OrganizationInvitationStatus.PENDING
+                and invitation.expires_at is not None
+                and invitation.expires_at <= now
+            ):
                 invitation.status = OrganizationInvitationStatus.EXPIRED
                 changed = True
         if changed:
@@ -206,10 +239,17 @@ class WorkspaceService:
 
     def _assert_invitation_assignee(self, invitation: OrganizationInvitation, user: User) -> None:
         normalized_email = self._normalize_email(user.email)
-        if normalized_email != invitation.invitee_email and invitation.invitee_user_id not in {None, user.id}:
-            raise ForbiddenError("This organization invitation is not assigned to the authenticated account")
+        if normalized_email != invitation.invitee_email and invitation.invitee_user_id not in {
+            None,
+            user.id,
+        }:
+            raise ForbiddenError(
+                "This organization invitation is not assigned to the authenticated account"
+            )
         if normalized_email != invitation.invitee_email and invitation.invitee_user_id is None:
-            raise ForbiddenError("This organization invitation is not assigned to the authenticated account")
+            raise ForbiddenError(
+                "This organization invitation is not assigned to the authenticated account"
+            )
 
     def _derive_state(
         self,
@@ -225,13 +265,18 @@ class WorkspaceService:
             return WorkspaceAccessState.MEMBERSHIP_SUSPENDED
         if organization.suspended_at is not None:
             return WorkspaceAccessState.ORG_SUSPENDED
-        if organization.setup_completed_at is None or organization.verification_state == OrganizationVerificationState.SETUP_INCOMPLETE:
+        if (
+            organization.setup_completed_at is None
+            or organization.verification_state == OrganizationVerificationState.SETUP_INCOMPLETE
+        ):
             return WorkspaceAccessState.SETUP_INCOMPLETE
         if organization.verification_state != OrganizationVerificationState.VERIFIED:
             return WorkspaceAccessState.VERIFICATION_PENDING
         return WorkspaceAccessState.READY
 
-    def _to_organization_summary(self, organization: Organization | None) -> WorkspaceOrganizationSummary | None:
+    def _to_organization_summary(
+        self, organization: Organization | None
+    ) -> WorkspaceOrganizationSummary | None:
         if organization is None:
             return None
         return WorkspaceOrganizationSummary(

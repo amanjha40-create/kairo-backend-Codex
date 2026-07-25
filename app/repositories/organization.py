@@ -10,13 +10,16 @@ from sqlalchemy.orm import joinedload
 
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
+from app.organization.enums import OrganizationRole
 
 
 class OrganizationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, organization: Organization, membership: OrganizationMember) -> Organization:
+    async def create(
+        self, organization: Organization, membership: OrganizationMember
+    ) -> Organization:
         self._session.add(organization)
         self._session.add(membership)
         await self._session.flush()
@@ -41,10 +44,16 @@ class OrganizationRepository:
         return [(organization, membership) for organization, membership in rows.all()]
 
     async def count_members(self, organization_id: UUID) -> int:
-        stmt = select(func.count()).select_from(OrganizationMember).where(OrganizationMember.organization_id == organization_id)
+        stmt = (
+            select(func.count())
+            .select_from(OrganizationMember)
+            .where(OrganizationMember.organization_id == organization_id)
+        )
         return int((await self._session.execute(stmt)).scalar_one())
 
-    async def get_membership(self, organization_id: UUID, user_id: UUID) -> OrganizationMember | None:
+    async def get_membership(
+        self, organization_id: UUID, user_id: UUID
+    ) -> OrganizationMember | None:
         stmt = (
             select(OrganizationMember)
             .options(joinedload(OrganizationMember.user))
@@ -80,10 +89,26 @@ class OrganizationRepository:
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
 
+    async def count_active_owners(self, organization_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(OrganizationMember)
+            .where(
+                OrganizationMember.organization_id == organization_id,
+                OrganizationMember.role == OrganizationRole.OWNER,
+                OrganizationMember.suspended_at.is_(None),
+            )
+        )
+        return int((await self._session.execute(stmt)).scalar_one())
+
     async def add_member(self, membership: OrganizationMember) -> OrganizationMember:
         self._session.add(membership)
         await self._session.flush()
         return membership
+
+    async def delete_member(self, membership: OrganizationMember) -> None:
+        await self._session.delete(membership)
+        await self._session.flush()
 
     async def search_all(
         self,
@@ -93,7 +118,9 @@ class OrganizationRepository:
         limit: int,
     ) -> tuple[list[Organization], int]:
         filters = [Organization.name.ilike(f"%{search.strip()}%")] if search else []
-        count = await self._session.scalar(select(func.count()).select_from(Organization).where(*filters))
+        count = await self._session.scalar(
+            select(func.count()).select_from(Organization).where(*filters)
+        )
         rows = await self._session.execute(
             select(Organization)
             .options(joinedload(Organization.registry_record))
