@@ -12,8 +12,18 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_organization_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
-from app.organization.enums import OrganizationRole, OrganizationType, OrganizationVerificationState
-from app.schemas.organization import OrganizationMemberResponse, OrganizationResponse
+from app.organization.enums import (
+    OrganizationInvitationStatus,
+    OrganizationRole,
+    OrganizationType,
+    OrganizationVerificationState,
+)
+from app.schemas.organization import (
+    OrganizationInvitationResponse,
+    OrganizationMemberResponse,
+    OrganizationOwnershipTransferResponse,
+    OrganizationResponse,
+)
 from app.schemas.pagination import filter_sort_paginate
 
 
@@ -21,6 +31,7 @@ class FakeOrganizationService:
     def __init__(self) -> None:
         self._org_public_id = uuid4()
         self._member_public_id = uuid4()
+        self._invitation_public_id = uuid4()
         self._now = datetime.now(tz=UTC)
 
     def _organization(self) -> OrganizationResponse:
@@ -47,7 +58,9 @@ class FakeOrganizationService:
             updated_at=self._now,
         )
 
-    def _member(self, role: OrganizationRole = OrganizationRole.MEMBER) -> OrganizationMemberResponse:
+    def _member(
+        self, role: OrganizationRole = OrganizationRole.MEMBER
+    ) -> OrganizationMemberResponse:
         return OrganizationMemberResponse(
             public_id=self._member_public_id,
             organization_public_id=self._org_public_id,
@@ -56,6 +69,29 @@ class FakeOrganizationService:
             user_full_name="Team Member",
             suspended_at=None,
             suspension_reason=None,
+            created_at=self._now,
+            updated_at=self._now,
+        )
+
+    def _invitation(
+        self,
+        *,
+        status: OrganizationInvitationStatus = OrganizationInvitationStatus.PENDING,
+    ) -> OrganizationInvitationResponse:
+        return OrganizationInvitationResponse(
+            public_id=self._invitation_public_id,
+            organization_public_id=self._org_public_id,
+            invitee_email="invitee@example.com",
+            invitee_user_id=None,
+            role=OrganizationRole.ADMIN,
+            status=status,
+            invited_by_email="owner@kairo.example",
+            invited_by_full_name="Owner User",
+            invited_at=self._now,
+            expires_at=self._now,
+            accepted_at=self._now if status == OrganizationInvitationStatus.ACCEPTED else None,
+            declined_at=self._now if status == OrganizationInvitationStatus.DECLINED else None,
+            cancelled_at=self._now if status == OrganizationInvitationStatus.CANCELLED else None,
             created_at=self._now,
             updated_at=self._now,
         )
@@ -102,15 +138,80 @@ class FakeOrganizationService:
                 items,
                 params=params,
                 search_fields=("user_email", "user_full_name", "role"),
-                allowed_sort_fields=("created_at", "updated_at", "role", "user_email", "user_full_name"),
+                allowed_sort_fields=(
+                    "created_at",
+                    "updated_at",
+                    "role",
+                    "user_email",
+                    "user_full_name",
+                ),
                 default_sort_by="created_at",
             )
         return items
 
-    async def update_member_role(self, actor_user_id, org_public_id, member_public_id: UUID, payload):  # noqa: ANN001
+    async def update_member_role(
+        self, actor_user_id, org_public_id, member_public_id: UUID, payload
+    ):  # noqa: ANN001
         if member_public_id == UUID("00000000-0000-0000-0000-00000000eeee"):
             raise ForbiddenError("Only organization owners or admins can manage members")
         return self._member(payload.role)
+
+    async def create_invitation(self, actor_user_id, org_public_id, payload):  # noqa: ANN001
+        if payload.invitee_email == "duplicate@example.com":
+            raise ConflictError("An active invitation already exists for this email")
+        return self._invitation()
+
+    async def list_invitations(self, actor_user_id, org_public_id, params=None):  # noqa: ANN001
+        items = [self._invitation(), self._invitation(status=OrganizationInvitationStatus.ACCEPTED)]
+        if params:
+            return filter_sort_paginate(
+                items,
+                params=params,
+                search_fields=("invitee_email", "invited_by_email", "role", "status"),
+                allowed_sort_fields=(
+                    "created_at",
+                    "updated_at",
+                    "expires_at",
+                    "invitee_email",
+                    "role",
+                    "status",
+                ),
+                default_sort_by="created_at",
+            )
+        return items
+
+    async def resend_invitation(self, actor_user_id, org_public_id, invitation_public_id: UUID):  # noqa: ANN001
+        if invitation_public_id == UUID("00000000-0000-0000-0000-00000000eeee"):
+            raise ConflictError("Organization invitation is no longer actionable")
+        return self._invitation()
+
+    async def cancel_invitation(self, actor_user_id, org_public_id, invitation_public_id: UUID):  # noqa: ANN001
+        if invitation_public_id == UUID("00000000-0000-0000-0000-00000000dddd"):
+            raise ConflictError("Organization invitation is no longer actionable")
+        return self._invitation(status=OrganizationInvitationStatus.CANCELLED)
+
+    async def suspend_member(self, actor_user_id, org_public_id, member_public_id: UUID, payload):  # noqa: ANN001
+        if member_public_id == UUID("00000000-0000-0000-0000-00000000cccc"):
+            raise ConflictError("Cannot suspend the last active owner")
+        return self._member()
+
+    async def restore_member(self, actor_user_id, org_public_id, member_public_id: UUID):  # noqa: ANN001
+        return self._member()
+
+    async def remove_member(self, actor_user_id, org_public_id, member_public_id: UUID):  # noqa: ANN001
+        if member_public_id == UUID("00000000-0000-0000-0000-00000000bbbb"):
+            raise ConflictError("Cannot remove the last active owner")
+        return None
+
+    async def transfer_ownership(self, actor_user_id, org_public_id, member_public_id: UUID):  # noqa: ANN001
+        if member_public_id == UUID("00000000-0000-0000-0000-00000000aaaa"):
+            raise ForbiddenError("Only organization owners can transfer ownership")
+        return OrganizationOwnershipTransferResponse(
+            organization_public_id=self._org_public_id,
+            previous_owner_member_public_id=self._member_public_id,
+            new_owner_member_public_id=member_public_id,
+            transferred_at=self._now,
+        )
 
 
 async def _override_current_user() -> CurrentUser:
@@ -335,3 +436,161 @@ async def test_owner_can_update_member_role() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_returns_created_invitation() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/organizations/{org_public_id}/invitations",
+            json={"invitee_email": "invitee@example.com", "role": "admin"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_list_invitations_returns_invitation_history() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/organizations/{org_public_id}/invitations")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_resend_invitation_returns_updated_invitation() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    invitation_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/organizations/{org_public_id}/invitations/{invitation_public_id}/resend"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_cancel_invitation_returns_cancelled_invitation() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    invitation_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/organizations/{org_public_id}/invitations/{invitation_public_id}/cancel"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_suspend_member_returns_updated_member() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    member_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/organizations/{org_public_id}/members/{member_public_id}/suspend",
+            json={"reason": "Left the organization"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["user_email"] == "member@example.com"
+
+
+@pytest.mark.asyncio
+async def test_restore_member_returns_updated_member() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    member_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/organizations/{org_public_id}/members/{member_public_id}/restore"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_remove_member_returns_no_content() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    member_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete(
+            f"/api/v1/organizations/{org_public_id}/members/{member_public_id}"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_transfer_ownership_returns_transfer_shape() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_organization_service] = lambda: FakeOrganizationService()
+
+    transport = ASGITransport(app=app)
+    org_public_id = uuid4()
+    member_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/organizations/{org_public_id}/members/{member_public_id}/transfer-ownership"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["new_owner_member_public_id"] == str(member_public_id)
+
+
+def test_openapi_exposes_organization_team_lifecycle_paths() -> None:
+    paths = app.openapi()["paths"]
+
+    assert "/api/v1/organizations/{org_public_id}/invitations" in paths
+    assert (
+        "/api/v1/organizations/{org_public_id}/invitations/{invitation_public_id}/resend" in paths
+    )
+    assert (
+        "/api/v1/organizations/{org_public_id}/invitations/{invitation_public_id}/cancel" in paths
+    )
+    assert "/api/v1/organizations/{org_public_id}/members/{member_public_id}/suspend" in paths
+    assert "/api/v1/organizations/{org_public_id}/members/{member_public_id}/restore" in paths
+    assert (
+        "/api/v1/organizations/{org_public_id}/members/{member_public_id}/transfer-ownership"
+        in paths
+    )
