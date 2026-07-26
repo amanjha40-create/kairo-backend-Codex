@@ -190,7 +190,8 @@ class InstitutionPeopleService:
             active_verification_count=sum(
                 1
                 for request in profile.organization_person.verification_requests
-                if request.status.value
+                if request.request_type.value in {"education", "certification", "document"}
+                and request.status.value
                 in {"in_progress", "awaiting_information", "pending_organization_acceptance"}
             ),
             professional_information=professional,

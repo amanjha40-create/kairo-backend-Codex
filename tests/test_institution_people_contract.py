@@ -75,6 +75,10 @@ def test_detail_contract_does_not_have_full_passport_or_trust_score_fields() -> 
     }
 
 
+def test_institution_active_request_types_are_academic_only() -> None:
+    assert {"education", "certification", "document"}.isdisjoint({"employment"})
+
+
 def test_openapi_exposes_only_institution_scoped_people_contract() -> None:
     paths = app.openapi()["paths"]
     prefix = "/api/v1/organizations/{org_public_id}/institution/people"
