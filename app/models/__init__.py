@@ -3,10 +3,21 @@
 from app.models.certification import Certification
 from app.models.credential_verification_request import CredentialVerificationRequest
 from app.models.education import Education
+from app.models.education_document import EducationDocument
+from app.models.email_delivery_log import EmailDeliveryLog
+from app.models.employer_verification_request import EmployerVerificationRequest
+from app.models.employment import Employment
+from app.models.employment_document import EmploymentDocument
 from app.models.freelance_contract import FreelanceContract
 from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
-from app.models.email_delivery_log import EmailDeliveryLog
+from app.models.institution_people import (
+    InstitutionPersonConsent,
+    InstitutionPersonLifecycleEvent,
+    InstitutionPersonProfile,
+    OrganizationCredentialEvent,
+    OrganizationCredentialRecord,
+)
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
 from app.models.notification import Notification
@@ -23,29 +34,24 @@ from app.models.organization_person_passport_access import OrganizationPersonPas
 from app.models.passport_share_link import PassportShareLink
 from app.models.passport_share_view import PassportShareView
 from app.models.password_reset_token import PasswordResetToken
-from app.models.portfolio import PortfolioItem
-from app.models.education_document import EducationDocument
-from app.models.employer_verification_request import EmployerVerificationRequest
-from app.models.employment import Employment
-from app.models.employment_document import EmploymentDocument
 from app.models.pending_signup import PendingSignup
-from app.models.profile_view import ProfileView
+from app.models.portfolio import PortfolioItem
 from app.models.profile_language import ProfileLanguage
 from app.models.profile_link import ProfileLink
+from app.models.profile_view import ProfileView
 from app.models.project import Project
-from app.models.skill import Skill
 from app.models.refresh_token import RefreshToken
 from app.models.resume_document import ResumeDocument
-from app.models.resume_processing_job import ResumeProcessingJob
-from app.models.resume_parsed_result import ResumeParsedResult
-from app.models.resume_review_session import ResumeReviewSession
-from app.models.resume_review_item import ResumeReviewItem
 from app.models.resume_import_batch import ResumeImportBatch
 from app.models.resume_import_result import ResumeImportResult
+from app.models.resume_parsed_result import ResumeParsedResult
+from app.models.resume_processing_job import ResumeProcessingJob
 from app.models.resume_record_provenance import ResumeRecordProvenance
+from app.models.resume_review_item import ResumeReviewItem
+from app.models.resume_review_session import ResumeReviewSession
+from app.models.skill import Skill
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
-from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.trust_registry_alias import TrustRegistryAlias
 from app.models.trust_registry_capability import TrustRegistryCapability
 from app.models.trust_registry_domain import TrustRegistryDomain
@@ -54,17 +60,18 @@ from app.models.trust_registry_merge_history import TrustRegistryMergeHistory
 from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.trust_registry_record_capability import TrustRegistryRecordCapability
 from app.models.trust_registry_relationship import TrustRegistryRelationship
+from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.user import User
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
+from app.models.verification_audit import VerificationAuditEvent
 from app.models.verification_connector import VerificationConnector
 from app.models.verification_connector_run import VerificationConnectorRun
 from app.models.verification_contact import VerificationContact
-from app.models.verification_request_evidence import VerificationRequestEvidence
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
+from app.models.verification_request_evidence import VerificationRequestEvidence
 from app.models.verification_request_review import VerificationRequestReview
-from app.models.verification_audit import VerificationAuditEvent
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
 
@@ -90,6 +97,11 @@ __all__ = [
     "OrganizationInvitation",
     "OrganizationMember",
     "OrganizationPerson",
+    "InstitutionPersonConsent",
+    "InstitutionPersonLifecycleEvent",
+    "InstitutionPersonProfile",
+    "OrganizationCredentialEvent",
+    "OrganizationCredentialRecord",
     "OrganizationPersonIdentifier",
     "OrganizationPersonNote",
     "OrganizationPersonPassportAccess",
