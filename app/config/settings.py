@@ -176,7 +176,7 @@ class Settings(BaseSettings):
     )
     phone_otp_backend: str = Field(
         default="console",
-        description="console | staging_fixed | real_provider_placeholder",
+        description="console | staging_fixed | sns",
         validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
     )
     phone_otp_enabled: bool = Field(
@@ -564,9 +564,12 @@ class Settings(BaseSettings):
             msg = "EMAIL_BACKEND must be one of: console, smtp, ses."
             raise ValueError(msg)
 
-        if self.phone_otp_backend not in {"console", "staging_fixed", "real_provider_placeholder"}:
-            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, real_provider_placeholder."
+        if self.phone_otp_backend not in {"console", "staging_fixed", "sns"}:
+            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, sns."
             raise ValueError(msg)
+
+        if self.phone_otp_backend == "sns" and not self.aws_region:
+            raise ValueError("AWS_REGION is required when PHONE_OTP_BACKEND=sns.")
 
         if self.resume_processing_enabled:
             if self.resume_parser_provider not in {"nova", "anthropic"}:

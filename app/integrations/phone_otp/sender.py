@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Protocol
+
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.auth.phone_utils import mask_phone
 from app.config import Settings, get_settings
@@ -62,6 +66,41 @@ class StagingFixedPhoneOtpSender:
         )
 
 
+class SnsPhoneOtpSender:
+    """Production SMS delivery through Amazon SNS using the ECS task role."""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
+    def challenge_code(self, *, to_phone: str, generated_code: str) -> str:
+        del to_phone
+        return generated_code
+
+    async def send_signup_otp(self, *, to_phone: str, code: str, ttl_minutes: int) -> None:
+        message = f"Your Kairo verification code is {code}. It expires in {ttl_minutes} minutes."
+
+        def _publish() -> None:
+            client = boto3.client(
+                "sns",
+                region_name=self._settings.aws_region,
+                endpoint_url=self._settings.aws_endpoint_url,
+            )
+            client.publish(PhoneNumber=to_phone, Message=message)
+
+        try:
+            await asyncio.to_thread(_publish)
+        except (BotoCoreError, ClientError):
+            logger.exception(
+                "phone_otp_delivery_failed",
+                extra={"provider": "sns", "to_phone_masked": mask_phone(to_phone)},
+            )
+            raise
+        logger.info(
+            "phone_otp_delivered",
+            extra={"provider": "sns", "to_phone_masked": mask_phone(to_phone)},
+        )
+
+
 def get_phone_otp_sender(settings: Settings | None = None) -> PhoneOtpSender:
     s = settings or get_settings()
     backend = s.phone_otp_backend.lower().strip()
@@ -69,5 +108,6 @@ def get_phone_otp_sender(settings: Settings | None = None) -> PhoneOtpSender:
         return ConsolePhoneOtpSender(s)
     if backend == "staging_fixed":
         return StagingFixedPhoneOtpSender(s)
-    logger.warning("unknown_phone_otp_backend", extra={"phone_otp_backend": backend})
-    return ConsolePhoneOtpSender(s)
+    if backend == "sns":
+        return SnsPhoneOtpSender(s)
+    raise ValueError(f"Unsupported PHONE_OTP_BACKEND: {backend}")

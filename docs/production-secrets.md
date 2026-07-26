@@ -43,6 +43,24 @@ SES does not require SMTP credentials. Grant the ECS API and worker task roles t
 `ses:SendEmail` permission for the verified sender identity. Use static AWS credentials only
 outside AWS when an IAM role is unavailable, and store those credentials in Secrets Manager.
 
+### Candidate phone OTP
+
+Candidate signup requires both email and phone verification in production. Configure the
+AWS SNS adapter; `console` and `staging_fixed` are not production-safe.
+
+Required non-secret environment values:
+
+| Variable | Value | Notes |
+|---|---|---|
+| `PHONE_OTP_ENABLED` | `true` | Do not disable Candidate phone verification. |
+| `PHONE_OTP_BACKEND` | `sns` | Uses `sns:Publish` through the ECS task role. |
+| `AWS_REGION` | `us-east-1` | SNS client region. |
+
+No SMS credentials are stored in Secrets Manager for this adapter. The ECS task role must
+have the least-privilege `sns:Publish` permission. Configure sender identity/origination
+number, SMS spending limits, and any country-specific registration in AWS separately; this
+application change does not create those resources automatically.
+
 ### AWS / Object Storage
 
 These are required if document uploads are enabled in production.

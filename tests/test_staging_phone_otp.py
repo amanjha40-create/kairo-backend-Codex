@@ -5,16 +5,22 @@ from __future__ import annotations
 import json
 import logging
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from app.auth.service import AuthService
 from app.auth.signup_otp import SignupOtpStore
 from app.config import Settings
 from app.exceptions import UnauthorizedError
-from app.integrations.phone_otp.sender import StagingFixedPhoneOtpSender, get_phone_otp_sender
+from app.integrations.phone_otp.sender import (
+    SnsPhoneOtpSender,
+    StagingFixedPhoneOtpSender,
+    get_phone_otp_sender,
+)
 from app.main import app
 
 
@@ -67,6 +73,64 @@ def test_staging_fixed_provider_validates_secret(
 
 def test_provider_factory_selects_staging_fixed() -> None:
     assert isinstance(get_phone_otp_sender(_settings()), StagingFixedPhoneOtpSender)
+
+
+def test_provider_factory_selects_sns() -> None:
+    assert isinstance(get_phone_otp_sender(_settings(phone_otp_backend="sns", aws_region="us-east-1")), SnsPhoneOtpSender)
+
+
+def test_unknown_provider_fails_closed() -> None:
+    with pytest.raises(ValidationError, match="must be one of: console, staging_fixed, sns"):
+        _settings(phone_otp_backend="unknown")
+
+
+def test_provider_factory_does_not_fallback_to_console() -> None:
+    settings = Mock(phone_otp_backend="unknown")
+    with pytest.raises(ValueError, match="Unsupported PHONE_OTP_BACKEND"):
+        get_phone_otp_sender(settings)  # type: ignore[arg-type]
+
+
+def test_sns_provider_requires_region() -> None:
+    with pytest.raises(ValidationError, match="AWS_REGION is required"):
+        _settings(phone_otp_backend="sns", aws_region=None)
+
+
+@pytest.mark.asyncio
+async def test_sns_provider_publishes_otp_without_logging_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _settings(phone_otp_backend="sns", aws_region="us-east-1")
+    client = Mock()
+    with patch("app.integrations.phone_otp.sender.boto3.client", return_value=client):
+        sender = SnsPhoneOtpSender(settings)
+        with caplog.at_level(logging.INFO):
+            await sender.send_signup_otp(to_phone=ALLOWED_PHONE, code="135790", ttl_minutes=10)
+
+    client.publish.assert_called_once_with(
+        PhoneNumber=ALLOWED_PHONE,
+        Message="Your Kairo verification code is 135790. It expires in 10 minutes.",
+    )
+    assert "135790" not in caplog.text
+    assert ALLOWED_PHONE not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_sns_provider_propagates_delivery_failure_without_logging_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _settings(phone_otp_backend="sns", aws_region="us-east-1")
+    client = Mock()
+    client.publish.side_effect = ClientError(
+        {"Error": {"Code": "Throttled", "Message": "delivery failed"}},
+        "Publish",
+    )
+    with patch("app.integrations.phone_otp.sender.boto3.client", return_value=client):
+        sender = SnsPhoneOtpSender(settings)
+        with caplog.at_level(logging.INFO), pytest.raises(ClientError):
+            await sender.send_signup_otp(to_phone=ALLOWED_PHONE, code="135790", ttl_minutes=10)
+
+    assert "135790" not in caplog.text
+    assert ALLOWED_PHONE not in caplog.text
 
 
 @pytest.mark.asyncio
