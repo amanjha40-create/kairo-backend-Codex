@@ -35,20 +35,21 @@ from app.services import (
     PassportShareService,
     PassportShareViewService,
     PublicPassportService,
-    TrustScoreService,
     TrustInvitationService,
     TrustRegistryResolutionService,
     TrustRegistrySearchService,
     TrustRegistryService,
+    TrustScoreService,
     UserService,
+    VerificationQueueService,
     VerificationRequestAdminReviewService,
     VerificationRequestService,
-    VerificationQueueService,
     VerificationService,
     WorkspaceService,
 )
-from app.services.resume_service import ResumeService
+from app.services.institution_people_service import InstitutionPeopleService
 from app.services.resume_review_service import ResumeReviewService
+from app.services.resume_service import ResumeService
 
 
 def get_auth_service(
@@ -111,11 +112,15 @@ def get_document_upload_service(
     return DocumentUploadService(session, settings)
 
 
-def get_admin_verification_service(session: AsyncSession = Depends(get_session)) -> AdminVerificationService:
+def get_admin_verification_service(
+    session: AsyncSession = Depends(get_session),
+) -> AdminVerificationService:
     return AdminVerificationService(session)
 
 
-def get_admin_directory_service(session: AsyncSession = Depends(get_session)) -> AdminDirectoryService:
+def get_admin_directory_service(
+    session: AsyncSession = Depends(get_session),
+) -> AdminDirectoryService:
     return AdminDirectoryService(session)
 
 
@@ -123,7 +128,9 @@ def get_verification_service(session: AsyncSession = Depends(get_session)) -> Ve
     return VerificationService(session)
 
 
-def get_verification_queue_service(session: AsyncSession = Depends(get_session)) -> VerificationQueueService:
+def get_verification_queue_service(
+    session: AsyncSession = Depends(get_session),
+) -> VerificationQueueService:
     return VerificationQueueService(session)
 
 
@@ -132,6 +139,7 @@ def get_user_document_service(
     settings: Settings = Depends(get_settings),
 ):
     from app.services.user_document_service import UserDocumentService
+
     return UserDocumentService(session, settings)
 
 
@@ -140,6 +148,7 @@ def get_education_service(
     settings: Settings = Depends(get_settings),
 ):
     from app.services.education_service import EducationService
+
     return EducationService(session, settings)
 
 
@@ -159,6 +168,12 @@ def get_organization_person_service(
     settings: Settings = Depends(get_settings),
 ) -> OrganizationPersonService:
     return OrganizationPersonService(session, settings)
+
+
+def get_institution_people_service(
+    session: AsyncSession = Depends(get_session),
+) -> InstitutionPeopleService:
+    return InstitutionPeopleService(session)
 
 
 def get_workspace_service(session: AsyncSession = Depends(get_session)) -> WorkspaceService:
@@ -187,9 +202,7 @@ def get_notification_channel_registry(
     settings: Settings = Depends(get_settings),
 ) -> NotificationChannelRegistry:
     return NotificationChannelRegistry(
-        handlers=(
-            NotificationEmailChannel(EmailDeliveryService(session, settings)),
-        ),
+        handlers=(NotificationEmailChannel(EmailDeliveryService(session, settings)),),
     )
 
 
@@ -198,9 +211,7 @@ def get_notification_dispatcher(
     settings: Settings = Depends(get_settings),
 ) -> NotificationDispatcher:
     registry = NotificationChannelRegistry(
-        handlers=(
-            NotificationEmailChannel(EmailDeliveryService(session, settings)),
-        ),
+        handlers=(NotificationEmailChannel(EmailDeliveryService(session, settings)),),
     )
     return NotificationDispatcher(registry)
 
@@ -212,9 +223,7 @@ def get_notification_service(
     preferences = NotificationPreferenceService(session)
     template_resolver = NotificationTemplateResolver()
     registry = NotificationChannelRegistry(
-        handlers=(
-            NotificationEmailChannel(EmailDeliveryService(session, settings)),
-        ),
+        handlers=(NotificationEmailChannel(EmailDeliveryService(session, settings)),),
     )
     dispatcher = NotificationDispatcher(registry)
     return NotificationService(
@@ -227,11 +236,15 @@ def get_notification_service(
     )
 
 
-def get_trust_registry_service(session: AsyncSession = Depends(get_session)) -> TrustRegistryService:
+def get_trust_registry_service(
+    session: AsyncSession = Depends(get_session),
+) -> TrustRegistryService:
     return TrustRegistryService(session)
 
 
-def get_trust_registry_search_service(session: AsyncSession = Depends(get_session)) -> TrustRegistrySearchService:
+def get_trust_registry_search_service(
+    session: AsyncSession = Depends(get_session),
+) -> TrustRegistrySearchService:
     return TrustRegistrySearchService(session)
 
 
@@ -312,21 +325,25 @@ def get_portfolio_service(
     settings: Settings = Depends(get_settings),
 ):
     from app.services.portfolio_service import PortfolioService
+
     return PortfolioService(session, settings)
 
 
 def get_freelance_contract_service(session: AsyncSession = Depends(get_session)):
     from app.services.freelance_contract_service import FreelanceContractService
+
     return FreelanceContractService(session)
 
 
 def get_internship_service(session: AsyncSession = Depends(get_session)):
     from app.services.internship_service import InternshipService
+
     return InternshipService(session)
 
 
 def get_gig_platform_service(session: AsyncSession = Depends(get_session)):
     from app.services.gig_platform_service import GigPlatformService
+
     return GigPlatformService(session)
 
 
@@ -335,16 +352,19 @@ def get_certification_service(
     settings: Settings = Depends(get_settings),
 ):
     from app.services.certification_service import CertificationService
+
     return CertificationService(session, settings)
 
 
 def get_skill_service(session: AsyncSession = Depends(get_session)):
     from app.services.skill_service import SkillService
+
     return SkillService(session)
 
 
 def get_project_service(session: AsyncSession = Depends(get_session)):
     from app.services.project_service import ProjectService
+
     return ProjectService(session)
 
 
@@ -353,9 +373,11 @@ def get_secondary_doc_service(
     settings: Settings = Depends(get_settings),
 ):
     from app.services.secondary_doc_service import SecondaryDocService
+
     return SecondaryDocService(session, settings)
 
 
 def get_profile_view_service(session: AsyncSession = Depends(get_session)):
     from app.services.profile_view_service import ProfileViewService
+
     return ProfileViewService(session)

@@ -22,6 +22,7 @@ from app.api.v1.routes import (
     freelance_contracts,
     gig_platforms,
     health,
+    institution_people,
     internships,
     notifications,
     onboarding,
@@ -63,6 +64,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
 api_router.include_router(organization_people.router)
+api_router.include_router(institution_people.router)
 api_router.include_router(workspace.router)
 api_router.include_router(trust_invitations.org_router)
 api_router.include_router(verification_requests.org_router)
