@@ -37,6 +37,7 @@ from app.services import (
     PublicPassportService,
     TrustInvitationService,
     TrustRegistryResolutionService,
+    TrustRegistryAdminService,
     TrustRegistrySearchService,
     TrustRegistryService,
     TrustScoreService,
@@ -240,6 +241,12 @@ def get_trust_registry_service(
     session: AsyncSession = Depends(get_session),
 ) -> TrustRegistryService:
     return TrustRegistryService(session)
+
+
+def get_trust_registry_admin_service(
+    session: AsyncSession = Depends(get_session),
+) -> TrustRegistryAdminService:
+    return TrustRegistryAdminService(session)
 
 
 def get_trust_registry_search_service(

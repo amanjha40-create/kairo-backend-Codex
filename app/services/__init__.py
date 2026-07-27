@@ -28,6 +28,7 @@ from app.services.public_passport_service import PublicPassportService
 from app.services.trust_score_service import TrustScoreService
 from app.services.trust_invitation_service import TrustInvitationService
 from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
+from app.services.trust_registry_admin_service import TrustRegistryAdminService
 from app.services.trust_registry_search_service import TrustRegistrySearchService
 from app.services.trust_registry_service import TrustRegistryService
 from app.services.user_service import UserService
@@ -69,6 +70,7 @@ __all__ = [
     "TrustScoreService",
     "TrustInvitationService",
     "TrustRegistryResolutionService",
+    "TrustRegistryAdminService",
     "TrustRegistrySearchService",
     "TrustRegistryService",
     "UserService",

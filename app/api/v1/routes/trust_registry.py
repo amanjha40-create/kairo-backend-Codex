@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies.services import (
+    get_trust_registry_admin_service,
     get_trust_registry_resolution_service,
     get_trust_registry_search_service,
     get_trust_registry_service,
@@ -17,6 +18,9 @@ from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.trust_registry import (
     TrustRegistryAliasCreateRequest,
     TrustRegistryAliasResponse,
+    TrustRegistryAdminDetailResponse,
+    TrustRegistryAdminMetricsResponse,
+    TrustRegistryAdminRecordResponse,
     TrustRegistryCapabilityCreateRequest,
     TrustRegistryCapabilityResponse,
     TrustRegistryCreateAndResolveRequest,
@@ -41,6 +45,7 @@ from app.schemas.trust_registry import (
     TrustRegistryVerificationRequestResolutionResponse,
 )
 from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
+from app.services.trust_registry_admin_service import TrustRegistryAdminService
 from app.services.trust_registry_search_service import TrustRegistrySearchService
 from app.services.trust_registry_service import TrustRegistryService
 
@@ -57,24 +62,38 @@ async def create_trust_registry_record(
     return await svc.create_record(reviewer.id, payload)
 
 
-@admin_router.get("", response_model=Page[TrustRegistryRecordResponse])
+@admin_router.get("", response_model=Page[TrustRegistryAdminRecordResponse])
 async def list_trust_registry_records(
     params: Annotated[ListQueryParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_view_cases)],
-    svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
-) -> Page[TrustRegistryRecordResponse]:
-    result = await svc.list_records(params)
-    if isinstance(result, list):
-        raise RuntimeError("Trust Registry list must return a page envelope")
-    return result
+    svc: Annotated[TrustRegistryAdminService, Depends(get_trust_registry_admin_service)],
+) -> Page[TrustRegistryAdminRecordResponse]:
+    return await svc.list_records(params)
 
 
-@admin_router.get("/{registry_public_id}", response_model=TrustRegistryDetailResponse)
+@admin_router.get("/metrics", response_model=TrustRegistryAdminMetricsResponse)
+async def get_trust_registry_metrics(
+    _: Annotated[CurrentUser, Depends(require_view_cases)],
+    svc: Annotated[TrustRegistryAdminService, Depends(get_trust_registry_admin_service)],
+) -> TrustRegistryAdminMetricsResponse:
+    return await svc.metrics()
+
+
+@admin_router.get("/search", response_model=Page[TrustRegistryAdminRecordResponse])
+async def search_admin_trust_registry(
+    params: Annotated[ListQueryParams, Depends()],
+    _: Annotated[CurrentUser, Depends(require_view_cases)],
+    svc: Annotated[TrustRegistryAdminService, Depends(get_trust_registry_admin_service)],
+) -> Page[TrustRegistryAdminRecordResponse]:
+    return await svc.list_records(params)
+
+
+@admin_router.get("/{registry_public_id}", response_model=TrustRegistryAdminDetailResponse)
 async def get_trust_registry_record(
     registry_public_id: UUID,
     _: Annotated[CurrentUser, Depends(require_view_cases)],
-    svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
-) -> TrustRegistryDetailResponse:
+    svc: Annotated[TrustRegistryAdminService, Depends(get_trust_registry_admin_service)],
+) -> TrustRegistryAdminDetailResponse:
     return await svc.get_detail(registry_public_id)
 
 
@@ -265,4 +284,3 @@ async def defer_verification_request_registry_resolution(
     svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
 ) -> TrustRegistryVerificationRequestResolutionResponse:
     return await svc.defer_verification_request_resolution(reviewer.id, verification_request_public_id, payload)
-

@@ -298,6 +298,53 @@ class TrustRegistrySearchResponse(Page[TrustRegistryRecordResponse]):
     pass
 
 
+class TrustRegistryAdminContactResponse(BaseModel):
+    """Privacy-safe contact projection for the Admin Registry workspace."""
+
+    public_id: UUID
+    name: str | None
+    role: str | None
+    email_masked: str
+    state: str
+    added_by: str
+    added_at: datetime
+    last_successful_use: datetime | None = None
+
+
+class TrustRegistryAdminActivityResponse(BaseModel):
+    public_id: UUID
+    at: datetime
+    kind: str
+    actor: str
+    description: str
+
+
+class TrustRegistryAdminRecordResponse(TrustRegistryRecordResponse):
+    """Admin-facing registry summary; the canonical record remains the source of truth."""
+
+    aliases: list[str] = Field(default_factory=list)
+    domain: str | None = None
+    state: str
+    active_case_count: int
+    total_verifications: int
+    possible_duplicate_ids: list[UUID] = Field(default_factory=list)
+    registry_flags: list[str] = Field(default_factory=list)
+
+
+class TrustRegistryAdminDetailResponse(TrustRegistryAdminRecordResponse):
+    contacts: list[TrustRegistryAdminContactResponse] = Field(default_factory=list)
+    activity: list[TrustRegistryAdminActivityResponse] = Field(default_factory=list)
+
+
+class TrustRegistryAdminMetricsResponse(BaseModel):
+    total: int
+    verified: int
+    unverified: int
+    duplicates: int
+    contacts_approved: int
+    contacts_bounced: int
+
+
 class TrustRegistryLookupResponse(BaseModel):
     resolution_state: TrustRegistryResolutionState
     matches: list[TrustRegistryRecordResponse]
