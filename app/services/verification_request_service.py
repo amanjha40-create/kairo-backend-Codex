@@ -1298,6 +1298,7 @@ class VerificationRequestService:
             target_organization_email=request.target_organization_email,
             request_type=request.request_type,
             status=request.status,
+            priority=request.priority,
             due_date=request.due_date,
             trust_context=request.trust_context,
             created_at=request.created_at,

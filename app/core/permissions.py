@@ -45,6 +45,7 @@ class Permission(StrEnum):
     VIEW_AUDIT_LOG = "view_audit_log"
     ADD_REMARK = "add_remark"
     ASSIGN_REVIEWER = "assign_reviewer"
+    CHANGE_VERIFICATION_PRIORITY = "change_verification_priority"
     REVIEW_VERIFICATION = "review_verification"   # approve / reject
     REQUEST_MORE_INFO = "request_more_info"        # → additional_info_requested
 
@@ -107,6 +108,7 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.VIEW_AUDIT_LOG,
         Permission.ADD_REMARK,
         Permission.ASSIGN_REVIEWER,
+        Permission.CHANGE_VERIFICATION_PRIORITY,
         Permission.REVIEW_VERIFICATION,
         Permission.REQUEST_MORE_INFO,
         Permission.MANAGE_USERS,

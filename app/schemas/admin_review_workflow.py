@@ -18,6 +18,7 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineResponse,
 )
+from app.schemas.verification_request import VerificationRequestPriorityRequest
 from app.schemas.employment.responses import EmploymentResponse
 from app.verification_requests.enums import VerificationContactReviewStatus
 
@@ -131,6 +132,20 @@ class AdminReviewDecisionRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     decision_summary: str = Field(min_length=1, max_length=5000)
+
+
+class AdminReviewUnableToVerifyRequest(AdminReviewDecisionRequest):
+    pass
+
+
+class AdminReviewClarificationResponseRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    response: str = Field(min_length=1, max_length=4000)
+
+
+class AdminReviewPriorityRequest(VerificationRequestPriorityRequest):
+    pass
 
 
 class AdminReviewOrganizationResolutionRequest(BaseModel):

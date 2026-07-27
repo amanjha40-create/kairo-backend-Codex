@@ -37,6 +37,7 @@ from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.admin_review_workflow import (
     AdminReviewAssignRequest,
     AdminReviewCorrectionRequest,
+    AdminReviewClarificationResponseRequest,
     AdminReviewCycleResponse,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
@@ -51,8 +52,10 @@ from app.schemas.admin_review_workflow import (
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
     AdminReviewOrganizationResolutionRequest,
+    AdminReviewPriorityRequest,
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
+    AdminReviewUnableToVerifyRequest,
     AdminReviewWorkflowEnvelope,
     AdminVerificationContactReviewRequest,
 )
@@ -97,7 +100,11 @@ class VerificationRequestAdminReviewService:
         self._employer_outreach = EmployerVerificationService(session, self._settings)
         self._workflow = VerificationRequestWorkflowService(self._requests)
 
-    async def get_queue(self, params: ListQueryParams | None = None) -> AdminReviewQueueResponse:
+    async def get_queue(
+        self,
+        params: ListQueryParams | None = None,
+        priorities: list[str] | None = None,
+    ) -> AdminReviewQueueResponse:
         items = await self._requests.list_by_status(
             [
                 VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
@@ -105,6 +112,9 @@ class VerificationRequestAdminReviewService:
             ]
         )
         responses = [self._to_request_response(item) for item in items]
+        if priorities:
+            accepted_priorities = {value.strip().lower() for value in priorities if value.strip()}
+            responses = [item for item in responses if item.priority in accepted_priorities]
         page = filter_sort_paginate(
             responses,
             params=params or ListQueryParams(),
@@ -501,6 +511,86 @@ class VerificationRequestAdminReviewService:
             event_type="verification_request_admin_rejected",
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"decision_summary": payload.decision_summary},
+        )
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return self._to_request_response(refreshed)
+
+    async def unable_to_verify(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewUnableToVerifyRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._require_admin_reviewable_request(verification_request_public_id)
+        review = await self._get_or_create_review(request, actor_user_id)
+        review.review_status = VerificationRequestReviewStatus.REJECTED
+        review.decision_by_user_id = actor_user_id
+        review.decision_at = datetime.now(tz=UTC)
+        review.decision_summary = payload.decision_summary
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.REJECTED,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_admin_unable_to_verify",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"decision_summary": payload.decision_summary, "outcome": "unable_to_verify"},
+        )
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return self._to_request_response(refreshed)
+
+    async def record_clarification_response(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewClarificationResponseRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status != VerificationRequestStatus.AWAITING_INFORMATION:
+            raise ConflictError("Verification request is not awaiting clarification")
+        request.candidate_response = payload.response
+        request.candidate_response_submitted_at = datetime.now(tz=UTC)
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.IN_PROGRESS,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_clarification_response_recorded",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"response_recorded": True},
+        )
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return self._to_request_response(refreshed)
+
+    async def change_priority(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewPriorityRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status in {
+            VerificationRequestStatus.VERIFIED,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.EXPIRED,
+        }:
+            raise ConflictError("Cannot change priority for a closed verification request")
+        previous_priority = request.priority
+        request.priority = payload.priority
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_priority_changed",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"previous_priority": previous_priority, "priority": payload.priority},
         )
         await self._session.commit()
         refreshed = await self._requests.get_by_public_id(request.public_id)

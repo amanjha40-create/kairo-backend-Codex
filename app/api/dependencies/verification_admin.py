@@ -22,6 +22,9 @@ require_remark = require_permission(Permission.ADD_REMARK)
 # Assign reviewer — admin, superadmin
 require_assign = require_permission(Permission.ASSIGN_REVIEWER)
 
+# Priority changes — admin, superadmin
+require_priority = require_permission(Permission.CHANGE_VERIFICATION_PRIORITY)
+
 # Approve / reject — hr, admin, superadmin
 require_reviewer = require_permission(Permission.REVIEW_VERIFICATION)
 
@@ -46,6 +49,7 @@ __all__ = [
     "require_remark",
     "require_request_more_info",
     "require_reviewer",
+    "require_priority",
     "require_role_manager",
     "require_user_manager",
     "require_verification_staff",  # legacy

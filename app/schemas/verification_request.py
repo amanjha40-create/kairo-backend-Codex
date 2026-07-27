@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
@@ -100,6 +100,10 @@ class VerificationRequestInformationSubmissionRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     response: str = Field(min_length=1, max_length=4000)
+
+
+class VerificationRequestPriorityRequest(BaseModel):
+    priority: Literal["low", "normal", "high", "urgent"]
 
 
 class SubjectVerificationRequestCreateRequest(BaseModel):
@@ -215,6 +219,7 @@ class VerificationRequestResponse(BaseModel):
     target_organization_email: EmailStr | None = None
     request_type: VerificationRequestType
     status: VerificationRequestStatus
+    priority: Literal["low", "normal", "high", "urgent"] = "normal"
     due_date: date | None
     trust_context: dict[str, Any]
     created_at: datetime

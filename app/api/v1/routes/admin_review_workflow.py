@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies.services import (
     get_trust_registry_resolution_service,
@@ -16,6 +16,7 @@ from app.api.dependencies.verification_admin import (
     require_assign,
     require_remark,
     require_request_more_info,
+    require_priority,
     require_reviewer,
     require_view_cases,
 )
@@ -23,6 +24,9 @@ from app.schemas.admin_review_workflow import (
     AdminReviewAssignRequest,
     AdminReviewCorrectionRequest,
     AdminReviewDecisionRequest,
+    AdminReviewUnableToVerifyRequest,
+    AdminReviewClarificationResponseRequest,
+    AdminReviewPriorityRequest,
     AdminReviewDetailResponse,
     AdminEvidenceDownloadResponse,
     AdminReviewNoteCreateRequest,
@@ -52,8 +56,9 @@ async def get_admin_review_queue(
     params: Annotated[ListQueryParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_view_cases)],
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+    priority: Annotated[list[str] | None, Query()] = None,
 ) -> AdminReviewQueueResponse:
-    return await svc.get_queue(params)
+    return await svc.get_queue(params, priorities=priority)
 
 
 @router.get("/{verification_request_public_id}", response_model=AdminReviewDetailResponse)
@@ -126,6 +131,39 @@ async def reject_admin_review(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> VerificationRequestResponse:
     return await svc.reject(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post("/{verification_request_public_id}/unable-to-verify", response_model=VerificationRequestResponse)
+async def mark_admin_review_unable_to_verify(
+    verification_request_public_id: UUID,
+    payload: AdminReviewUnableToVerifyRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> VerificationRequestResponse:
+    return await svc.unable_to_verify(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/record-clarification-response",
+    response_model=VerificationRequestResponse,
+)
+async def record_admin_clarification_response(
+    verification_request_public_id: UUID,
+    payload: AdminReviewClarificationResponseRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> VerificationRequestResponse:
+    return await svc.record_clarification_response(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post("/{verification_request_public_id}/priority", response_model=VerificationRequestResponse)
+async def change_admin_review_priority(
+    verification_request_public_id: UUID,
+    payload: AdminReviewPriorityRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_priority)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> VerificationRequestResponse:
+    return await svc.change_priority(reviewer.id, verification_request_public_id, payload)
 
 
 @router.post("/{verification_request_public_id}/resolve-organization", response_model=VerificationRequestResponse)

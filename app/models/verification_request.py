@@ -90,6 +90,12 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     request_type: Mapped[VerificationRequestType] = mapped_column(verification_request_type_enum, nullable=False)
     status: Mapped[VerificationRequestStatus] = mapped_column(verification_request_status_enum, nullable=False)
+    priority: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="normal",
+        server_default="normal",
+    )
     requested_by_user_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
