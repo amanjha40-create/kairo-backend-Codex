@@ -179,6 +179,11 @@ class Settings(BaseSettings):
         description="console | staging_fixed | sns",
         validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
     )
+    controlled_testing: bool = Field(
+        default=False,
+        description="Explicitly permits the fixed OTP provider for a controlled production pilot.",
+        validation_alias=AliasChoices("CONTROLLED_TESTING"),
+    )
     phone_otp_enabled: bool = Field(
         default=True,
         description="Enables staged phone OTP verification during signup.",
@@ -532,12 +537,17 @@ class Settings(BaseSettings):
             if self.phone_otp_enabled and self.phone_otp_backend == "console":
                 msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
                 raise ValueError(msg)
-            if self.phone_otp_backend == "staging_fixed":
+            if self.controlled_testing and self.phone_otp_backend != "staging_fixed":
+                msg = "CONTROLLED_TESTING=true requires PHONE_OTP_BACKEND=staging_fixed in APP_ENV=production."
+                raise ValueError(msg)
+            if self.phone_otp_backend == "staging_fixed" and not self.controlled_testing:
                 msg = "PHONE_OTP_BACKEND=staging_fixed is forbidden in APP_ENV=production."
                 raise ValueError(msg)
 
         if self.phone_otp_backend == "staging_fixed":
-            if self.app_env != AppEnvironment.STAGING:
+            if self.app_env != AppEnvironment.STAGING and not (
+                self.app_env == AppEnvironment.PRODUCTION and self.controlled_testing
+            ):
                 msg = "PHONE_OTP_BACKEND=staging_fixed requires APP_ENV=staging."
                 raise ValueError(msg)
             code = self.staging_phone_otp_code.get_secret_value() if self.staging_phone_otp_code else ""

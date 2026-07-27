@@ -41,7 +41,7 @@ def _settings(**overrides: object) -> Settings:
     return Settings(**values)
 
 
-def test_staging_fixed_provider_requires_staging_environment() -> None:
+def test_staging_fixed_provider_requires_staging_or_explicit_controlled_testing() -> None:
     with pytest.raises(ValidationError, match="requires APP_ENV=staging"):
         _settings(app_env="development")
 
@@ -50,6 +50,69 @@ def test_staging_fixed_provider_is_forbidden_in_production() -> None:
     with pytest.raises(ValidationError, match="forbidden in APP_ENV=production"):
         _settings(
             app_env="production",
+            jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
+            email_backend="smtp",
+            smtp_host="smtp.example.com",
+        )
+
+
+def test_controlled_production_testing_allows_staging_fixed_with_valid_code() -> None:
+    settings = _settings(
+        app_env="production",
+        controlled_testing=True,
+        jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
+        email_backend="smtp",
+        smtp_host="smtp.example.com",
+    )
+    assert settings.controlled_testing is True
+    assert settings.phone_otp_backend == "staging_fixed"
+
+
+def test_controlled_production_testing_does_not_allow_console() -> None:
+    with pytest.raises(ValidationError, match="must not be console"):
+        _settings(
+            app_env="production",
+            controlled_testing=True,
+            phone_otp_backend="console",
+            jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
+            email_backend="smtp",
+            smtp_host="smtp.example.com",
+        )
+
+
+def test_controlled_production_testing_does_not_enable_sns() -> None:
+    with pytest.raises(ValidationError, match="requires PHONE_OTP_BACKEND=staging_fixed"):
+        _settings(
+            app_env="production",
+            controlled_testing=True,
+            phone_otp_backend="sns",
+            jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
+            email_backend="smtp",
+            smtp_host="smtp.example.com",
+        )
+
+
+def test_controlled_production_testing_requires_explicit_flag() -> None:
+    with pytest.raises(ValidationError, match="forbidden in APP_ENV=production"):
+        _settings(
+            app_env="production",
+            controlled_testing=False,
+            jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
+            email_backend="smtp",
+            smtp_host="smtp.example.com",
+        )
+
+
+@pytest.mark.parametrize(
+    "code",
+    (None, "12345", "1234567", "abcdef"),
+)
+def test_controlled_production_testing_requires_six_digit_code(code: str | None) -> None:
+    with pytest.raises(ValidationError, match="STAGING_PHONE_OTP_CODE|exactly six digits"):
+        _settings(
+            app_env="production",
+            controlled_testing=True,
+            staging_phone_otp_code=code,
             jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
             email_backend="smtp",
             smtp_host="smtp.example.com",
