@@ -2,6 +2,7 @@
 
 from app.auth.service import AuthService
 from app.services.admin_directory_service import AdminDirectoryService
+from app.services.admin_overview_service import AdminOverviewService
 from app.services.admin_verification_service import AdminReviewService, AdminVerificationService
 from app.services.credential_verification_service import CredentialVerificationService
 from app.services.connector_execution_service import ConnectorExecutionService
@@ -43,6 +44,7 @@ from app.services.resume_service import ResumeService
 __all__ = [
     "AdminReviewService",
     "AdminDirectoryService",
+    "AdminOverviewService",
     "AdminVerificationService",
     "AuthService",
     "ConnectorExecutionService",

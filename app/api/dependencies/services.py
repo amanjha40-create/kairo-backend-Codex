@@ -11,6 +11,7 @@ from app.db.session import get_session
 from app.infrastructure.redis.deps import get_redis
 from app.services import (
     AdminDirectoryService,
+    AdminOverviewService,
     AdminVerificationService,
     AuthService,
     ConnectorExecutionService,
@@ -123,6 +124,12 @@ def get_admin_directory_service(
     session: AsyncSession = Depends(get_session),
 ) -> AdminDirectoryService:
     return AdminDirectoryService(session)
+
+
+def get_admin_overview_service(
+    session: AsyncSession = Depends(get_session),
+) -> AdminOverviewService:
+    return AdminOverviewService(session)
 
 
 def get_verification_service(session: AsyncSession = Depends(get_session)) -> VerificationService:
