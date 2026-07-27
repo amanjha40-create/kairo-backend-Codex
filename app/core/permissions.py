@@ -40,6 +40,7 @@ class Permission(StrEnum):
     SUBMIT_CASE = "submit_case"
 
     # --- Staff / console operations ---
+    ACCESS_ADMIN_PORTAL = "access_admin_portal"
     VIEW_ALL_CASES = "view_all_cases"
     VIEW_AUDIT_LOG = "view_audit_log"
     ADD_REMARK = "add_remark"
@@ -73,6 +74,7 @@ _USER: frozenset[Permission] = frozenset(
 
 _SUPPORT: frozenset[Permission] = frozenset(
     {
+        Permission.ACCESS_ADMIN_PORTAL,
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
     }
@@ -80,6 +82,7 @@ _SUPPORT: frozenset[Permission] = frozenset(
 
 _MODERATOR: frozenset[Permission] = frozenset(
     {
+        Permission.ACCESS_ADMIN_PORTAL,
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
         Permission.ADD_REMARK,
@@ -88,6 +91,7 @@ _MODERATOR: frozenset[Permission] = frozenset(
 
 _HR: frozenset[Permission] = frozenset(
     {
+        Permission.ACCESS_ADMIN_PORTAL,
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
         Permission.ADD_REMARK,
@@ -98,6 +102,7 @@ _HR: frozenset[Permission] = frozenset(
 
 _ADMIN: frozenset[Permission] = frozenset(
     {
+        Permission.ACCESS_ADMIN_PORTAL,
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
         Permission.ADD_REMARK,

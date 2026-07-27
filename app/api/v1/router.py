@@ -10,6 +10,7 @@ from app.api.v1.routes import (
     admin_employer_verifications,
     admin_review,
     admin_review_workflow,
+    admin_session,
     admin_verification,
     auth,
     certifications,
@@ -56,6 +57,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(auth.organization_signup_router)
 api_router.include_router(account_settings.router)
+api_router.include_router(admin_session.router)
 api_router.include_router(users.router)
 api_router.include_router(resumes.router)
 api_router.include_router(resume_reviews.resume_router)

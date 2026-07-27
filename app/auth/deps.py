@@ -28,6 +28,8 @@ class CurrentUser:
     id: UUID
     email: str
     role: str
+    full_name: str | None = None
+    is_active: bool = True
 
 
 async def get_current_user(
@@ -58,7 +60,13 @@ async def get_current_user(
         raise UnauthorizedError("User not found or inactive")
 
     bind_user_context(str(user.id))
-    return CurrentUser(id=user.id, email=user.email, role=user.role)
+    return CurrentUser(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        full_name=user.full_name,
+        is_active=user.is_active,
+    )
 
 
 async def get_optional_current_user(
@@ -80,7 +88,13 @@ async def get_optional_current_user(
     user = await repo.get_by_id(uid)
     if user is None or not user.is_active or user.email_verified_at is None:
         return None
-    return CurrentUser(id=user.id, email=user.email, role=user.role)
+    return CurrentUser(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        full_name=user.full_name,
+        is_active=user.is_active,
+    )
 
 
 def require_roles(*roles: str):
