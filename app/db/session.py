@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.config import get_settings
 from app.config.settings import AppEnvironment
 from app.db.base import Base
+from app.db.url import build_async_database_config
 
 settings = get_settings()
 
@@ -18,8 +24,11 @@ _echo_sql = (
     else (settings.app_env == AppEnvironment.DEVELOPMENT)
 )
 
+_async_database_url, _async_connect_args = build_async_database_config(settings.database_url)
+
 engine: AsyncEngine = create_async_engine(
-    settings.database_url,
+    _async_database_url,
+    connect_args=_async_connect_args,
     pool_pre_ping=True,
     pool_size=settings.database_pool_size,
     max_overflow=settings.database_max_overflow,
