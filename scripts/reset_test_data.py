@@ -177,6 +177,38 @@ def _table_depths(metadata: Any) -> dict[str, int]:
     return {table.name: depth(table.name, set()) for table in metadata.tables.values()}
 
 
+def _owned_delete_order(metadata: Any, owned_tables: dict[str, list[Any]]) -> list[str]:
+    """Order owned tables child-first using their declared foreign keys."""
+
+    children: dict[str, set[str]] = defaultdict(set)
+    owned_names = set(owned_tables)
+    for table_name in owned_names:
+        table = metadata.tables[table_name]
+        for constraint in table.foreign_key_constraints:
+            for element in constraint.elements:
+                parent = element.column.table.name
+                if parent in owned_names and parent != table_name:
+                    children[parent].add(table_name)
+
+    ordered: list[str] = []
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(table_name: str) -> None:
+        if table_name in visited or table_name in visiting:
+            return
+        visiting.add(table_name)
+        for child in children.get(table_name, set()):
+            visit(child)
+        visiting.remove(table_name)
+        visited.add(table_name)
+        ordered.append(table_name)
+
+    for table_name in owned_names:
+        visit(table_name)
+    return ordered
+
+
 def _user_foreign_keys(table: Table) -> list[tuple[Any, str]]:
     refs: list[tuple[Any, str]] = []
     for constraint in table.foreign_key_constraints:
@@ -253,7 +285,6 @@ async def reset_users(
     user_ids = [user.id for user in users]
     organization_ids = await _owned_organization_ids(session, user_ids)
     metadata = Base.metadata
-    depths = _table_depths(metadata)
     owned_tables = _owned_user_tables(metadata)
     counts: dict[str, int] = {}
     pending_rows = (
@@ -309,7 +340,7 @@ async def reset_users(
         if result.rowcount:
             counts[f"{table.name}.{column.name}:detached"] = result.rowcount
 
-    for table_name in sorted(owned_tables, key=lambda name: depths.get(name, 0), reverse=True):
+    for table_name in _owned_delete_order(metadata, owned_tables):
         table = metadata.tables[table_name]
         predicates = [column.in_(user_ids) for column in owned_tables[table_name]]
         result = await session.execute(delete(table).where(or_(*predicates)))

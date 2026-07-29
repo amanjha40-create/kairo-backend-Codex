@@ -6,6 +6,7 @@ from app.config.settings import AppEnvironment
 from scripts.reset_test_data import (
     ResetMode,
     ResetSafetyError,
+    _owned_delete_order,
     build_parser,
     confirm_full_reset,
     normalize_emails,
@@ -52,3 +53,11 @@ def test_dry_run_flag_is_available_without_changing_reset_mode() -> None:
     mode = ResetMode(full_reset=args.full_reset, dry_run=args.dry_run)
     assert mode.full_reset is True
     assert mode.dry_run is True
+
+
+def test_owned_delete_order_deletes_verification_requests_before_employments() -> None:
+    import app.models  # noqa: F401
+    from app.db.base import Base
+
+    order = _owned_delete_order(Base.metadata, {"employments": [], "verification_requests": []})
+    assert order.index("verification_requests") < order.index("employments")
