@@ -25,6 +25,7 @@ COPY alembic ./alembic
 COPY pyproject.toml pyproject.toml
 COPY tests ./tests
 COPY scripts ./scripts
+RUN chmod 755 scripts/reset_test_data.py
 
 USER appuser
 
