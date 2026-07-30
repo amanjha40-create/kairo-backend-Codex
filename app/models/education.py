@@ -29,12 +29,12 @@ class Education(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         nullable=False,
     )
     institution_name: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
-    degree: Mapped[str] = mapped_column(String(255), nullable=False)
+    degree: Mapped[str | None] = mapped_column(String(255), nullable=True)
     field_of_study: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    education_level: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    education_level: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
     grade: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_currently_studying: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false",

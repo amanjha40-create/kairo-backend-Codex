@@ -21,7 +21,7 @@ class CertificationCreateRequest(BaseModel):
     def validate_dates(self):
         if self.does_not_expire and self.expiry_date is not None:
             raise ValueError("expiry_date must be null when does_not_expire is true")
-        if self.expiry_date and self.expiry_date < self.issued_date:
+        if self.expiry_date and self.issued_date and self.expiry_date < self.issued_date:
             raise ValueError("expiry_date must be on or after issued_date")
         return self
 
@@ -47,7 +47,7 @@ class CertificationUpdateRequest(BaseModel):
 class CertificationUploadIntentRequest(BaseModel):
     title: str
     issuing_organization: str
-    issued_date: date
+    issued_date: date | None
     expiry_date: date | None = None
     does_not_expire: bool = False
     credential_id: str | None = None
@@ -77,7 +77,7 @@ class CertificationResponse(BaseModel):
     user_id: UUID
     title: str
     issuing_organization: str
-    issued_date: date
+    issued_date: date | None
     expiry_date: date | None
     does_not_expire: bool
     credential_id: str | None

@@ -102,7 +102,7 @@ class PortfolioReviewClaim(StrictModel):
     claim_type: Literal["portfolio"]
     title: str | None = Field(default=None, max_length=512)
     description: str | None = Field(default=None, max_length=4000)
-    url: HttpUrl
+    url: HttpUrl | None = None
     tags: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -214,6 +214,13 @@ class ImportResultResponse(BaseModel):
     warnings: list[str]
 
 
+class ImportEntitySummary(BaseModel):
+    detected: int = 0
+    imported: int = 0
+    incomplete: int = 0
+    failed: int = 0
+
+
 class ImportBatchResponse(BaseModel):
     id: UUID
     review_session_id: UUID
@@ -225,6 +232,7 @@ class ImportBatchResponse(BaseModel):
     failed_count: int
     blocked_count: int
     incomplete_count: int
+    entity_counts: dict[str, ImportEntitySummary]
     results: list[ImportResultResponse]
     created_at: datetime
     updated_at: datetime

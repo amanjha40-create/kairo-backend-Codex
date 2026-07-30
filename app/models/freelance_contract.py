@@ -24,10 +24,10 @@ class FreelanceContract(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Ba
         index=True,
         nullable=False,
     )
-    client_name: Mapped[str] = mapped_column(String(512), nullable=False)
-    project_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    client_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    project_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_ongoing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     verification_status: Mapped[str] = mapped_column(

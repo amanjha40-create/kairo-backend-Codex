@@ -26,7 +26,7 @@ class Certification(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     issuing_organization: Mapped[str] = mapped_column(String(512), nullable=False)
-    issued_date: Mapped[date] = mapped_column(Date, nullable=False)
+    issued_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     does_not_expire: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     credential_id: Mapped[str | None] = mapped_column(String(256), nullable=True)

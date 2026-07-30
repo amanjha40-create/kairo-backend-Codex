@@ -62,11 +62,11 @@ class EducationResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     institution_name: str
-    degree: str
+    degree: str | None
     field_of_study: str | None = None
-    education_level: EducationLevel
+    education_level: EducationLevel | None
     grade: str | None = None
-    start_date: date
+    start_date: date | None
     end_date: date | None = None
     is_currently_studying: bool
     verification_status: EducationVerificationStatus

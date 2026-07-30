@@ -87,14 +87,18 @@ def test_import_plan_only_blocks_structurally_unusable_employment_claims() -> No
     ) == []
 
 
-def test_incomplete_resume_claims_are_deferred_to_career_completion() -> None:
+def test_incomplete_resume_claims_remain_importable_for_career_completion() -> None:
     service = ResumeReviewService(SimpleNamespace())
     assert service._required_blockers("education", {
         "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
-    }) == ["missing_education_level", "missing_start_date"]
+    }) == []
     assert service._required_blockers("certification", {
-        "title": "Synthetic Certificate",
-    }) == ["missing_issued_date", "missing_issuing_organization"]
+        "title": "Synthetic Certificate", "issuing_organization": "Synthetic Issuer",
+    }) == []
+    assert service._completion_warnings("education", {
+        "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
+        "education_level": None, "start_date": None,
+    }) == ["needs_completion_in_career", "missing_start_date", "missing_end_date", "education_level"]
 
 
 def test_incomplete_employment_is_importable_and_marked_for_career_completion() -> None:
@@ -118,6 +122,21 @@ def test_projects_and_skills_are_importable_when_their_identity_is_present() -> 
     service = ResumeReviewService(SimpleNamespace())
     assert service._required_blockers("project", {"title": "Synthetic project"}) == []
     assert service._required_blockers("skill", {"name": "Synthetic skill"}) == []
+
+
+@pytest.mark.asyncio
+async def test_education_import_preserves_missing_optional_metadata() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    record = await service._create_record(uuid4(), "education", {
+        "institution_name": "Synthetic Institute",
+        "degree": "Bachelor of Business Administration",
+        "education_level": None,
+        "start_date": None,
+    })
+    assert record.institution_name == "Synthetic Institute"
+    assert record.degree == "Bachelor of Business Administration"
+    assert record.education_level is None
+    assert record.start_date is None
 
 
 def test_import_plan_accepts_nullable_employment_location() -> None:

@@ -25,10 +25,10 @@ class Internship(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         index=True,
         nullable=False,
     )
-    company_name: Mapped[str] = mapped_column(String(512), nullable=False)
-    role: Mapped[str] = mapped_column(String(512), nullable=False)
+    company_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_ongoing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -25,9 +25,9 @@ class GigPlatform(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         index=True,
         nullable=False,
     )
-    platform_name: Mapped[str] = mapped_column(String(256), nullable=False)
-    partner_role: Mapped[str] = mapped_column(String(256), nullable=False)
-    started_at: Mapped[date] = mapped_column(Date, nullable=False)
+    platform_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    partner_role: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    started_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     ended_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     partner_id: Mapped[str | None] = mapped_column(String(256), nullable=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -36,6 +37,7 @@ from app.resumes.review_schemas import (
     ImportBatchResponse,
     ImportResultResponse,
     ReviewImportRequest,
+    ImportEntitySummary,
     ReviewItemResponse,
     ReviewItemUpdateRequest,
     ReviewPlanItem,
@@ -174,7 +176,6 @@ class ResumeReviewService:
         review = await self._owned_review(user_id, review_id, for_update=True)
         self._check_version(review.version, payload.expected_version)
         self._ensure_mutable(review)
-        await self._skip_incomplete_items(review)
         plan = await self._build_plan(review)
         review.status = ResumeReviewStatus.READY_TO_IMPORT.value if plan.ready else ResumeReviewStatus.REVIEWING.value
         review.reviewed_at = datetime.now(UTC)
@@ -183,37 +184,6 @@ class ResumeReviewService:
         plan.version = review.version
         logger.info("resume_import_plan_validated", extra={"review_session_id": str(review.id), "user_id": str(user_id), "ready": plan.ready})
         return plan
-
-    async def _skip_incomplete_items(self, review: ResumeReviewSession) -> None:
-        """Keep incomplete claims reviewable without blocking valid imports.
-
-        Resume claims are candidate-provided drafts. Required fields for a persisted
-        Career record can be completed later from the normal Career editors.
-        """
-        items = (
-            await self.session.scalars(
-                select(ResumeReviewItem).where(
-                    ResumeReviewItem.review_session_id == review.id,
-                    ResumeReviewItem.selected.is_(True),
-                    ResumeReviewItem.import_action == "create_new",
-                )
-            )
-        ).all()
-        skipped = 0
-        for item in items:
-            blockers = self._required_blockers(item.claim_type, item.edited_payload)
-            if not blockers:
-                continue
-            item.selected = False
-            item.import_action = "skip"
-            item.review_status = "skipped"
-            item.conflict_warnings = sorted(set(item.conflict_warnings + ["needs_completion_in_career"]))
-            skipped += 1
-        if skipped:
-            logger.info(
-                "resume_review_incomplete_claims_deferred",
-                extra={"review_session_id": str(review.id), "deferred_count": skipped},
-            )
 
     async def import_review(self, user_id: UUID, review_id: UUID, payload: ReviewImportRequest) -> ImportBatchResponse:
         review = await self._owned_review(user_id, review_id, for_update=True)
@@ -379,15 +349,15 @@ class ResumeReviewService:
             location = p.get("location") or {}
             return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p.get("start_date"), end_date=p.get("end_date"), work_location_country=location.get("country", "").upper() or None, work_location_region=location.get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
         if claim_type == "education":
-            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p["degree"], field_of_study=p.get("field_of_study"), education_level=p["education_level"], grade=p.get("grade"), start_date=p["start_date"], end_date=p.get("end_date"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
+            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree") or p.get("field_of_study"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
-            return Internship(user_id=user_id, company_name=p["company_name"], role=p["role"], description=p.get("description"), start_date=p["start_date"], end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), is_paid=False, stipend_currency="INR", verification_status="pending")
+            return Internship(user_id=user_id, company_name=p.get("company_name"), role=p.get("role"), description=p.get("description"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), is_paid=False, stipend_currency="INR", verification_status="pending")
         if claim_type == "freelance":
-            return FreelanceContract(user_id=user_id, client_name=p["client_name"], project_title=p["project_title"], description=p.get("description"), start_date=p["start_date"], end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), verification_status="pending")
+            return FreelanceContract(user_id=user_id, client_name=p.get("client_name"), project_title=p.get("project_title"), description=p.get("description"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), verification_status="pending")
         if claim_type == "gig_platform":
-            return GigPlatform(user_id=user_id, platform_name=p["platform_name"], partner_role=p["partner_role"], partner_id=p.get("partner_id"), started_at=p["start_date"], ended_at=p.get("end_date"), is_active=bool(p.get("is_current")), verification_status="pending")
+            return GigPlatform(user_id=user_id, platform_name=p.get("platform_name"), partner_role=p.get("partner_role"), partner_id=p.get("partner_id"), started_at=p.get("start_date"), ended_at=p.get("end_date"), is_active=bool(p.get("is_current")), verification_status="pending")
         if claim_type == "certification":
-            return Certification(user_id=user_id, title=p["title"], issuing_organization=p["issuing_organization"], issued_date=p["issued_date"], expiry_date=p.get("expiry_date"), does_not_expire=p.get("expiry_date") is None, credential_id=p.get("credential_id"), credential_url=str(p["credential_url"]) if p.get("credential_url") else None, verification_status="pending")
+            return Certification(user_id=user_id, title=p["title"], issuing_organization=p["issuing_organization"], issued_date=p.get("issued_date"), expiry_date=p.get("expiry_date"), does_not_expire=p.get("expiry_date") is None, credential_id=p.get("credential_id"), credential_url=str(p["credential_url"]) if p.get("credential_url") else None, verification_status="pending")
         if claim_type == "portfolio":
             return PortfolioItem(user_id=user_id, title=p["title"], description=p.get("description"), url=str(p["url"]) if p.get("url") else None, tags=",".join(p.get("tags", [])) or None, verification_status="pending")
         if claim_type == "project":
@@ -480,7 +450,21 @@ class ResumeReviewService:
         results = (await self.session.scalars(select(ResumeImportResult).where(ResumeImportResult.import_batch_id == batch.id).order_by(ResumeImportResult.created_at))).all()
         result_models = [ImportResultResponse.model_validate(result) for result in results]
         incomplete_count = sum("needs_completion_in_career" in result.warnings for result in result_models)
-        return ImportBatchResponse(id=batch.id, review_session_id=batch.review_session_id, status=batch.status, total_count=batch.total_count, imported_count=batch.imported_count, linked_count=batch.linked_count, skipped_count=batch.skipped_count, failed_count=batch.failed_count, blocked_count=batch.blocked_count, incomplete_count=incomplete_count, results=result_models, created_at=batch.created_at, updated_at=batch.updated_at)
+        items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == batch.review_session_id))).all()
+        counts: dict[str, dict[str, int]] = defaultdict(lambda: {"detected": 0, "imported": 0, "incomplete": 0, "failed": 0})
+        for item in items:
+            counts[item.claim_type]["detected"] += 1
+        for result in result_models:
+            claim_type = result.record_type or next((item.claim_type for item in items if item.id == result.review_item_id), None)
+            if not claim_type:
+                continue
+            if result.outcome in {"imported", "linked"}:
+                counts[claim_type]["imported"] += 1
+            if "needs_completion_in_career" in result.warnings:
+                counts[claim_type]["incomplete"] += 1
+            if result.outcome == "failed":
+                counts[claim_type]["failed"] += 1
+        return ImportBatchResponse(id=batch.id, review_session_id=batch.review_session_id, status=batch.status, total_count=batch.total_count, imported_count=batch.imported_count, linked_count=batch.linked_count, skipped_count=batch.skipped_count, failed_count=batch.failed_count, blocked_count=batch.blocked_count, incomplete_count=incomplete_count, entity_counts={key: ImportEntitySummary(**value) for key, value in counts.items()}, results=result_models, created_at=batch.created_at, updated_at=batch.updated_at)
 
     @staticmethod
     def _claims(parsed: ParsedResumeResult) -> list[tuple[str, dict[str, Any]]]:
@@ -523,16 +507,24 @@ class ResumeReviewService:
     def _required_blockers(claim_type: str, p: dict[str, Any]) -> list[str]:
         required = {
             "employment": (),
-            "education": ("institution_name", "degree", "education_level", "start_date"),
-            "internship": ("company_name", "role", "start_date"),
-            "freelance": ("client_name", "project_title", "start_date"),
-            "gig_platform": ("platform_name", "partner_role", "start_date"),
-            "certification": ("title", "issued_date", "issuing_organization"),
-            "portfolio": ("title", "url"),
+            "education": ("institution_name",),
+            "internship": (),
+            "freelance": (),
+            "gig_platform": (),
+            "certification": ("title", "issuing_organization"),
+            "portfolio": ("title",),
             "project": ("title",),
             "skill": ("name",),
         }
         blockers = [f"missing_{field}" for field in required.get(claim_type, ()) if not p.get(field)]
+        if claim_type == "education" and not any(p.get(field) for field in ("degree", "field_of_study")):
+            blockers.append("missing_education_qualification")
+        if claim_type == "internship" and not any(p.get(field) for field in ("company_name", "role")):
+            blockers.append("missing_internship_identity")
+        if claim_type == "freelance" and not any(p.get(field) for field in ("client_name", "project_title")):
+            blockers.append("missing_freelance_identity")
+        if claim_type == "gig_platform" and not any(p.get(field) for field in ("platform_name", "partner_role")):
+            blockers.append("missing_gig_identity")
         if claim_type == "employment":
             if not p.get("company_name") and not p.get("role_title"):
                 blockers.append("missing_employment_identity")
@@ -540,13 +532,20 @@ class ResumeReviewService:
 
     @staticmethod
     def _completion_warnings(claim_type: str, payload: dict[str, Any]) -> list[str]:
-        if claim_type != "employment":
-            return []
-        missing = []
-        if not payload.get("start_date"):
-            missing.append("missing_start_date")
-        if not payload.get("end_date") and not payload.get("is_current"):
-            missing.append("missing_end_date")
+        missing: list[str] = []
+        if claim_type in {"employment", "education", "internship", "freelance", "gig_platform"}:
+            if not payload.get("start_date"):
+                missing.append("missing_start_date")
+            if not payload.get("end_date") and not payload.get("is_current"):
+                missing.append("missing_end_date")
+        if claim_type == "education":
+            missing.extend(field for field in ("education_level",) if not payload.get(field))
+        if claim_type == "certification" and not payload.get("issued_date"):
+            missing.append("missing_issued_date")
+        if claim_type == "portfolio" and not payload.get("url"):
+            missing.append("missing_url")
+        if claim_type == "project" and not payload.get("url"):
+            missing.append("missing_url")
         return ["needs_completion_in_career", *missing] if missing else []
 
     @classmethod

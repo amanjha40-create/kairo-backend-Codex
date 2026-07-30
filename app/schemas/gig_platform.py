@@ -32,9 +32,9 @@ class GigPlatformUpdateRequest(BaseModel):
 class GigPlatformResponse(BaseModel):
     id: UUID
     user_id: UUID
-    platform_name: str
-    partner_role: str
-    started_at: date
+    platform_name: str | None
+    partner_role: str | None
+    started_at: date | None
     ended_at: date | None
     is_active: bool
     partner_id: str | None

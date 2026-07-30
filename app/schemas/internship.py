@@ -36,10 +36,10 @@ class InternshipUpdateRequest(BaseModel):
 class InternshipResponse(BaseModel):
     id: UUID
     user_id: UUID
-    company_name: str
-    role: str
+    company_name: str | None
+    role: str | None
     description: str | None
-    start_date: date
+    start_date: date | None
     end_date: date | None
     is_ongoing: bool
     is_paid: bool
