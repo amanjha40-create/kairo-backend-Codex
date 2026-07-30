@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
-from app.api.dependencies.services import get_education_service
+from app.api.dependencies.services import get_education_service, get_verification_request_service
 from app.schemas.education import (
     EducationCreateRequest,
     EducationDocumentCompleteUploadRequest,
@@ -20,7 +20,12 @@ from app.schemas.education import (
     EducationUpdateRequest,
 )
 from app.schemas.pagination import Page, PageParams
+from app.schemas.verification_request import (
+    EducationVerificationDraftRequest,
+    VerificationRequestResponse,
+)
 from app.services.education_service import EducationService
+from app.services.verification_request_service import VerificationRequestService
 
 router = APIRouter(prefix="/educations", tags=["educations"])
 
@@ -81,6 +86,39 @@ async def submit_education(
 ) -> EducationResponse:
     edu = await svc.submit(current.id, education_id)
     return EducationResponse.model_validate(edu)
+
+
+@router.post(
+    "/{education_id}/verification-request",
+    response_model=VerificationRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_education_verification_request(
+    education_id: UUID,
+    payload: EducationVerificationDraftRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    verification_service: Annotated[
+        VerificationRequestService,
+        Depends(get_verification_request_service),
+    ],
+) -> VerificationRequestResponse:
+    return await verification_service.create_education_verification_draft(
+        current.id,
+        education_id,
+        payload,
+    )
+
+
+@router.get("/{education_id}/verification-request", response_model=VerificationRequestResponse)
+async def get_education_verification_request(
+    education_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    verification_service: Annotated[
+        VerificationRequestService,
+        Depends(get_verification_request_service),
+    ],
+) -> VerificationRequestResponse:
+    return await verification_service.get_education_verification_request(current.id, education_id)
 
 
 @router.delete("/{education_id}", status_code=status.HTTP_204_NO_CONTENT)

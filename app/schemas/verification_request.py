@@ -8,7 +8,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
-from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
+from app.admin_review.enums import (
+    VerificationRequestEvidenceStatus,
+    VerificationReviewCorrectionStatus,
+)
 from app.organization.enums import OrganizationType, OrganizationVerificationState
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
@@ -47,6 +50,11 @@ class VerificationContactResponse(BaseModel):
 class EmploymentVerificationDraftRequest(BaseModel):
     verification_contact: VerificationContactRequest
     employment_document_ids: list[UUID] = Field(min_length=1, max_length=20)
+
+
+class EducationVerificationDraftRequest(BaseModel):
+    verification_contact: VerificationContactRequest
+    education_document_ids: list[UUID] = Field(min_length=1, max_length=20)
 
 
 class VerificationRequestCreateRequest(BaseModel):
@@ -134,11 +142,15 @@ class VerificationRequestEvidenceCreateRequest(BaseModel):
     field_key: str = Field(min_length=1, max_length=128)
     document_id: UUID | None = None
     employment_document_id: UUID | None = None
+    education_document_id: UUID | None = None
     value: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self) -> "VerificationRequestEvidenceCreateRequest":
-        supplied_documents = sum(item is not None for item in (self.document_id, self.employment_document_id))
+        supplied_documents = sum(
+            item is not None
+            for item in (self.document_id, self.employment_document_id, self.education_document_id)
+        )
         if supplied_documents > 1:
             raise ValueError("Provide only one document reference")
         if supplied_documents == 0 and self.value is None:
@@ -153,17 +165,22 @@ class VerificationRequestEvidenceUpdateRequest(BaseModel):
     field_key: str | None = Field(default=None, min_length=1, max_length=128)
     document_id: UUID | None = None
     employment_document_id: UUID | None = None
+    education_document_id: UUID | None = None
     value: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self) -> "VerificationRequestEvidenceUpdateRequest":
-        if self.document_id is not None and self.employment_document_id is not None:
+        if sum(
+            item is not None
+            for item in (self.document_id, self.employment_document_id, self.education_document_id)
+        ) > 1:
             raise ValueError("Provide only one document reference")
         if (
             self.evidence_type is None
             and self.field_key is None
             and self.document_id is None
             and self.employment_document_id is None
+            and self.education_document_id is None
             and self.value is None
         ):
             raise ValueError("Provide at least one field to update")
@@ -201,6 +218,14 @@ class VerificationRequestEmploymentClaimResponse(BaseModel):
     work_location_region: str | None = None
 
 
+class VerificationRequestEducationClaimResponse(BaseModel):
+    institution_name: str | None = None
+    degree: str | None = None
+    field_of_study: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
 class VerificationRequestEvidenceSummaryResponse(BaseModel):
     total_items: int = 0
     document_items: int = 0
@@ -210,6 +235,7 @@ class VerificationRequestEvidenceSummaryResponse(BaseModel):
 class VerificationRequestResponse(BaseModel):
     public_id: UUID
     employment_id: UUID | None = None
+    education_id: UUID | None = None
     origin_type: VerificationRequestOriginType | None = None
     organization_public_id: UUID | None = None
     trust_invitation_public_id: UUID | None
@@ -233,6 +259,7 @@ class VerificationRequestResponse(BaseModel):
     organization_summary: VerificationRequestOrganizationSummary | None = None
     verification_target: VerificationRequestTargetResponse | None = None
     employment_claim: VerificationRequestEmploymentClaimResponse | None = None
+    education_claim: VerificationRequestEducationClaimResponse | None = None
     evidence_summary: VerificationRequestEvidenceSummaryResponse = Field(
         default_factory=VerificationRequestEvidenceSummaryResponse
     )
@@ -248,6 +275,7 @@ class VerificationRequestEvidenceResponse(BaseModel):
     field_key: str
     document_id: UUID | None
     employment_document_id: UUID | None = None
+    education_document_id: UUID | None = None
     value: dict[str, Any] | None
     status: VerificationRequestEvidenceStatus
     created_at: datetime

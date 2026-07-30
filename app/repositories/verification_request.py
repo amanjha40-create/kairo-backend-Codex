@@ -76,6 +76,18 @@ class VerificationRequestRepository:
         )
         return (await self._session.execute(stmt)).scalars().first()
 
+    async def get_active_for_education(self, education_id: UUID) -> VerificationRequest | None:
+        terminal_statuses = ("verified", "rejected", "cancelled", "expired")
+        stmt = (
+            select(VerificationRequest)
+            .where(
+                VerificationRequest.education_id == education_id,
+                VerificationRequest.status.not_in(terminal_statuses),
+            )
+            .order_by(VerificationRequest.created_at.desc())
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
     async def list_by_status(self, statuses: list[str]) -> list[VerificationRequest]:
         stmt = (
             select(VerificationRequest)

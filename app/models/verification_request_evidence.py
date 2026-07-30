@@ -6,7 +6,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import ForeignKey, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.admin_review.enums import VerificationRequestEvidenceStatus
@@ -15,6 +16,7 @@ from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 from app.db.pg_enums import verification_request_evidence_status_enum
 
 if TYPE_CHECKING:
+    from app.models.education_document import EducationDocument
     from app.models.verification_request import VerificationRequest
 
 
@@ -50,6 +52,13 @@ class VerificationRequestEvidence(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    education_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("education_documents.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    education_document: Mapped["EducationDocument | None"] = relationship("EducationDocument")
     value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[VerificationRequestEvidenceStatus] = mapped_column(
         verification_request_evidence_status_enum,

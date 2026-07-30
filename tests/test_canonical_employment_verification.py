@@ -10,9 +10,13 @@ from uuid import uuid4
 import pytest
 
 from app.api.v1.router import api_router
+from app.education.enums import EducationVerificationStatus
 from app.employment.enums import DocumentVerificationStatus
 from app.exceptions import ConflictError, EmploymentWorkflowError
-from app.schemas.verification_request import VerificationContactRequest
+from app.schemas.verification_request import (
+    EducationVerificationDraftRequest,
+    VerificationContactRequest,
+)
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.verification_request_service import VerificationRequestService
 from app.verification_requests.enums import (
@@ -31,6 +35,16 @@ def test_candidate_employer_email_route_is_not_registered() -> None:
 
     assert "/employments/{employment_id}/employer-verification/request" not in paths
     assert "/employments/{employment_id}/verification-request" in paths
+
+
+def test_candidate_education_verification_routes_are_registered() -> None:
+    paths: set[str] = set()
+    for included in api_router.routes:
+        router = getattr(included, "original_router", None)
+        if router is not None:
+            paths.update(route.path for route in router.routes if hasattr(route, "path"))
+
+    assert "/educations/{education_id}/verification-request" in paths
 
 
 def test_verification_contact_requires_valid_email_and_type() -> None:
@@ -71,6 +85,146 @@ async def test_employment_evidence_requires_completed_owned_document() -> None:
 
     with pytest.raises(ConflictError, match="upload is not complete"):
         await service._validate_employment_document_evidence(request, actor_id, document_id)
+
+
+@pytest.mark.asyncio
+async def test_education_evidence_requires_completed_owned_document() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    education_id = uuid4()
+    document_id = uuid4()
+    request = SimpleNamespace(id=uuid4(), education_id=education_id)
+    document = SimpleNamespace(
+        id=document_id,
+        uploaded_by_user_id=actor_id,
+        checksum_sha256=None,
+    )
+
+    class Documents:
+        async def get_for_education(self, candidate_document_id, candidate_education_id):
+            assert candidate_document_id == document_id
+            assert candidate_education_id == education_id
+            return document
+
+    class Evidence:
+        async def get_by_education_document(self, request_id, candidate_document_id):
+            return None
+
+    service._education_documents = Documents()
+    service._evidence = Evidence()
+
+    with pytest.raises(ConflictError, match="upload is not complete"):
+        await service._validate_education_document_evidence(request, actor_id, document_id)
+
+
+@pytest.mark.asyncio
+async def test_education_verification_status_syncs_only_the_linked_record() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    education_id = uuid4()
+    education = SimpleNamespace(verification_status=EducationVerificationStatus.PENDING.value)
+
+    class Educations:
+        async def get_active_by_id(self, candidate_education_id):
+            assert candidate_education_id == education_id
+            return education
+
+    service._educations = Educations()
+    await service._sync_linked_education_status(
+        SimpleNamespace(education_id=education_id),
+        EducationVerificationStatus.VERIFIED.value,
+    )
+
+    assert education.verification_status == EducationVerificationStatus.VERIFIED.value
+
+
+@pytest.mark.asyncio
+async def test_education_draft_links_completed_owned_evidence() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    education_id = uuid4()
+    document_id = uuid4()
+    request = SimpleNamespace(id=uuid4(), public_id=uuid4())
+    education = SimpleNamespace(
+        id=education_id,
+        institution_name="Kairo University",
+        verification_status=EducationVerificationStatus.DRAFT.value,
+    )
+    document = SimpleNamespace(id=document_id, document_type="transcript")
+    evidence_items = []
+
+    class Educations:
+        async def get_owned(self, candidate_education_id, candidate_user_id):
+            assert candidate_education_id == education_id
+            assert candidate_user_id == actor_id
+            return education
+
+    class Requests:
+        async def get_active_for_education(self, candidate_education_id):
+            assert candidate_education_id == education_id
+            return None
+
+        async def create(self, candidate_request):
+            assert candidate_request.education_id == education_id
+            assert candidate_request.request_type == VerificationRequestType.EDUCATION
+            return request
+
+    class Contacts:
+        async def create(self, _contact):
+            return SimpleNamespace(public_id=uuid4())
+
+    class Documents:
+        async def get_for_education(self, candidate_document_id, candidate_education_id):
+            assert candidate_document_id == document_id
+            assert candidate_education_id == education_id
+            return document
+
+    class Evidence:
+        async def create(self, evidence):
+            evidence_items.append(evidence)
+            evidence.public_id = uuid4()
+            return evidence
+
+    class Workflow:
+        async def record_action(self, *_args, **_kwargs):
+            return None
+
+    class People:
+        async def resolve_for_verification_request(self, *_args, **_kwargs):
+            return None
+
+    async def subject(_actor_id):
+        return SimpleNamespace(email="candidate@example.com", full_name="Candidate")
+
+    async def validate(_request, _actor_id, candidate_document_id, **_kwargs):
+        assert candidate_document_id == document_id
+
+    async def response(_public_id):
+        return request
+
+    service._educations = Educations()
+    service._requests = Requests()
+    service._contacts = Contacts()
+    service._education_documents = Documents()
+    service._evidence = Evidence()
+    service._workflow = Workflow()
+    service._people = People()
+    service._require_subject_user = subject
+    service._validate_education_document_evidence = validate
+    service._commit_reload_subject_response = response
+
+    payload = EducationVerificationDraftRequest(
+        verification_contact=VerificationContactRequest(
+            contact_email="registrar@kairo.example",
+            contact_type="authorized_representative",
+        ),
+        education_document_ids=[document_id],
+    )
+    result = await service.create_education_verification_draft(actor_id, education_id, payload)
+
+    assert result is request
+    assert education.verification_status == EducationVerificationStatus.PENDING.value
+    assert len(evidence_items) == 1
+    assert evidence_items[0].education_document_id == document_id
 
 
 @pytest.mark.asyncio
@@ -119,6 +273,48 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
     assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
     assert transitions == [(VerificationRequestStatus.PENDING_ADMIN_REVIEW, "verification_submitted")]
     assert request.organization_outreach_sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_education_candidate_submission_requires_education_evidence() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        education_id=uuid4(),
+        request_type=VerificationRequestType.EDUCATION,
+        status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
+        submitted_for_admin_review_at=None,
+    )
+
+    async def require_subject(*_args):
+        return request
+
+    class EvidenceRepository:
+        async def list_for_request(self, _request_id):
+            return [SimpleNamespace(education_document_id=uuid4())]
+
+    class ContactRepository:
+        async def get_current(self, _request_id):
+            return SimpleNamespace(public_id=uuid4())
+
+    class Workflow:
+        async def transition(self, target, *, target_status, **_kwargs):
+            target.status = target_status
+
+    async def commit_reload_subject_response(_public_id):
+        return request
+
+    service._require_subject_request = require_subject
+    service._evidence = EvidenceRepository()
+    service._contacts = ContactRepository()
+    service._workflow = Workflow()
+    service._commit_reload_subject_response = commit_reload_subject_response
+
+    result = await service.submit_for_review(actor_id, "candidate@example.com", request.public_id)
+
+    assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
 
 
 @pytest.mark.asyncio

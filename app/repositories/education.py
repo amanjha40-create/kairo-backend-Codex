@@ -28,6 +28,13 @@ class EducationRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_active_by_id(self, education_id: UUID) -> Education | None:
+        stmt = select(Education).where(
+            Education.id == education_id,
+            Education.deleted_at.is_(None),
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_user(
         self,
         user_id: UUID,
@@ -72,6 +79,13 @@ class EducationDocumentRepository:
         stmt = select(EducationDocument).where(
             EducationDocument.id == document_id,
             EducationDocument.education_id == education_id,
+            EducationDocument.deleted_at.is_(None),
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_active_by_id(self, document_id: UUID) -> EducationDocument | None:
+        stmt = select(EducationDocument).where(
+            EducationDocument.id == document_id,
             EducationDocument.deleted_at.is_(None),
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()

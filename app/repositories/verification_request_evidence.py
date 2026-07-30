@@ -43,6 +43,17 @@ class VerificationRequestEvidenceRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_education_document(
+        self,
+        verification_request_id: UUID,
+        education_document_id: UUID,
+    ) -> VerificationRequestEvidence | None:
+        stmt = select(VerificationRequestEvidence).where(
+            VerificationRequestEvidence.verification_request_id == verification_request_id,
+            VerificationRequestEvidence.education_document_id == education_document_id,
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_document(
         self,
         verification_request_id: UUID,

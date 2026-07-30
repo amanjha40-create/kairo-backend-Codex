@@ -7,7 +7,8 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -24,16 +25,17 @@ from app.verification_requests.enums import (
 )
 
 if TYPE_CHECKING:
+    from app.models.education import Education
     from app.models.employment import Employment
-    from app.models.organization_person import OrganizationPerson
-    from app.models.verification_connector_run import VerificationConnectorRun
     from app.models.organization import Organization
-    from app.models.trust_registry_record import TrustRegistryRecord
+    from app.models.organization_person import OrganizationPerson
     from app.models.trust_invitation import TrustInvitation
-    from app.models.verification_request_evidence import VerificationRequestEvidence
-    from app.models.verification_request_event import VerificationRequestEvent
-    from app.models.verification_request_review import VerificationRequestReview
+    from app.models.trust_registry_record import TrustRegistryRecord
+    from app.models.verification_connector_run import VerificationConnectorRun
     from app.models.verification_contact import VerificationContact
+    from app.models.verification_request_event import VerificationRequestEvent
+    from app.models.verification_request_evidence import VerificationRequestEvidence
+    from app.models.verification_request_review import VerificationRequestReview
 
 
 class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -75,6 +77,12 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     employment_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("employments.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    education_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("educations.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
@@ -164,6 +172,7 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     trust_invitation: Mapped["TrustInvitation | None"] = relationship("TrustInvitation", back_populates="verification_requests")
     employment: Mapped["Employment | None"] = relationship("Employment", back_populates="verification_requests")
+    education: Mapped["Education | None"] = relationship("Education")
     registry_record: Mapped["TrustRegistryRecord | None"] = relationship("TrustRegistryRecord", back_populates="verification_requests")
     evidence_items: Mapped[list["VerificationRequestEvidence"]] = relationship(
         "VerificationRequestEvidence",
