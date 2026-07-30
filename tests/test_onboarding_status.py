@@ -120,3 +120,16 @@ async def test_legacy_completion_timestamp_cannot_create_contradictory_state() -
     assert status.is_onboarding_complete is False
     assert status.completion_percentage < 100
     assert "phone" in status.missing_requirements
+
+
+@pytest.mark.asyncio
+async def test_explicit_completion_allows_home_without_hiding_profile_guidance() -> None:
+    status = await _service()._build_onboarding_status(
+        _user(headline=None, employment_onboarding_completed_at=datetime.now(tz=UTC))
+    )
+
+    assert status.current_step == "complete"
+    assert status.passport_ready is True
+    assert status.is_onboarding_complete is True
+    assert status.completion_percentage < 100
+    assert "headline" in status.missing_requirements

@@ -267,7 +267,14 @@ class PassportEngineService:
             for step, done in requirements
             if step not in {"verify_email", "verify_phone"}
         )
-        passport_ready = email_verified and phone_verified and minimum_profile_complete
+        # The explicit completion endpoint is the canonical signal that a
+        # candidate has finished an approved onboarding path, including resume
+        # import. Keep profile-completion guidance separate from route access.
+        explicitly_completed = user.employment_onboarding_completed_at is not None
+        essential_identity_complete = email_verified and phone_verified and self._has_value(user.phone)
+        passport_ready = essential_identity_complete and (
+            minimum_profile_complete or explicitly_completed
+        )
 
         completed_steps: list[str] = []
         if email_verified:
@@ -282,7 +289,7 @@ class PassportEngineService:
         if not email_verified or not phone_verified:
             current_step = "verify_identity"
             next_step = "complete_profile" if email_verified and phone_verified else "verify_identity"
-        elif not minimum_profile_complete:
+        elif not passport_ready:
             current_step = "complete_profile"
             next_step = "complete_profile"
         else:
