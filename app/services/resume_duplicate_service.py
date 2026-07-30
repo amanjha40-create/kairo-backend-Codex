@@ -41,7 +41,7 @@ class ResumeDuplicateService:
 
     async def assess(self, user_id: UUID, claim_type: str, payload: dict[str, Any]) -> DuplicateAssessment:
         if claim_type in {"profile", "project", "skill"}:
-            return DuplicateAssessment("no_match", [], ["unsupported_import_target"] if claim_type in {"project", "skill"} else [])
+            return DuplicateAssessment("no_match", [], [])
         model, primary, secondary, start, end, protected = self._spec(claim_type)
         payload_primary, payload_secondary, payload_start, payload_end = self._payload_spec(claim_type)
         owner_column = model.created_by_user_id if claim_type == "employment" else model.user_id

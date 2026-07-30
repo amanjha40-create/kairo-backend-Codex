@@ -224,6 +224,7 @@ class ImportBatchResponse(BaseModel):
     skipped_count: int
     failed_count: int
     blocked_count: int
+    incomplete_count: int
     results: list[ImportResultResponse]
     created_at: datetime
     updated_at: datetime

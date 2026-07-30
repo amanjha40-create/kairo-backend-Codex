@@ -72,13 +72,11 @@ def test_item_update_rejects_extra_mutation_controls() -> None:
         ReviewItemUpdateRequest(expected_version=1, selected=True, verification_status="verified")
 
 
-def test_import_plan_blocks_unsupported_and_incomplete_claims() -> None:
+def test_import_plan_only_blocks_structurally_unusable_employment_claims() -> None:
     service = ResumeReviewService(SimpleNamespace())
     assert "unsupported_import_target" not in service._required_blockers("project", {"title": "Synthetic"})
-    assert service._required_blockers("employment", {"company_name": "Synthetic"}) == [
-        "missing_role_title",
-        "missing_start_date",
-    ]
+    assert service._required_blockers("employment", {}) == ["missing_employment_identity"]
+    assert service._required_blockers("employment", {"company_name": "Synthetic"}) == []
     assert service._required_blockers("employment", {
         "company_name": "Synthetic", "role_title": "Engineer", "start_date": "2024-01-01",
     }) == []
@@ -97,6 +95,29 @@ def test_incomplete_resume_claims_are_deferred_to_career_completion() -> None:
     assert service._required_blockers("certification", {
         "title": "Synthetic Certificate",
     }) == ["missing_issued_date", "missing_issuing_organization"]
+
+
+def test_incomplete_employment_is_importable_and_marked_for_career_completion() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    assert service._required_blockers("employment", {"company_name": "Synthetic", "role_title": "Engineer"}) == []
+    assert service._completion_warnings("employment", {
+        "company_name": "Synthetic", "role_title": "Engineer", "start_date": None,
+        "end_date": None, "is_current": False,
+    }) == ["needs_completion_in_career", "missing_start_date", "missing_end_date"]
+
+
+def test_current_employment_with_missing_end_date_is_not_incomplete() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    assert service._completion_warnings("employment", {
+        "company_name": "Synthetic", "role_title": "Engineer", "start_date": None,
+        "end_date": None, "is_current": True,
+    }) == ["needs_completion_in_career", "missing_start_date"]
+
+
+def test_projects_and_skills_are_importable_when_their_identity_is_present() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    assert service._required_blockers("project", {"title": "Synthetic project"}) == []
+    assert service._required_blockers("skill", {"name": "Synthetic skill"}) == []
 
 
 def test_import_plan_accepts_nullable_employment_location() -> None:

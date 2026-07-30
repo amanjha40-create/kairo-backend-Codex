@@ -57,7 +57,8 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=EmploymentType.FULL_TIME.value,
         index=True,
     )
-    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # Imported resume claims may omit dates; candidates can complete drafts in Career.
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     work_location_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     work_location_region: Mapped[str | None] = mapped_column(String(128), nullable=True)

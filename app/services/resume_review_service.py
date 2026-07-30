@@ -18,6 +18,7 @@ from app.models.freelance_contract import FreelanceContract
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.portfolio import PortfolioItem
+from app.models.project import Project
 from app.models.resume_document import ResumeDocument
 from app.models.resume_import_batch import ResumeImportBatch
 from app.models.resume_import_result import ResumeImportResult
@@ -26,6 +27,7 @@ from app.models.resume_processing_job import ResumeProcessingJob
 from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.resume_review_item import ResumeReviewItem
 from app.models.resume_review_session import ResumeReviewSession
+from app.models.skill import Skill
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.resumes.normalization import normalize_review_date, payload_hash, stable_claim_id
@@ -47,7 +49,7 @@ from app.resumes.schemas import ParsedResumeResult
 from app.services.resume_duplicate_service import ResumeDuplicateService
 
 logger = logging.getLogger(__name__)
-SUPPORTED_IMPORT_TYPES = {"profile", "employment", "education", "internship", "freelance", "gig_platform", "certification", "portfolio"}
+SUPPORTED_IMPORT_TYPES = {"profile", "employment", "education", "internship", "freelance", "gig_platform", "certification", "portfolio", "project", "skill"}
 
 
 class ResumeReviewService:
@@ -172,7 +174,6 @@ class ResumeReviewService:
         review = await self._owned_review(user_id, review_id, for_update=True)
         self._check_version(review.version, payload.expected_version)
         self._ensure_mutable(review)
-        await self._skip_incomplete_items(review)
         plan = await self._build_plan(review)
         review.status = ResumeReviewStatus.READY_TO_IMPORT.value if plan.ready else ResumeReviewStatus.REVIEWING.value
         review.reviewed_at = datetime.now(UTC)
@@ -358,7 +359,9 @@ class ResumeReviewService:
         await self.session.flush()
         await self._add_provenance(user_id, review, batch, item, item.claim_type, record.id, now)
         item.review_status, item.imported_record_type, item.imported_record_id = "imported", item.claim_type, record.id
-        return "imported", item.claim_type, record.id, self._mapping_warnings(item.claim_type, item.edited_payload)
+        warnings = self._mapping_warnings(item.claim_type, item.edited_payload)
+        warnings.extend(self._completion_warnings(item.claim_type, item.edited_payload))
+        return "imported", item.claim_type, record.id, warnings
 
     async def _create_record(self, user_id: UUID, claim_type: str, p: dict[str, Any]) -> Any:
         if claim_type == "profile":
@@ -373,7 +376,7 @@ class ResumeReviewService:
             if not user or not user.full_name:
                 raise ValidationAppError("Complete the candidate profile before importing employment", code="candidate_profile_incomplete")
             location = p.get("location") or {}
-            return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p["start_date"], end_date=p.get("end_date"), work_location_country=location.get("country", "").upper() or None, work_location_region=location.get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
+            return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p.get("start_date"), end_date=p.get("end_date"), work_location_country=location.get("country", "").upper() or None, work_location_region=location.get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
         if claim_type == "education":
             return Education(user_id=user_id, institution_name=p["institution_name"], degree=p["degree"], field_of_study=p.get("field_of_study"), education_level=p["education_level"], grade=p.get("grade"), start_date=p["start_date"], end_date=p.get("end_date"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
@@ -386,6 +389,11 @@ class ResumeReviewService:
             return Certification(user_id=user_id, title=p["title"], issuing_organization=p["issuing_organization"], issued_date=p["issued_date"], expiry_date=p.get("expiry_date"), does_not_expire=p.get("expiry_date") is None, credential_id=p.get("credential_id"), credential_url=str(p["credential_url"]) if p.get("credential_url") else None, verification_status="pending")
         if claim_type == "portfolio":
             return PortfolioItem(user_id=user_id, title=p["title"], description=p.get("description"), url=str(p["url"]) if p.get("url") else None, tags=",".join(p.get("tags", [])) or None, verification_status="pending")
+        if claim_type == "project":
+            return Project(user_id=user_id, title=p["title"], description=p.get("description"), project_url=str(p["url"]) if p.get("url") else None, verification_status="self_declared")
+        if claim_type == "skill":
+            name = " ".join(p["name"].split())
+            return Skill(user_id=user_id, name=name, normalized_name=name.casefold(), verification_status="self_declared")
         raise ValidationAppError("Claim type is not importable", code="unsupported_import_target")
 
     def _apply_update(self, record: Any, claim_type: str, p: dict[str, Any]) -> None:
@@ -397,6 +405,8 @@ class ResumeReviewService:
             "gig_platform": {"platform_name": "platform_name", "partner_role": "partner_role", "partner_id": "partner_id", "start_date": "started_at", "end_date": "ended_at"},
             "certification": {"title": "title", "issuing_organization": "issuing_organization", "issued_date": "issued_date", "expiry_date": "expiry_date", "credential_id": "credential_id", "credential_url": "credential_url"},
             "portfolio": {"title": "title", "description": "description", "url": "url"},
+            "project": {"title": "title", "description": "description", "url": "project_url"},
+            "skill": {"name": "name"},
         }
         if claim_type == "profile":
             if p.get("full_name") and not record.full_name: record.full_name = p["full_name"]
@@ -467,7 +477,9 @@ class ResumeReviewService:
     async def _batch_response(self, batch: ResumeImportBatch) -> ImportBatchResponse:
         batch = await self.session.scalar(select(ResumeImportBatch).where(ResumeImportBatch.id == batch.id))
         results = (await self.session.scalars(select(ResumeImportResult).where(ResumeImportResult.import_batch_id == batch.id).order_by(ResumeImportResult.created_at))).all()
-        return ImportBatchResponse(id=batch.id, review_session_id=batch.review_session_id, status=batch.status, total_count=batch.total_count, imported_count=batch.imported_count, linked_count=batch.linked_count, skipped_count=batch.skipped_count, failed_count=batch.failed_count, blocked_count=batch.blocked_count, results=[ImportResultResponse.model_validate(result) for result in results], created_at=batch.created_at, updated_at=batch.updated_at)
+        result_models = [ImportResultResponse.model_validate(result) for result in results]
+        incomplete_count = sum("needs_completion_in_career" in result.warnings for result in result_models)
+        return ImportBatchResponse(id=batch.id, review_session_id=batch.review_session_id, status=batch.status, total_count=batch.total_count, imported_count=batch.imported_count, linked_count=batch.linked_count, skipped_count=batch.skipped_count, failed_count=batch.failed_count, blocked_count=batch.blocked_count, incomplete_count=incomplete_count, results=result_models, created_at=batch.created_at, updated_at=batch.updated_at)
 
     @staticmethod
     def _claims(parsed: ParsedResumeResult) -> list[tuple[str, dict[str, Any]]]:
@@ -509,21 +521,32 @@ class ResumeReviewService:
     @staticmethod
     def _required_blockers(claim_type: str, p: dict[str, Any]) -> list[str]:
         required = {
-            "employment": ("company_name", "role_title", "start_date"),
+            "employment": (),
             "education": ("institution_name", "degree", "education_level", "start_date"),
             "internship": ("company_name", "role", "start_date"),
             "freelance": ("client_name", "project_title", "start_date"),
             "gig_platform": ("platform_name", "partner_role", "start_date"),
             "certification": ("title", "issued_date", "issuing_organization"),
             "portfolio": ("title", "url"),
+            "project": ("title",),
+            "skill": ("name",),
         }
         blockers = [f"missing_{field}" for field in required.get(claim_type, ()) if not p.get(field)]
         if claim_type == "employment":
-            if not p.get("start_date") and p.get("start_date_display"):
-                blockers.append("imprecise_start_date")
-            if not p.get("end_date") and p.get("end_date_display") and not p.get("is_current"):
-                blockers.append("imprecise_end_date")
+            if not p.get("company_name") and not p.get("role_title"):
+                blockers.append("missing_employment_identity")
         return blockers
+
+    @staticmethod
+    def _completion_warnings(claim_type: str, payload: dict[str, Any]) -> list[str]:
+        if claim_type != "employment":
+            return []
+        missing = []
+        if not payload.get("start_date"):
+            missing.append("missing_start_date")
+        if not payload.get("end_date") and not payload.get("is_current"):
+            missing.append("missing_end_date")
+        return ["needs_completion_in_career", *missing] if missing else []
 
     @classmethod
     def _action_blockers(
@@ -536,7 +559,7 @@ class ResumeReviewService:
 
     @staticmethod
     def _target_model(claim_type: str) -> tuple[Any, str]:
-        return {"profile": (User, "id"), "employment": (Employment, "created_by_user_id"), "education": (Education, "user_id"), "internship": (Internship, "user_id"), "freelance": (FreelanceContract, "user_id"), "gig_platform": (GigPlatform, "user_id"), "certification": (Certification, "user_id"), "portfolio": (PortfolioItem, "user_id")}[claim_type]
+        return {"profile": (User, "id"), "employment": (Employment, "created_by_user_id"), "education": (Education, "user_id"), "internship": (Internship, "user_id"), "freelance": (FreelanceContract, "user_id"), "gig_platform": (GigPlatform, "user_id"), "certification": (Certification, "user_id"), "portfolio": (PortfolioItem, "user_id"), "project": (Project, "user_id"), "skill": (Skill, "user_id")}[claim_type]
 
     @staticmethod
     def _protected(record: Any) -> bool:

@@ -38,7 +38,7 @@ class EmploymentResponse(BaseModel):
     employer_trade_name: str | None
     job_title: str
     employment_type: EmploymentType
-    start_date: date
+    start_date: date | None
     end_date: date | None
     work_location_country: str | None
     work_location_region: str | None

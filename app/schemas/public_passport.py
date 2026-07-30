@@ -31,7 +31,7 @@ class PublicPassportEmployment(BaseModel):
     id: uuid.UUID
     employer_legal_name: str | None
     job_title: str
-    start_date: date
+    start_date: date | None
     end_date: date | None
     verification_status: str
     verification_method: str

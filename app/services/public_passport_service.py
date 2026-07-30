@@ -95,7 +95,11 @@ class PublicPassportService:
         if permissions.include_employments:
             emp_rows = (await self._session.execute(
                 select(Employment)
-                .where(Employment.created_by_user_id == user_id, Employment.deleted_at.is_(None))
+                .where(
+                    Employment.created_by_user_id == user_id,
+                    Employment.deleted_at.is_(None),
+                    Employment.start_date.is_not(None),
+                )
                 .order_by(Employment.start_date.desc())
             )).scalars().all()
 
