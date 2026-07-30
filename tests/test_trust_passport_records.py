@@ -38,3 +38,7 @@ def test_certification_expiry_and_urls_are_validated() -> None:
             title="AWS", issuing_organization="Amazon", issued_date=date(2024, 1, 1),
             credential_url="javascript:alert(1)",
         )
+    assert str(CertificationCreateRequest(
+        title="AWS", issuing_organization="Amazon", issued_date=date(2024, 1, 1),
+        credential_url="credly.com/credentials/synthetic",
+    ).credential_url) == "https://credly.com/credentials/synthetic"

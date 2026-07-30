@@ -352,7 +352,7 @@ class ResumeReviewService:
             location = p.get("location") or {}
             return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p.get("start_date"), end_date=p.get("end_date"), work_location_country=location.get("country", "").upper() or None, work_location_region=location.get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
         if claim_type == "education":
-            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree") or p.get("field_of_study"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
+            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree") or p.get("field_of_study"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), start_date_precision=p.get("start_date_precision"), end_date=p.get("end_date"), end_date_precision=p.get("end_date_precision"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
             return Internship(user_id=user_id, company_name=p.get("company_name"), role=p.get("role"), description=p.get("description"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), is_paid=False, stipend_currency="INR", verification_status="pending")
         if claim_type == "freelance":
@@ -373,7 +373,7 @@ class ResumeReviewService:
     def _apply_update(self, record: Any, claim_type: str, p: dict[str, Any]) -> None:
         mappings = {
             "employment": {"company_name": "employer_legal_name", "role_title": "job_title", "start_date": "start_date", "end_date": "end_date", "employment_type": "employment_type"},
-            "education": {"institution_name": "institution_name", "degree": "degree", "field_of_study": "field_of_study", "education_level": "education_level", "grade": "grade", "start_date": "start_date", "end_date": "end_date"},
+            "education": {"institution_name": "institution_name", "degree": "degree", "field_of_study": "field_of_study", "education_level": "education_level", "grade": "grade", "start_date": "start_date", "start_date_precision": "start_date_precision", "end_date": "end_date", "end_date_precision": "end_date_precision"},
             "internship": {"company_name": "company_name", "role": "role", "description": "description", "start_date": "start_date", "end_date": "end_date"},
             "freelance": {"client_name": "client_name", "project_title": "project_title", "description": "description", "start_date": "start_date", "end_date": "end_date"},
             "gig_platform": {"platform_name": "platform_name", "partner_role": "partner_role", "partner_id": "partner_id", "start_date": "started_at", "end_date": "ended_at"},
@@ -492,7 +492,7 @@ class ResumeReviewService:
 
     @staticmethod
     def _normalize_review_payload(claim_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if claim_type != "employment":
+        if claim_type not in {"employment", "education"}:
             return payload
         for field, is_end in (("start_date", False), ("end_date", True)):
             normalized_date, precision = normalize_review_date(

@@ -46,7 +46,9 @@ class PublicPassportEducation(BaseModel):
     education_level: str | None
     grade: str | None
     start_date: date | None
+    start_date_precision: str | None = None
     end_date: date | None
+    end_date_precision: str | None = None
     is_currently_studying: bool
     verification_status: str
 

@@ -5,6 +5,8 @@ from datetime import date, datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from app.validation.urls import normalize_http_url
+
 DatePrecision = Literal["day", "month", "year"]
 
 _MONTHS = {
@@ -122,6 +124,8 @@ def _normalize_link_fields(value: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(claim, dict):
                 continue
             field = "url" if claim_type == "projects" else "credential_url"
+            if claim_type == "certifications" and claim.get(field) is not None:
+                claim[field] = normalize_http_url(claim.get(field))
             if claim.get(field) is not None and _normalize_url(claim.get(field)) is None:
                 claim[field] = None
                 value.setdefault("warnings", []).append(f"invalid_{field}_removed")
@@ -198,27 +202,29 @@ def enrich_employment_claims(payload: dict[str, Any], extracted_text: str) -> di
 def normalize_extracted_payload(payload: dict[str, Any], extracted_text: str = "") -> dict[str, Any]:
     """Normalize partial dates and high-confidence location/date hints without inventing values."""
     value = _normalize_link_fields(dict(payload))
-    claims = []
-    for claim in value.get("employments") or []:
-        if isinstance(claim, dict):
-            item = dict(claim)
-            item["location"] = _normalize_location(item.get("location"))
-            for field in ("start_date", "end_date"):
-                parsed, display, precision, is_current = parse_resume_date(item.get(field))
-                if parsed is not None:
-                    item[field] = parsed.isoformat()
-                    item[f"{field}_display"] = display
-                    item[f"{field}_precision"] = precision
-                elif display and precision:
-                    item[field] = None
-                    item[f"{field}_display"] = display
-                    item[f"{field}_precision"] = precision
-                elif is_current and field == "end_date":
-                    item[field] = None
-                    item["end_date_display"] = display
-                    item["is_current"] = True
-            claims.append(item)
-        else:
-            claims.append(claim)
-    value["employments"] = claims
+    for collection in ("employments", "education"):
+        claims = []
+        for claim in value.get(collection) or []:
+            if isinstance(claim, dict):
+                item = dict(claim)
+                if collection == "employments":
+                    item["location"] = _normalize_location(item.get("location"))
+                for field in ("start_date", "end_date"):
+                    parsed, display, precision, is_current = parse_resume_date(item.get(field))
+                    if parsed is not None:
+                        item[field] = parsed.isoformat()
+                        item[f"{field}_display"] = display
+                        item[f"{field}_precision"] = precision
+                    elif display and precision:
+                        item[field] = None
+                        item[f"{field}_display"] = display
+                        item[f"{field}_precision"] = precision
+                    elif is_current and field == "end_date":
+                        item[field] = None
+                        item["end_date_display"] = display
+                        item["is_current"] = True
+                claims.append(item)
+            else:
+                claims.append(claim)
+        value[collection] = claims
     return enrich_employment_claims(value, extracted_text)

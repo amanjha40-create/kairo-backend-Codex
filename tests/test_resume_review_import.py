@@ -226,6 +226,34 @@ def test_edited_employment_dates_are_normalized_before_review_validation() -> No
     assert payload["end_date_precision"] == "month"
 
 
+def test_edited_education_dates_preserve_month_and_year_precision() -> None:
+    payload = ResumeReviewService._normalize_review_payload("education", {
+        "claim_type": "education", "institution_name": "Synthetic University", "degree": "Synthetic Degree",
+        "start_date": None, "start_date_display": "Apr 2023", "end_date": "2025",
+    })
+
+    assert payload["start_date"] == "2023-04-01"
+    assert payload["start_date_precision"] == "month"
+    assert payload["end_date"] == "2025-12-31"
+    assert payload["end_date_precision"] == "year"
+
+
+@pytest.mark.asyncio
+async def test_education_import_persists_date_precision() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+    record = await service._create_record(uuid4(), "education", {
+        "institution_name": "Synthetic Institute",
+        "degree": "Synthetic Degree",
+        "start_date": date(2023, 4, 1),
+        "start_date_precision": "month",
+        "end_date": date(2025, 1, 31),
+        "end_date_precision": "month",
+    })
+
+    assert record.start_date_precision == "month"
+    assert record.end_date_precision == "month"
+
+
 def test_resume_import_does_not_require_location_but_normal_career_contract_still_validates_country() -> None:
     from app.schemas.employment.requests import CreateEmploymentRequest
 

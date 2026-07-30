@@ -4,10 +4,11 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, field_validator, model_validator
 
 from app.education.enums import EducationLevel
 from app.resumes.review_enums import ResumeImportAction
+from app.validation.urls import normalize_http_url
 
 
 class StrictModel(BaseModel):
@@ -65,6 +66,10 @@ class EducationReviewClaim(DatedClaim):
     field_of_study: str | None = Field(default=None, max_length=255)
     education_level: EducationLevel | None = None
     grade: str | None = Field(default=None, max_length=64)
+    start_date_display: str | None = Field(default=None, max_length=32)
+    end_date_display: str | None = Field(default=None, max_length=32)
+    start_date_precision: Literal["day", "month", "year"] | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
 
 
 class InternshipReviewClaim(DatedClaim):
@@ -96,6 +101,16 @@ class CertificationReviewClaim(StrictModel):
     expiry_date: date | None = None
     credential_id: str | None = Field(default=None, max_length=256)
     credential_url: HttpUrl | None = None
+
+    @field_validator("credential_url", mode="before")
+    @classmethod
+    def normalize_credential_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_http_url(value)
+        if normalized is None:
+            raise ValueError("Enter a valid credential URL")
+        return normalized
 
 
 class PortfolioReviewClaim(StrictModel):

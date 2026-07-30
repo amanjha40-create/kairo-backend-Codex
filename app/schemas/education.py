@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -25,7 +25,9 @@ class EducationCreateRequest(BaseModel):
     education_level: EducationLevel
     grade: str | None = Field(default=None, max_length=64)
     start_date: date
+    start_date_precision: Literal["day", "month", "year"] | None = None
     end_date: date | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
     is_currently_studying: bool = False
 
     @model_validator(mode="after")
@@ -44,7 +46,9 @@ class EducationUpdateRequest(BaseModel):
     education_level: EducationLevel | None = None
     grade: str | None = Field(default=None, max_length=64)
     start_date: date | None = None
+    start_date_precision: Literal["day", "month", "year"] | None = None
     end_date: date | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
     is_currently_studying: bool | None = None
 
     @model_validator(mode="after")
@@ -67,7 +71,9 @@ class EducationResponse(BaseModel):
     education_level: EducationLevel | None
     grade: str | None = None
     start_date: date | None
+    start_date_precision: Literal["day", "month", "year"] | None = None
     end_date: date | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
     is_currently_studying: bool
     verification_status: EducationVerificationStatus
     submitted_at: datetime | None = None

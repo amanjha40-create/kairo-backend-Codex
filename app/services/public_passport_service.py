@@ -154,7 +154,9 @@ class PublicPassportService:
                     education_level=row.education_level,
                     grade=row.grade,
                     start_date=row.start_date,
+                    start_date_precision=row.start_date_precision,
                     end_date=row.end_date,
+                    end_date_precision=row.end_date_precision,
                     is_currently_studying=row.is_currently_studying,
                     verification_status=row.verification_status,
                 )

@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, BaseModel, Field, model_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
+
+from app.validation.urls import normalize_http_url
+
+
+def _credential_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = normalize_http_url(value)
+    if normalized is None:
+        raise ValueError("Enter a valid credential URL")
+    return normalized
 
 
 class CertificationCreateRequest(BaseModel):
@@ -16,6 +27,8 @@ class CertificationCreateRequest(BaseModel):
     does_not_expire: bool = False
     credential_id: str | None = None
     credential_url: AnyHttpUrl | None = None
+
+    _normalize_credential_url = field_validator("credential_url", mode="before")(_credential_url)
 
     @model_validator(mode="after")
     def validate_dates(self):
@@ -35,6 +48,8 @@ class CertificationUpdateRequest(BaseModel):
     credential_id: str | None = None
     credential_url: AnyHttpUrl | None = None
 
+    _normalize_credential_url = field_validator("credential_url", mode="before")(_credential_url)
+
     @model_validator(mode="after")
     def validate_dates(self):
         if self.does_not_expire is True and self.expiry_date is not None:
@@ -52,6 +67,8 @@ class CertificationUploadIntentRequest(BaseModel):
     does_not_expire: bool = False
     credential_id: str | None = None
     credential_url: str | None = None
+
+    _normalize_credential_url = field_validator("credential_url", mode="before")(_credential_url)
     # File metadata
     original_filename: str
     content_type: str

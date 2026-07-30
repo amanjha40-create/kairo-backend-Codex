@@ -18,6 +18,7 @@ from app.infrastructure.s3.presign import (
 )
 from app.models import Education, EducationDocument
 from app.repositories.education import EducationDocumentRepository, EducationRepository
+from app.resumes.normalization import date_ranges_overlap, normalize_text
 from app.schemas.education import (
     EducationCreateRequest,
     EducationDocumentUploadIntentRequest,
@@ -39,6 +40,14 @@ class EducationService:
     # --- Education CRUD ---
 
     async def create(self, user_id: UUID, payload: EducationCreateRequest) -> Education:
+        await self._assert_not_obvious_duplicate(
+            user_id=user_id,
+            institution_name=payload.institution_name,
+            degree=payload.degree,
+            field_of_study=payload.field_of_study,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
         edu = Education(
             user_id=user_id,
             institution_name=payload.institution_name,
@@ -47,7 +56,9 @@ class EducationService:
             education_level=payload.education_level.value,
             grade=payload.grade,
             start_date=payload.start_date,
+            start_date_precision=payload.start_date_precision,
             end_date=payload.end_date,
+            end_date_precision=payload.end_date_precision,
             is_currently_studying=payload.is_currently_studying,
             verification_status=EducationVerificationStatus.DRAFT.value,
         )
@@ -72,6 +83,28 @@ class EducationService:
     ) -> Education:
         edu = await self.get_owned(user_id, education_id)
         data = payload.model_dump(exclude_unset=True)
+        start_date = data.get("start_date", edu.start_date)
+        end_date = data.get("end_date", edu.end_date)
+        is_currently_studying = data.get("is_currently_studying", edu.is_currently_studying)
+        if end_date and start_date and end_date < start_date:
+            raise ValidationAppError(
+                "End date must be on or after start date",
+                code="invalid_education_date_range",
+            )
+        if is_currently_studying and end_date is not None:
+            raise ValidationAppError(
+                "End date must be blank while currently studying",
+                code="invalid_education_current_status",
+            )
+        await self._assert_not_obvious_duplicate(
+            user_id=user_id,
+            institution_name=data.get("institution_name", edu.institution_name),
+            degree=data.get("degree", edu.degree),
+            field_of_study=data.get("field_of_study", edu.field_of_study),
+            start_date=start_date,
+            end_date=end_date,
+            exclude_education_id=edu.id,
+        )
         for field, value in data.items():
             if field == "education_level" and value is not None:
                 setattr(edu, field, value.value if hasattr(value, "value") else value)
@@ -80,6 +113,42 @@ class EducationService:
         await self._session.commit()
         await self._session.refresh(edu)
         return edu
+
+    async def _assert_not_obvious_duplicate(
+        self,
+        *,
+        user_id: UUID,
+        institution_name: str | None,
+        degree: str | None,
+        field_of_study: str | None,
+        start_date: object,
+        end_date: object,
+        exclude_education_id: UUID | None = None,
+    ) -> None:
+        """Reject only records that are indistinguishable from an existing study period."""
+        if not institution_name or not (degree or field_of_study) or not start_date:
+            return
+        rows, _ = await self._educations.list_for_user(user_id, offset=0, limit=200)
+        institution = normalize_text(institution_name)
+        programme = normalize_text(degree or field_of_study)
+        for existing in rows:
+            if existing.id == exclude_education_id:
+                continue
+            existing_programme = normalize_text(existing.degree or existing.field_of_study)
+            if (
+                normalize_text(existing.institution_name) == institution
+                and existing_programme == programme
+                and date_ranges_overlap(
+                    start_date,
+                    end_date,
+                    existing.start_date,
+                    existing.end_date,
+                )
+            ):
+                raise ValidationAppError(
+                    "This education record appears to duplicate an existing study period",
+                    code="duplicate_education_record",
+                )
 
     async def submit(self, user_id: UUID, education_id: UUID) -> Education:
         edu = await self.get_owned(user_id, education_id)

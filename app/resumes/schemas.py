@@ -90,6 +90,10 @@ class EducationClaim(ClaimBase):
     field_of_study: str | None = None
     start_date: date | None = None
     end_date: date | None = None
+    start_date_display: str | None = None
+    end_date_display: str | None = None
+    start_date_precision: Literal["day", "month", "year"] | None = None
+    end_date_precision: Literal["day", "month", "year"] | None = None
     is_current: bool | None = None
     grade: str | None = None
 

@@ -36,6 +36,9 @@ class Education(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The canonical dates make ranges sortable; precision preserves what the candidate supplied.
+    start_date_precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    end_date_precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
     is_currently_studying: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false",
     )
