@@ -7,7 +7,15 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.resumes.normalization import date_ranges_overlap, normalize_date, normalize_review_date, normalize_text, normalize_url, payload_hash, stable_claim_id
+from app.resumes.normalization import (
+    date_ranges_overlap,
+    normalize_date,
+    normalize_review_date,
+    normalize_text,
+    normalize_url,
+    payload_hash,
+    stable_claim_id,
+)
 from app.resumes.review_schemas import (
     EmploymentReviewClaim,
     ReviewImportRequest,
@@ -40,6 +48,21 @@ def test_duplicate_classification_is_deterministic() -> None:
     assert classify_match(primary_equal=True, secondary_equal=False, exact_dates=False, ranges_overlap=True, url_equal=False)[0] == "probable_match"
     assert classify_match(primary_equal=True, secondary_equal=False, exact_dates=False, ranges_overlap=False, url_equal=False)[0] == "possible_match"
     assert classify_match(primary_equal=False, secondary_equal=False, exact_dates=False, ranges_overlap=False, url_equal=False)[0] is None
+
+
+@pytest.mark.asyncio
+async def test_skill_duplicate_matching_links_existing_normalized_name() -> None:
+    existing_id = uuid4()
+
+    class FakeSession:
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: [SimpleNamespace(id=existing_id, name="Financial Research & Valuation")])
+
+    result = await ResumeDuplicateService(FakeSession()).assess(
+        uuid4(), "skill", {"name": " financial research & valuation "},
+    )
+    assert result.status == "exact_match"
+    assert result.candidates[0]["record_id"] == str(existing_id)
 
 
 def test_review_claims_reject_unknown_and_verification_fields() -> None:

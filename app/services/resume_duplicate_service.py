@@ -14,8 +14,14 @@ from app.models.freelance_contract import FreelanceContract
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.portfolio import PortfolioItem
+from app.models.skill import Skill
 from app.models.verification_request import VerificationRequest
-from app.resumes.normalization import date_ranges_overlap, normalize_date, normalize_text, normalize_url
+from app.resumes.normalization import (
+    date_ranges_overlap,
+    normalize_date,
+    normalize_text,
+    normalize_url,
+)
 
 
 @dataclass(frozen=True)
@@ -40,7 +46,24 @@ class ResumeDuplicateService:
         self.session = session
 
     async def assess(self, user_id: UUID, claim_type: str, payload: dict[str, Any]) -> DuplicateAssessment:
-        if claim_type in {"profile", "project", "skill"}:
+        if claim_type == "skill":
+            requested_name = normalize_text(payload.get("name"))
+            if not requested_name:
+                return DuplicateAssessment("no_match", [], [])
+            rows = (await self.session.scalars(select(Skill).where(Skill.user_id == user_id, Skill.deleted_at.is_(None)))).all()
+            candidates = [
+                {
+                    "record_id": str(row.id),
+                    "classification": "exact_match",
+                    "reasons": ["normalized_identity_match"],
+                    "protected": False,
+                    "safety_recommendation": "link_without_mutation",
+                }
+                for row in rows
+                if normalize_text(row.name) == requested_name
+            ]
+            return DuplicateAssessment("exact_match", candidates[:1], ["normalized_identity_match"] if candidates else []) if candidates else DuplicateAssessment("no_match", [], [])
+        if claim_type in {"profile", "project"}:
             return DuplicateAssessment("no_match", [], [])
         model, primary, secondary, start, end, protected = self._spec(claim_type)
         payload_primary, payload_secondary, payload_start, payload_end = self._payload_spec(claim_type)
