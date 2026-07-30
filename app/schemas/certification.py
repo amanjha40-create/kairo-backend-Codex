@@ -76,7 +76,7 @@ class CertificationResponse(BaseModel):
     id: UUID
     user_id: UUID
     title: str
-    issuing_organization: str
+    issuing_organization: str | None
     issued_date: date | None
     expiry_date: date | None
     does_not_expire: bool

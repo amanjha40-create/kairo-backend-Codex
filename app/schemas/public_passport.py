@@ -43,9 +43,9 @@ class PublicPassportEducation(BaseModel):
     institution_name: str
     degree: str
     field_of_study: str | None
-    education_level: str
+    education_level: str | None
     grade: str | None
-    start_date: date
+    start_date: date | None
     end_date: date | None
     is_currently_studying: bool
     verification_status: str
@@ -96,8 +96,8 @@ class PublicPassportPortfolioItem(BaseModel):
 class PublicPassportCertification(BaseModel):
     id: uuid.UUID
     title: str
-    issuing_organization: str
-    issued_date: date
+    issuing_organization: str | None
+    issued_date: date | None
     expiry_date: date | None
     does_not_expire: bool
     credential_id: str | None

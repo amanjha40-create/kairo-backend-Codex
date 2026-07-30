@@ -116,8 +116,12 @@ def test_incomplete_resume_claims_remain_importable_for_career_completion() -> N
         "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
     }) == []
     assert service._required_blockers("certification", {
-        "title": "Synthetic Certificate", "issuing_organization": "Synthetic Issuer",
+        "title": "Synthetic Certificate",
     }) == []
+    assert service._completion_warnings("certification", {
+        "title": "Synthetic Certificate", "issuing_organization": None, "issued_date": None,
+    }) == ["needs_completion_in_career", "missing_issued_date"]
+    assert service._required_blockers("certification", {"title": "Synthetic Certificate"}) == []
     assert service._completion_warnings("education", {
         "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
         "education_level": None, "start_date": None,

@@ -8,7 +8,10 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.dependencies.services import get_passport_share_view_service, get_public_passport_service
+from app.api.dependencies.services import (
+    get_passport_share_view_service,
+    get_public_passport_service,
+)
 from app.exceptions import NotFoundError
 from app.main import app
 from app.schemas.passport_share import PassportSharePermissions
@@ -150,6 +153,23 @@ class FakePublicPassportService:
                 ),
             ),
         )
+
+
+def test_public_passport_education_allows_missing_optional_metadata() -> None:
+    education = PublicPassportEducation(
+        id=uuid4(),
+        institution_name="Example University",
+        degree="B.Tech",
+        field_of_study=None,
+        education_level=None,
+        grade=None,
+        start_date=None,
+        end_date=None,
+        is_currently_studying=False,
+        verification_status="draft",
+    )
+    assert education.education_level is None
+    assert education.start_date is None
 
 
 class FakePassportShareViewService:

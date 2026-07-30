@@ -511,7 +511,7 @@ class ResumeReviewService:
             "internship": (),
             "freelance": (),
             "gig_platform": (),
-            "certification": ("title", "issuing_organization"),
+            "certification": ("title",),
             "portfolio": ("title",),
             "project": ("title",),
             "skill": ("name",),
