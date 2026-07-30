@@ -264,7 +264,10 @@ class ResumeReviewService:
                 item.claim_type,
                 item.edited_payload,
             )
-            if item.claim_type not in SUPPORTED_IMPORT_TYPES:
+            # Unsupported claims can remain in a review session as candidate-owned
+            # provenance. They are only a blocker when someone attempts to import
+            # them instead of leaving them excluded from the import action.
+            if item.claim_type not in SUPPORTED_IMPORT_TYPES and item.import_action != "skip":
                 blockers.append("unsupported_import_target")
             verified_protected = False
             if item.import_action in {"link_existing", "update_existing"} and not item.target_record_id:

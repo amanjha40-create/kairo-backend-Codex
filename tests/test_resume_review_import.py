@@ -110,6 +110,31 @@ def test_import_plan_only_blocks_structurally_unusable_employment_claims() -> No
     ) == []
 
 
+@pytest.mark.asyncio
+async def test_excluded_or_review_only_claims_do_not_block_import() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
+    item = SimpleNamespace(
+        id=uuid4(),
+        selected=True,
+        import_action="skip",
+        claim_type="other",
+        edited_payload={"claim_type": "other"},
+        duplicate_status="no_match",
+        target_record_id=None,
+        conflict_warnings=[],
+    )
+
+    class FakeSession:
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: [item])
+
+    plan = await ResumeReviewService(FakeSession())._build_plan(review)
+
+    assert plan.ready is True
+    assert plan.items[0].action == "skip"
+    assert plan.items[0].blockers == []
+
+
 def test_incomplete_resume_claims_remain_importable_for_career_completion() -> None:
     service = ResumeReviewService(SimpleNamespace())
     assert service._required_blockers("education", {
