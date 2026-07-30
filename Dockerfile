@@ -24,6 +24,7 @@ COPY alembic.ini alembic.ini
 COPY alembic ./alembic
 COPY pyproject.toml pyproject.toml
 COPY tests ./tests
+COPY scripts ./scripts
 
 USER appuser
 
