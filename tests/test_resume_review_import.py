@@ -332,6 +332,10 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                     "is_current": True,
                     "location": {"country": "IN"},
                 }],
+                "education": [{
+                    "institution_name": "Synthetic University",
+                    "degree": "Synthetic Degree",
+                }],
             },
             parser_metadata={},
             warnings=[],
@@ -341,9 +345,10 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         service = ResumeReviewService(session)
         review = await service.create(user.id, document.id)
         assert review.status == "draft"
-        assert len(review.items) == 1
+        assert len(review.items) == 2
         plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
         assert plan.ready
+        assert [item.claim_type for item in plan.items] == ["employment"]
         request = ReviewImportRequest(expected_version=plan.version, idempotency_key="synthetic-confirmed-import", confirmed=True)
         first = await service.import_review(user.id, review.id, request)
         second = await service.import_review(user.id, review.id, request)

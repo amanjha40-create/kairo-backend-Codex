@@ -174,6 +174,7 @@ class ResumeReviewService:
         review = await self._owned_review(user_id, review_id, for_update=True)
         self._check_version(review.version, payload.expected_version)
         self._ensure_mutable(review)
+        await self._skip_incomplete_items(review)
         plan = await self._build_plan(review)
         review.status = ResumeReviewStatus.READY_TO_IMPORT.value if plan.ready else ResumeReviewStatus.REVIEWING.value
         review.reviewed_at = datetime.now(UTC)
