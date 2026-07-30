@@ -280,6 +280,19 @@ def test_review_payload_bounds_profile_headline_to_canonical_user_limit() -> Non
     assert len(payload["professional_headline"]) == 255
 
 
+def test_review_payload_normalizes_parser_work_arrangement_case() -> None:
+    payload = ResumeReviewService._review_payload(
+        "employment",
+        {
+            "company_name": "Synthetic Company",
+            "role_title": "Engineer",
+            "work_arrangement": "Remote",
+        },
+    )
+
+    assert payload["work_arrangement"] == "remote"
+
+
 def test_review_accepts_extracted_country_name_for_candidate_correction() -> None:
     claim = review_claim_adapter.validate_python({
         "claim_type": "employment",

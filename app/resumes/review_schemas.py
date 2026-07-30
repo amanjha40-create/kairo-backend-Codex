@@ -4,7 +4,15 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from app.education.enums import EducationLevel
 from app.resumes.review_enums import ResumeImportAction
@@ -57,6 +65,12 @@ class EmploymentReviewClaim(DatedClaim):
     start_date_precision: Literal["day", "month", "year"] | None = None
     end_date_precision: Literal["day", "month", "year"] | None = None
     description: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("work_arrangement", mode="before")
+    @classmethod
+    def normalize_work_arrangement(cls, value: str | None) -> str | None:
+        """Accept case variants emitted by the parser while retaining the strict enum."""
+        return value.strip().casefold() if isinstance(value, str) else value
 
 
 class EducationReviewClaim(DatedClaim):
