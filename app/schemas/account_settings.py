@@ -37,3 +37,7 @@ class AccountSessionResponse(BaseModel):
     expires_at: datetime
     last_active_at: datetime
     current: bool = False
+    # Session metadata is optional because existing tokens predate client metadata capture.
+    device: str | None = None
+    browser: str | None = None
+    location: str | None = None
