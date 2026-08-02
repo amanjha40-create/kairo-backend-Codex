@@ -138,7 +138,7 @@ class AuthService:
         self,
         data: OrganizationSignupStartRequest,
     ) -> OrganizationSignupStartResponse:
-        """Create an email-only staged signup for organization workspace staff."""
+        """Create an email-only staged signup for organization workspace staff and send the first OTP."""
 
         email = normalize_email(str(data.work_email))
         if await self._users.get_by_email(email) is not None:
@@ -151,7 +151,7 @@ class AuthService:
             password_hash=hash_password(data.password),
             signup_kind=SignupKind.ORGANIZATION,
         )
-        await self._session.commit()
+        await self._send_channel_otp(pending, "email")
         return OrganizationSignupStartResponse(
             signup_session_id=pending.id,
             email_masked=mask_email(email),
