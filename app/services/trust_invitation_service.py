@@ -94,9 +94,12 @@ class TrustInvitationService:
         await self._record_event(invitation, TrustInvitationEventType.CREATED, actor_user_id=actor_user_id)
         if payload.mode == "send":
             await self._record_event(invitation, TrustInvitationEventType.SENT, actor_user_id=actor_user_id)
-        await self._people.resolve_for_trust_invitation(invitation, actor_user_id=actor_user_id)
         await self._session.commit()
 
+        refreshed = await self._repo.get_by_public_id(invitation.public_id, include_events=True)
+        if refreshed is None:
+            raise NotFoundError("Trust invitation not found")
+        await self._sync_person_link_best_effort(refreshed, actor_user_id=actor_user_id)
         refreshed = await self._repo.get_by_public_id(invitation.public_id, include_events=True)
         if refreshed is None:
             raise NotFoundError("Trust invitation not found")
@@ -291,8 +294,8 @@ class TrustInvitationService:
         invitation.accepted_by_user_id = actor_user_id
         invitation.accepted_at = now
         await self._record_event(invitation, TrustInvitationEventType.ACCEPTED, actor_user_id=actor_user_id)
-        await self._people.resolve_for_trust_invitation(invitation, actor_user_id=actor_user_id)
         await self._session.commit()
+        await self._sync_person_link_best_effort(invitation, actor_user_id=actor_user_id)
 
         refreshed = await self._repo.get_by_public_id(invitation.public_id)
         if refreshed is None or refreshed.accepted_at is None:
@@ -466,6 +469,26 @@ class TrustInvitationService:
                 metadata_payload=metadata or {},
             )
         )
+
+    async def _sync_person_link_best_effort(
+        self,
+        invitation: TrustInvitation,
+        *,
+        actor_user_id: UUID | None,
+    ) -> None:
+        try:
+            await self._people.resolve_for_trust_invitation(invitation, actor_user_id=actor_user_id)
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            logger.warning(
+                "trust_invitation_person_sync_failed",
+                extra={
+                    "event": "trust_invitation_person_sync_failed",
+                    "invitation_public_id": str(invitation.public_id),
+                    "actor_user_id": str(actor_user_id) if actor_user_id is not None else None,
+                },
+            )
 
     def _to_response(self, invitation: TrustInvitation) -> TrustInvitationResponse:
         return TrustInvitationResponse(
