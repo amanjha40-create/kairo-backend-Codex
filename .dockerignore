@@ -8,3 +8,7 @@ __pycache__
 .env
 .env.*
 kiaro.db
+**/* 2.py
+**/* 2.md
+kairo-admin-portal
+kairo-institution-workspace-link
