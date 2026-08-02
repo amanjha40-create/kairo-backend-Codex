@@ -168,7 +168,8 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
         ),
     )
 
-    assert response.invitation_url.startswith("https://api.example.com/api/v1/trust-invitations/")
+    assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
+    assert "/api/v1/" not in response.invitation_url
     assert response.subject_email == "aman3@test.com"
     assert response.status == TrustInvitationStatus.PENDING
     assert len(notifications.calls) == 1
@@ -209,7 +210,8 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
     )
 
     assert response.status == TrustInvitationStatus.PENDING
-    assert response.invitation_url.startswith("https://api.example.com/api/v1/trust-invitations/")
+    assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
+    assert "/api/v1/" not in response.invitation_url
 
 
 @pytest.mark.asyncio
@@ -242,7 +244,8 @@ async def test_create_trust_invitation_survives_people_sync_failure() -> None:
     )
 
     assert response.status == TrustInvitationStatus.PENDING
-    assert response.invitation_url.startswith("https://api.example.com/api/v1/trust-invitations/")
+    assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
+    assert "/api/v1/" not in response.invitation_url
     assert session.commits >= 2
     assert session.rollbacks == 1
 

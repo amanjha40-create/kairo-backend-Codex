@@ -543,9 +543,10 @@ class TrustInvitationService:
 
     def _build_invitation_url(self, invitation_public_id: UUID) -> str:
         base = self._settings.app_public_base_url.rstrip("/")
-        prefix = self._settings.api_v1_prefix.rstrip("/")
         token = self._build_signed_token(invitation_public_id)
-        return f"{base}{prefix}/trust-invitations/{token}"
+        # APP_PUBLIC_BASE_URL is the Candidate web origin. Public lookup and
+        # acceptance remain API endpoints behind this human-facing route.
+        return f"{base}/trust-invitations/{token}"
 
     def _build_signed_token(self, invitation_public_id: UUID) -> str:
         body = invitation_public_id.hex

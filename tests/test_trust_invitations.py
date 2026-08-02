@@ -105,7 +105,7 @@ class FakeTrustInvitationService:
         )
         return TrustInvitationCreateResponse(
             **self._response(status, delivery_state=delivery_state).model_dump(),
-            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            invitation_url="https://candidate.example.com/trust-invitations/v2.token.signature",
         )
 
     async def get_summary(self, actor_user_id, org_public_id):  # noqa: ANN001
@@ -150,14 +150,14 @@ class FakeTrustInvitationService:
             raise NotFoundError("Trust invitation not found")
         return TrustInvitationDetailResponse(
             **self._response().model_dump(),
-            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            invitation_url="https://candidate.example.com/trust-invitations/v2.token.signature",
             timeline=self._timeline(),
         )
 
     async def send(self, actor_user_id, invitation_public_id):  # noqa: ANN001
         return TrustInvitationDetailResponse(
             **self._response().model_dump(),
-            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            invitation_url="https://candidate.example.com/trust-invitations/v2.token.signature",
             timeline=self._timeline(),
         )
 
@@ -166,7 +166,7 @@ class FakeTrustInvitationService:
             raise ConflictError("Expired trust invitations are no longer actionable")
         return TrustInvitationDetailResponse(
             **self._response().model_dump(),
-            invitation_url="https://api.example.com/api/v1/trust-invitations/v2.token.signature",
+            invitation_url="https://candidate.example.com/trust-invitations/v2.token.signature",
             timeline=self._timeline(),
         )
 
@@ -242,7 +242,7 @@ async def test_create_trust_invitation_returns_url_once() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 201
     body = response.json()
-    assert body["invitation_url"] == "https://api.example.com/api/v1/trust-invitations/v2.token.signature"
+    assert body["invitation_url"] == "https://candidate.example.com/trust-invitations/v2.token.signature"
     assert body["purpose"] == "Software Engineer Hiring"
 
 
@@ -310,7 +310,7 @@ async def test_authenticated_detail_returns_timeline_and_url() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     body = response.json()
-    assert body["invitation_url"] == "https://api.example.com/api/v1/trust-invitations/v2.token.signature"
+    assert body["invitation_url"] == "https://candidate.example.com/trust-invitations/v2.token.signature"
     assert body["timeline"][0]["event_type"] == "created"
 
 
