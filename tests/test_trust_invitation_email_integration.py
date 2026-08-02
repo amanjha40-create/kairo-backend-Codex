@@ -29,9 +29,13 @@ def _settings(**overrides: object) -> Settings:
 class FakeSession:
     def __init__(self) -> None:
         self.commits = 0
+        self.rollbacks = 0
 
     async def commit(self) -> None:
         self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
 
     async def refresh(self, obj) -> None:  # noqa: ANN001
         return None
@@ -130,6 +134,11 @@ class FakeOrganizationPersonService:
         return invitation
 
 
+class FailingOrganizationPersonService:
+    async def resolve_for_trust_invitation(self, invitation, *, actor_user_id=None):  # noqa: ANN001
+        raise RuntimeError("people sync unavailable")
+
+
 @pytest.mark.asyncio
 async def test_create_trust_invitation_dispatches_notification_without_changing_response_shape() -> None:
     session = FakeSession()
@@ -201,3 +210,83 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
 
     assert response.status == TrustInvitationStatus.PENDING
     assert response.invitation_url.startswith("https://api.example.com/api/v1/trust-invitations/")
+
+
+@pytest.mark.asyncio
+async def test_create_trust_invitation_survives_people_sync_failure() -> None:
+    session = FakeSession()
+    organization = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000100"),
+        public_id=UUID("00000000-0000-0000-0000-000000000101"),
+        name="Kairo Verification Ops",
+    )
+    repo = FakeTrustInvitationRepository(organization)
+    notifications = FakeNotificationService()
+    service = TrustInvitationService(
+        session,  # type: ignore[arg-type]
+        _settings(),
+        repo=repo,  # type: ignore[arg-type]
+        organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
+        notifications=notifications,  # type: ignore[arg-type]
+        people=FailingOrganizationPersonService(),  # type: ignore[arg-type]
+    )
+
+    response = await service.create(
+        UUID("00000000-0000-0000-0000-000000000111"),
+        organization.public_id,
+        TrustInvitationCreateRequest(
+            subject_name="Aman Jha",
+            subject_email="aman3@test.com",
+            expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+        ),
+    )
+
+    assert response.status == TrustInvitationStatus.PENDING
+    assert response.invitation_url.startswith("https://api.example.com/api/v1/trust-invitations/")
+    assert session.commits >= 2
+    assert session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_trust_invitation_survives_people_sync_failure() -> None:
+    session = FakeSession()
+    organization = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000100"),
+        public_id=UUID("00000000-0000-0000-0000-000000000101"),
+        name="Kairo Verification Ops",
+    )
+    repo = FakeTrustInvitationRepository(organization)
+    notifications = FakeNotificationService()
+    service = TrustInvitationService(
+        session,  # type: ignore[arg-type]
+        _settings(),
+        repo=repo,  # type: ignore[arg-type]
+        organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
+        notifications=notifications,  # type: ignore[arg-type]
+        people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
+    )
+
+    actor_id = UUID("00000000-0000-0000-0000-000000000111")
+    response = await service.create(
+        actor_id,
+        organization.public_id,
+        TrustInvitationCreateRequest(
+            subject_name="Aman Jha",
+            subject_email="aman3@test.com",
+            expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+        ),
+    )
+    raw_token = response.invitation_url.rsplit("/", 1)[-1]
+
+    async def _resolve_active_token(raw_token_value: str):  # noqa: ANN001
+        assert raw_token_value == raw_token
+        return repo.invitation
+
+    service._resolve_active_token = _resolve_active_token  # type: ignore[assignment]
+    service._people = FailingOrganizationPersonService()  # type: ignore[assignment]
+
+    accepted = await service.accept(raw_token, actor_id, "aman3@test.com")
+
+    assert accepted.status == TrustInvitationStatus.ACCEPTED
+    assert session.commits >= 3
+    assert session.rollbacks == 1
