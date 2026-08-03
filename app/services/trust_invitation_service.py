@@ -294,10 +294,17 @@ class TrustInvitationService:
         invitation.accepted_by_user_id = actor_user_id
         invitation.accepted_at = now
         await self._record_event(invitation, TrustInvitationEventType.ACCEPTED, actor_user_id=actor_user_id)
+        invitation_public_id = invitation.public_id
         await self._session.commit()
-        await self._sync_person_link_best_effort(invitation, actor_user_id=actor_user_id)
 
-        refreshed = await self._repo.get_by_public_id(invitation.public_id)
+        # Commit expires ORM state. Reload the relationship before the optional
+        # People sync so it cannot trigger async lazy loading on the request path.
+        refreshed = await self._repo.get_by_public_id(invitation_public_id, include_events=True)
+        if refreshed is None:
+            raise NotFoundError("Trust invitation not found")
+        await self._sync_person_link_best_effort(refreshed, actor_user_id=actor_user_id)
+
+        refreshed = await self._repo.get_by_public_id(invitation_public_id)
         if refreshed is None or refreshed.accepted_at is None:
             raise NotFoundError("Trust invitation not found")
         return TrustInvitationAcceptResponse(
@@ -476,6 +483,7 @@ class TrustInvitationService:
         *,
         actor_user_id: UUID | None,
     ) -> None:
+        invitation_public_id = str(invitation.public_id)
         try:
             await self._people.resolve_for_trust_invitation(invitation, actor_user_id=actor_user_id)
             await self._session.commit()
@@ -485,7 +493,7 @@ class TrustInvitationService:
                 "trust_invitation_person_sync_failed",
                 extra={
                     "event": "trust_invitation_person_sync_failed",
-                    "invitation_public_id": str(invitation.public_id),
+                    "invitation_public_id": invitation_public_id,
                     "actor_user_id": str(actor_user_id) if actor_user_id is not None else None,
                 },
             )

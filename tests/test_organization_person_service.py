@@ -17,7 +17,7 @@ from app.services.organization_person_service import OrganizationPersonService
 
 def _build_service() -> OrganizationPersonService:
     service = OrganizationPersonService.__new__(OrganizationPersonService)
-    service._session = SimpleNamespace(flush=AsyncMock())
+    service._session = SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())
     service._repo = SimpleNamespace(
         get_by_id=AsyncMock(return_value=None),
         find_by_linked_user=AsyncMock(return_value=None),
@@ -133,3 +133,31 @@ async def test_resolve_person_creates_new_record_when_no_match_exists() -> None:
     assert result.primary_phone == "+15551112222"
     assert result.resolution_method == "created"
     service._repo.create.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_resolve_verification_request_loads_events_before_activity_projection() -> None:
+    service = _build_service()
+    person = SimpleNamespace(id=uuid4())
+    service._resolve_person = AsyncMock(return_value=person)  # type: ignore[attr-defined]
+    request = SimpleNamespace(
+        organization_id=uuid4(),
+        organization_person_id=None,
+        subject_user_id=None,
+        employment_id=None,
+        subject_name="Candidate",
+        subject_email="candidate@example.com",
+        requested_by_user_id=uuid4(),
+        created_at=datetime.now(tz=UTC),
+        updated_at=datetime.now(tz=UTC),
+        candidate_response_submitted_at=None,
+        accepted_at=None,
+        events=[],
+        public_id=uuid4(),
+    )
+
+    result = await service.resolve_for_verification_request(request)
+
+    assert result is person
+    service._session.refresh.assert_awaited_once_with(request, attribute_names=["events"])  # type: ignore[attr-defined]
+    assert request.organization_person_id == person.id

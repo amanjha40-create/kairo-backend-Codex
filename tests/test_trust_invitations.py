@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,6 +15,7 @@ from app.api.dependencies.services import get_trust_invitation_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
 from app.schemas.pagination import filter_sort_paginate
+from app.services.trust_invitation_service import TrustInvitationService
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
     TrustInvitationCreateResponse,
@@ -452,3 +455,15 @@ async def test_member_cannot_cancel_invitation() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "forbidden"
+
+
+@pytest.mark.asyncio
+async def test_person_sync_failure_does_not_reaccess_expired_invitation() -> None:
+    service = TrustInvitationService.__new__(TrustInvitationService)
+    service._people = SimpleNamespace(resolve_for_trust_invitation=AsyncMock(side_effect=RuntimeError("sync failed")))
+    service._session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+    invitation = SimpleNamespace(public_id=uuid4())
+
+    await service._sync_person_link_best_effort(invitation, actor_user_id=uuid4())  # type: ignore[attr-defined]
+
+    service._session.rollback.assert_awaited_once()  # type: ignore[attr-defined]

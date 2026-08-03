@@ -287,6 +287,10 @@ class OrganizationPersonService:
     ) -> OrganizationPerson | None:
         if request.organization_id is None:
             return None
+        # Verification events are written through their repository and are not
+        # necessarily present on this ORM instance. Explicitly load them in the
+        # async session before using the activity projection below.
+        await self._session.refresh(request, attribute_names=["events"])
         linked_user_id = request.subject_user_id
         phone = None
         if linked_user_id is not None:
