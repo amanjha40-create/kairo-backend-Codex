@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,6 +24,7 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineResponse,
 )
 from app.services.verification_request_service import (
+    VerificationRequestService,
     is_internal_admin_note_event,
     is_private_organization_event,
 )
@@ -116,6 +119,50 @@ def test_organization_education_verification_requires_one_canonical_education_id
             subject_name="Candidate",
             subject_email="candidate@example.com",
             request_type=VerificationRequestType.EDUCATION,
+        )
+
+
+@pytest.mark.asyncio
+async def test_organization_employment_verification_resolves_the_owned_career_record() -> None:
+    employment_id = uuid4()
+    subject_user_id = uuid4()
+    employment = SimpleNamespace(id=employment_id)
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    service._employments = SimpleNamespace(get_owned_active=AsyncMock(return_value=employment))
+    service._requests = SimpleNamespace(get_active_for_employment=AsyncMock(return_value=None))
+
+    resolved_employment, resolved_education = await service._resolve_organization_claim(
+        payload=VerificationRequestCreateRequest(
+            subject_name="Candidate",
+            subject_email="candidate@example.com",
+            request_type=VerificationRequestType.EMPLOYMENT,
+            employment_id=employment_id,
+        ),
+        subject_user_id=subject_user_id,
+    )
+
+    assert resolved_employment is employment
+    assert resolved_education is None
+    service._employments.get_owned_active.assert_awaited_once_with(employment_id, subject_user_id)
+    service._requests.get_active_for_employment.assert_awaited_once_with(employment_id)
+
+
+@pytest.mark.asyncio
+async def test_organization_employment_verification_rejects_an_active_duplicate() -> None:
+    employment_id = uuid4()
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    service._employments = SimpleNamespace(get_owned_active=AsyncMock(return_value=SimpleNamespace(id=employment_id)))
+    service._requests = SimpleNamespace(get_active_for_employment=AsyncMock(return_value=SimpleNamespace()))
+
+    with pytest.raises(ConflictError, match="active verification request"):
+        await service._resolve_organization_claim(
+            payload=VerificationRequestCreateRequest(
+                subject_name="Candidate",
+                subject_email="candidate@example.com",
+                request_type=VerificationRequestType.EMPLOYMENT,
+                employment_id=employment_id,
+            ),
+            subject_user_id=uuid4(),
         )
 
 
