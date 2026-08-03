@@ -7,10 +7,12 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_auth_service
 from app.infrastructure.redis.deps import get_redis
 from app.main import app
 from app.schemas.auth import (
+    AuthenticatedPhoneVerificationResponse,
     ForgotPasswordResponse,
     LoginRequest,
     OrganizationSignupEmailSendResponse,
@@ -24,6 +26,9 @@ from app.schemas.auth import (
 
 
 class FakeAuthService:
+    def __init__(self) -> None:
+        self.recovery_user_ids = []
+
     async def start_organization_signup(self, payload) -> OrganizationSignupStartResponse:  # noqa: ANN001
         assert payload.work_email == "staff@example.com"
         return OrganizationSignupStartResponse(
@@ -120,6 +125,49 @@ class FakeAuthService:
             message="Phone verified",
         )
 
+    async def send_authenticated_phone_verification(
+        self,
+        user_id,
+        payload,
+    ) -> AuthenticatedPhoneVerificationResponse:  # noqa: ANN001
+        self.recovery_user_ids.append(user_id)
+        assert payload.phone in {None, "+919876543210"}
+        return AuthenticatedPhoneVerificationResponse(
+            phone_masked="+91******3210",
+            phone_verified=False,
+            resend_after_seconds=30,
+            expires_in_seconds=600,
+            message="Verification code sent",
+        )
+
+    async def resend_authenticated_phone_verification(
+        self,
+        user_id,
+    ) -> AuthenticatedPhoneVerificationResponse:  # noqa: ANN001
+        self.recovery_user_ids.append(user_id)
+        return AuthenticatedPhoneVerificationResponse(
+            phone_masked="+91******3210",
+            phone_verified=False,
+            resend_after_seconds=30,
+            expires_in_seconds=600,
+            message="Verification code sent",
+        )
+
+    async def verify_authenticated_phone_verification(
+        self,
+        user_id,
+        payload,
+    ) -> AuthenticatedPhoneVerificationResponse:  # noqa: ANN001
+        self.recovery_user_ids.append(user_id)
+        assert payload.code == "123456"
+        return AuthenticatedPhoneVerificationResponse(
+            phone_masked="+91******3210",
+            phone_verified=True,
+            resend_after_seconds=0,
+            expires_in_seconds=600,
+            message="Mobile number verified",
+        )
+
     async def complete_signup(self, payload) -> TokenResponse:  # noqa: ANN001
         return TokenResponse(
             access_token="access-token",
@@ -155,6 +203,13 @@ class FakeRedis:
 
     async def ttl(self, *args, **kwargs) -> int:  # noqa: ANN002, ANN003
         return 60
+
+
+RECOVERY_USER_ID = uuid4()
+
+
+async def _recovery_current_user() -> CurrentUser:
+    return CurrentUser(id=RECOVERY_USER_ID, email="candidate@example.com", role="user")
 
 
 @pytest.mark.asyncio
@@ -291,6 +346,43 @@ async def test_login_refresh_and_logout_contracts_remain_stable() -> None:
 
     assert logout.status_code == 204
     assert logout.content == b""
+
+
+@pytest.mark.asyncio
+async def test_authenticated_phone_recovery_routes_are_user_bound() -> None:
+    fake = FakeAuthService()
+    app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_current_user] = _recovery_current_user
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        send = await client.post("/api/v1/auth/phone/send", json={"phone": "+919876543210"})
+        resend = await client.post("/api/v1/auth/phone/resend")
+        verify = await client.post("/api/v1/auth/phone/verify", json={"code": "123456"})
+
+    app.dependency_overrides.clear()
+
+    assert send.status_code == 200
+    assert resend.status_code == 200
+    assert verify.status_code == 200
+    assert verify.json()["phone_verified"] is True
+    assert len(fake.recovery_user_ids) == 3
+    assert len(set(fake.recovery_user_ids)) == 1
+
+
+@pytest.mark.asyncio
+async def test_authenticated_phone_recovery_requires_authentication() -> None:
+    fake = FakeAuthService()
+    app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/auth/phone/send", json={"phone": "+919876543210"})
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

@@ -48,6 +48,18 @@ class SignupOtpStore:
             identifier=str(signup_session_id),
         )
 
+    def _resend_cooldown_key(self, subject_id: UUID, channel: str) -> str:
+        return self._keys.rate_limit(
+            bucket=f"signup_otp_resend:{channel}",
+            identifier=str(subject_id),
+        )
+
+    def _verify_attempt_key(self, subject_id: UUID, channel: str) -> str:
+        return self._keys.rate_limit(
+            bucket=f"signup_otp_verify:{channel}",
+            identifier=str(subject_id),
+        )
+
     async def store_otp(self, signup_session_id: UUID, channel: str, code: str) -> None:
         ttl = self._settings.signup_otp_ttl_seconds
         await self._redis.set(self._otp_key(signup_session_id, channel), hash_otp_code(code), ex=ttl)
@@ -98,6 +110,51 @@ return count
                 "Too many verification codes sent. Try again later.",
                 retry_after_seconds=max(ttl, 1),
             )
+
+    async def seconds_until_redis_resend_allowed(self, subject_id: UUID, channel: str) -> int:
+        """Read a Redis-backed cooldown for authenticated recovery channels."""
+
+        ttl = await self._redis.ttl(self._resend_cooldown_key(subject_id, channel))
+        return max(int(ttl), 0)
+
+    async def assert_redis_resend_allowed(self, subject_id: UUID, channel: str) -> None:
+        wait = await self.seconds_until_redis_resend_allowed(subject_id, channel)
+        if wait > 0:
+            raise RateLimitError(
+                "Please wait before requesting another code.",
+                retry_after_seconds=wait,
+            )
+
+    async def mark_redis_resend_cooldown(self, subject_id: UUID, channel: str) -> None:
+        await self._redis.set(
+            self._resend_cooldown_key(subject_id, channel),
+            "1",
+            ex=self._settings.signup_otp_resend_cooldown_seconds,
+        )
+
+    async def record_failed_verification_attempt(self, subject_id: UUID, channel: str) -> None:
+        """Track recovery attempts in Redis without persisting OTP state to the user row."""
+
+        key = self._verify_attempt_key(subject_id, channel)
+        _LUA_INCR_WITH_TTL = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return count
+"""
+        count = await self._redis.eval(
+            _LUA_INCR_WITH_TTL,
+            1,
+            key,
+            str(self._settings.signup_otp_ttl_seconds),
+        )
+        if count >= self._settings.signup_otp_max_verify_attempts:
+            raise RateLimitError(
+                "Too many verification attempts. Request a new code and try again.",
+                retry_after_seconds=self._settings.signup_otp_ttl_seconds,
+            )
+
+    async def clear_verification_attempts(self, subject_id: UUID, channel: str) -> None:
+        await self._redis.delete(self._verify_attempt_key(subject_id, channel))
 
     def seconds_until_resend_allowed(self, last_sent_at: datetime | None) -> int:
         if last_sent_at is None:

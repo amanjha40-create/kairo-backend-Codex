@@ -103,6 +103,35 @@ class SignupChannelVerifyResponse(BaseModel):
     message: str
 
 
+class AuthenticatedPhoneVerificationSendRequest(BaseModel):
+    """Optional phone input for an authenticated candidate without a saved number."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    phone: str | None = Field(default=None, min_length=8, max_length=32)
+
+
+class AuthenticatedPhoneVerificationVerifyRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    code: str = Field(..., min_length=6, max_length=6)
+
+    @field_validator("code")
+    @classmethod
+    def digits_only(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("code must be a 6-digit number")
+        return v
+
+
+class AuthenticatedPhoneVerificationResponse(BaseModel):
+    phone_masked: str | None = None
+    phone_verified: bool
+    resend_after_seconds: int
+    expires_in_seconds: int
+    message: str
+
+
 class SignupCompleteRequest(BaseModel):
     signup_session_id: UUID
 

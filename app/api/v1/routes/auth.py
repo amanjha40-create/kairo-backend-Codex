@@ -10,6 +10,9 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.rate_limit import auth_rate_limit, otp_verify_rate_limit
 from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
+    AuthenticatedPhoneVerificationResponse,
+    AuthenticatedPhoneVerificationSendRequest,
+    AuthenticatedPhoneVerificationVerifyRequest,
     ChangePasswordRequest,
     ChangePasswordResponse,
     ForgotPasswordRequest,
@@ -208,6 +211,47 @@ async def signup_phone_verify(
     auth: AuthService = Depends(get_auth_service),
 ) -> SignupChannelVerifyResponse:
     return await auth.verify_signup_phone(payload)
+
+
+@router.post(
+    "/phone/send",
+    response_model=AuthenticatedPhoneVerificationResponse,
+    summary="Send an authenticated candidate phone verification OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def authenticated_phone_send(
+    payload: AuthenticatedPhoneVerificationSendRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> AuthenticatedPhoneVerificationResponse:
+    return await auth.send_authenticated_phone_verification(current.id, payload)
+
+
+@router.post(
+    "/phone/resend",
+    response_model=AuthenticatedPhoneVerificationResponse,
+    summary="Resend an authenticated candidate phone verification OTP",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def authenticated_phone_resend(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> AuthenticatedPhoneVerificationResponse:
+    return await auth.resend_authenticated_phone_verification(current.id)
+
+
+@router.post(
+    "/phone/verify",
+    response_model=AuthenticatedPhoneVerificationResponse,
+    summary="Verify an authenticated candidate phone verification OTP",
+    dependencies=[Depends(otp_verify_rate_limit)],
+)
+async def authenticated_phone_verify(
+    payload: AuthenticatedPhoneVerificationVerifyRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> AuthenticatedPhoneVerificationResponse:
+    return await auth.verify_authenticated_phone_verification(current.id, payload)
 
 
 @router.post(

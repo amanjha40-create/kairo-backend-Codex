@@ -34,6 +34,9 @@ from app.repositories import PasswordResetTokenRepository, RefreshTokenRepositor
 from app.repositories.pending_signup import PendingSignupRepository
 from app.repositories.user_social_account import UserSocialAccountRepository
 from app.schemas.auth import (
+    AuthenticatedPhoneVerificationResponse,
+    AuthenticatedPhoneVerificationSendRequest,
+    AuthenticatedPhoneVerificationVerifyRequest,
     ChangePasswordRequest,
     ChangePasswordResponse,
     ForgotPasswordRequest,
@@ -225,6 +228,60 @@ class AuthService:
         pending = await self._load_active_pending(data.signup_session_id)
         self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         return await self._verify_channel_otp(pending, "phone", data.code)
+
+    async def send_authenticated_phone_verification(
+        self,
+        user_id: UUID,
+        data: AuthenticatedPhoneVerificationSendRequest,
+    ) -> AuthenticatedPhoneVerificationResponse:
+        """Start phone verification for the authenticated account only."""
+
+        user = await self._get_recovery_user(user_id)
+        await self._resolve_recovery_phone(user, data.phone)
+        return await self._send_authenticated_phone_otp(user)
+
+    async def resend_authenticated_phone_verification(
+        self,
+        user_id: UUID,
+    ) -> AuthenticatedPhoneVerificationResponse:
+        """Resend a recovery OTP after the existing cooldown has elapsed."""
+
+        user = await self._get_recovery_user(user_id)
+        if user.phone_verified_at is not None:
+            return self._build_authenticated_phone_response(user, message="Phone already verified")
+        if not user.phone:
+            raise ConflictError("A mobile number is required before verification can continue")
+        await self._otp.assert_redis_resend_allowed(user.id, "authenticated_phone")
+        return await self._send_authenticated_phone_otp(user)
+
+    async def verify_authenticated_phone_verification(
+        self,
+        user_id: UUID,
+        data: AuthenticatedPhoneVerificationVerifyRequest,
+    ) -> AuthenticatedPhoneVerificationResponse:
+        """Verify an OTP bound to the current authenticated user and phone."""
+
+        user = await self._get_recovery_user(user_id)
+        if user.phone_verified_at is not None:
+            return self._build_authenticated_phone_response(user, message="Phone already verified")
+        if not user.phone:
+            raise ConflictError("A mobile number is required before verification can continue")
+
+        if not await self._otp.verify_and_consume(user.id, "authenticated_phone", data.code):
+            await self._otp.record_failed_verification_attempt(user.id, "authenticated_phone")
+            raise UnauthorizedError("Invalid or expired verification code")
+
+        user.phone_verified_at = datetime.now(tz=UTC)
+        await self._otp.clear_verification_attempts(user.id, "authenticated_phone")
+        await self._session.commit()
+        logger.info(
+            "authenticated_phone_verification_completed",
+            extra={
+                "event": "authenticated_phone_verification_completed",
+                "user_id": str(user.id),
+            },
+        )
+        return self._build_authenticated_phone_response(user, message="Mobile number verified")
 
     async def complete_signup(self, data: SignupCompleteRequest) -> TokenResponse:
         pending = await self._load_active_pending(data.signup_session_id, allow_completed=True)
@@ -625,6 +682,71 @@ class AuthService:
         if existing and existing.revoked_at is None:
             await self._refresh.revoke(existing.id)
             await self._session.commit()
+
+    async def _get_recovery_user(self, user_id: UUID) -> User:
+        user = await self._users.get_by_id(user_id)
+        if user is None or not user.is_active or user.email_verified_at is None:
+            raise UnauthorizedError("Not authenticated")
+        return user
+
+    async def _resolve_recovery_phone(self, user: User, requested_phone: str | None) -> None:
+        if requested_phone is None:
+            if user.phone:
+                return
+            raise ConflictError("A mobile number is required before verification can continue")
+
+        normalized_phone = normalize_phone(requested_phone, self._settings)
+        if user.phone == normalized_phone:
+            return
+        existing = await self._users.get_by_phone(normalized_phone)
+        if existing is not None and existing.id != user.id:
+            raise ConflictError("This mobile number cannot be used")
+
+        user.phone = normalized_phone
+        user.phone_verified_at = None
+
+    async def _send_authenticated_phone_otp(
+        self,
+        user: User,
+    ) -> AuthenticatedPhoneVerificationResponse:
+        if user.phone_verified_at is not None:
+            return self._build_authenticated_phone_response(user, message="Phone already verified")
+        if not user.phone:
+            raise ConflictError("A mobile number is required before verification can continue")
+
+        code = self._phone.challenge_code(to_phone=user.phone, generated_code=generate_otp_code())
+        await self._otp.enforce_send_rate(user.id, "authenticated_phone")
+        await self._otp.store_otp(user.id, "authenticated_phone", code)
+        ttl_minutes = max(1, self._settings.signup_otp_ttl_seconds // 60)
+        await self._phone.send_signup_otp(to_phone=user.phone, code=code, ttl_minutes=ttl_minutes)
+        await self._otp.mark_redis_resend_cooldown(user.id, "authenticated_phone")
+        await self._session.commit()
+        logger.info(
+            "authenticated_phone_verification_sent",
+            extra={
+                "event": "authenticated_phone_verification_sent",
+                "user_id": str(user.id),
+            },
+        )
+        return self._build_authenticated_phone_response(user, message="Verification code sent")
+
+    def _build_authenticated_phone_response(
+        self,
+        user: User,
+        *,
+        message: str,
+    ) -> AuthenticatedPhoneVerificationResponse:
+        return AuthenticatedPhoneVerificationResponse(
+            phone_masked=mask_phone(user.phone) if user.phone else None,
+            phone_verified=user.phone_verified_at is not None,
+            resend_after_seconds=(
+                0
+                if user.phone_verified_at is not None
+                else self._settings.signup_otp_resend_cooldown_seconds
+            ),
+            expires_in_seconds=self._settings.signup_otp_ttl_seconds,
+            message=message,
+        )
 
     async def _send_channel_otp(self, pending: PendingSignup, channel: SignupChannel) -> SignupChannelSendResponse:
         if channel == "email" and pending.email_verified_at is not None:
