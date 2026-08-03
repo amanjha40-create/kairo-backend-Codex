@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 
-from app.api.dependencies.auth import CurrentUser, get_current_user
+from app.api.dependencies.auth import CurrentUser, get_current_user, get_optional_current_user
 from app.api.dependencies.rate_limit import auth_rate_limit, otp_verify_rate_limit
 from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
@@ -57,8 +57,9 @@ organization_signup_router = APIRouter(prefix="/auth/organization/signup", tags=
 async def organization_signup_start(
     payload: OrganizationSignupStartRequest,
     auth: Annotated[AuthService, Depends(get_auth_service)],
+    current: Annotated[CurrentUser | None, Depends(get_optional_current_user)],
 ) -> OrganizationSignupStartResponse:
-    return await auth.start_organization_signup(payload)
+    return await auth.start_organization_signup(payload, current)
 
 
 @organization_signup_router.post(

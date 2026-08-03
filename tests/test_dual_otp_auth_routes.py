@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.dependencies.auth import CurrentUser, get_optional_current_user
 from app.api.dependencies.services import get_auth_service
 from app.infrastructure.redis.deps import get_redis
 from app.main import app
@@ -24,8 +25,10 @@ from app.schemas.auth import (
 
 
 class FakeAuthService:
-    async def start_organization_signup(self, payload) -> OrganizationSignupStartResponse:  # noqa: ANN001
+    async def start_organization_signup(self, payload, current=None) -> OrganizationSignupStartResponse:  # noqa: ANN001
         assert payload.work_email == "staff@example.com"
+        if current is not None:
+            assert current.email == "staff@example.com"
         return OrganizationSignupStartResponse(
             signup_session_id=uuid4(),
             email_masked="st***@example.com",
@@ -258,6 +261,35 @@ async def test_organization_signup_routes_are_email_only_and_return_tokens() -> 
     assert email_verify.status_code == 200
     assert complete.status_code == 200
     assert complete.json()["access_token"] == "organization-access-token"
+
+
+@pytest.mark.asyncio
+async def test_organization_signup_start_accepts_authenticated_resume_without_password() -> None:
+    fake = FakeAuthService()
+    app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
+    app.dependency_overrides[get_optional_current_user] = lambda: CurrentUser(
+        id=uuid4(),
+        email="staff@example.com",
+        role="user",
+        full_name="Workspace Owner",
+        is_active=True,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        start = await client.post(
+            "/api/v1/auth/organization/signup/start",
+            json={
+                "full_name": "Workspace Owner",
+                "work_email": "staff@example.com",
+            },
+        )
+
+    app.dependency_overrides.clear()
+
+    assert start.status_code == 201
+    assert start.json()["email_masked"] == "st***@example.com"
 
 
 @pytest.mark.asyncio

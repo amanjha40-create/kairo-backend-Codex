@@ -21,7 +21,7 @@ class OrganizationSignupStartRequest(BaseModel):
 
     full_name: str = Field(..., min_length=1, max_length=255)
     work_email: EmailStr
-    password: str = Field(..., min_length=12, max_length=128)
+    password: str | None = Field(default=None, min_length=12, max_length=128)
 
 
 class OrganizationSignupStartResponse(BaseModel):

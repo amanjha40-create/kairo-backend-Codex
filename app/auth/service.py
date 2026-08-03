@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -67,6 +67,9 @@ from app.schemas.auth import (
 
 logger = logging.getLogger(__name__)
 SignupChannel = Literal["email", "phone"]
+
+if TYPE_CHECKING:
+    from app.auth.deps import CurrentUser
 
 
 def _make_slug(name: str | None, email: str) -> str:
@@ -137,20 +140,32 @@ class AuthService:
     async def start_organization_signup(
         self,
         data: OrganizationSignupStartRequest,
+        current_user: CurrentUser | None = None,
     ) -> OrganizationSignupStartResponse:
         """Create an email-only staged signup for organization workspace staff and send the first OTP."""
 
         email = normalize_email(str(data.work_email))
-        if await self._users.get_by_email(email) is not None:
-            raise ConflictError("An account already exists with this email")
-
-        pending = await self._get_or_prepare_pending_signup(
-            email=email,
-            phone=None,
-            full_name=data.full_name,
-            password_hash=hash_password(data.password),
-            signup_kind=SignupKind.ORGANIZATION,
-        )
+        existing_user = await self._users.get_by_email(email)
+        if existing_user is not None:
+            if current_user is None or existing_user.id != current_user.id:
+                raise ConflictError("An account already exists with this email")
+            pending = await self._get_or_prepare_existing_organization_signup(
+                user=existing_user,
+                full_name=data.full_name,
+                password=data.password,
+            )
+        else:
+            if not data.password:
+                raise ConflictError(
+                    "A password is required to create a new account for organization signup"
+                )
+            pending = await self._get_or_prepare_pending_signup(
+                email=email,
+                phone=None,
+                full_name=data.full_name,
+                password_hash=hash_password(data.password),
+                signup_kind=SignupKind.ORGANIZATION,
+            )
         await self._send_channel_otp(pending, "email")
         return OrganizationSignupStartResponse(
             signup_session_id=pending.id,
@@ -232,7 +247,7 @@ class AuthService:
 
     async def _complete_pending_signup(self, pending: PendingSignup, signup_kind: SignupKind) -> TokenResponse:
         self._assert_signup_kind(pending, signup_kind)
-        if pending.completed_user_id is not None:
+        if pending.completed_user_id is not None and pending.completed_at is not None:
             user = await self._users.get_by_id(pending.completed_user_id)
             if user is None:
                 raise ConflictError("Signup session is no longer valid")
@@ -246,37 +261,48 @@ class AuthService:
             raise ConflictError("Both email and phone verification are required before signup completion")
 
         now = datetime.now(tz=UTC)
-        slug_base = _make_slug(pending.full_name, pending.email)
-        user = User(
-            email=pending.email,
-            phone=pending.phone,
-            password_hash=pending.password_hash,
-            full_name=pending.full_name,
-            role=Role.USER.value,
-            email_verified_at=pending.email_verified_at or now,
-            phone_verified_at=pending.phone_verified_at if signup_kind == SignupKind.CANDIDATE else None,
-            profile_slug=_unique_slug(slug_base),
-        )
-        self._session.add(user)
-        pending_id = pending.id
-
-        try:
-            await self._session.flush()
-        except IntegrityError:
-            await self._session.rollback()
-            user = await self._users.get_by_email(pending.email)
-            if user is None and pending.phone:
-                user = await self._users.get_by_phone(pending.phone)
-            if user is None:
-                raise ConflictError("An account already exists with this email or phone") from None
-            if user.email != pending.email or (pending.phone and user.phone != pending.phone):
-                raise ConflictError("An account already exists with this email or phone") from None
-            pending = await self._pending.get_by_id(pending_id)
-            if pending is None:
-                raise ConflictError("Signup session is no longer valid") from None
-        else:
-            pending.completed_user_id = user.id
+        if signup_kind == SignupKind.ORGANIZATION and pending.completed_user_id is not None:
+            user = await self._users.get_by_id(pending.completed_user_id)
+            if user is None or user.email != pending.email:
+                raise ConflictError("Signup session is no longer valid")
+            if user.full_name in {None, ""} and pending.full_name:
+                user.full_name = pending.full_name
+            if user.password_hash is None and pending.password_hash:
+                user.password_hash = pending.password_hash
+            user.email_verified_at = pending.email_verified_at or now
             pending.completed_at = now
+        else:
+            slug_base = _make_slug(pending.full_name, pending.email)
+            user = User(
+                email=pending.email,
+                phone=pending.phone,
+                password_hash=pending.password_hash,
+                full_name=pending.full_name,
+                role=Role.USER.value,
+                email_verified_at=pending.email_verified_at or now,
+                phone_verified_at=pending.phone_verified_at if signup_kind == SignupKind.CANDIDATE else None,
+                profile_slug=_unique_slug(slug_base),
+            )
+            self._session.add(user)
+            pending_id = pending.id
+
+            try:
+                await self._session.flush()
+            except IntegrityError:
+                await self._session.rollback()
+                user = await self._users.get_by_email(pending.email)
+                if user is None and pending.phone:
+                    user = await self._users.get_by_phone(pending.phone)
+                if user is None:
+                    raise ConflictError("An account already exists with this email or phone") from None
+                if user.email != pending.email or (pending.phone and user.phone != pending.phone):
+                    raise ConflictError("An account already exists with this email or phone") from None
+                pending = await self._pending.get_by_id(pending_id)
+                if pending is None:
+                    raise ConflictError("Signup session is no longer valid") from None
+            else:
+                pending.completed_user_id = user.id
+                pending.completed_at = now
 
         if pending.completed_user_id is None:
             pending.completed_user_id = user.id
@@ -286,6 +312,60 @@ class AuthService:
         tokens = await self._issue_tokens(user)
         await self._session.commit()
         return tokens
+
+    async def _get_or_prepare_existing_organization_signup(
+        self,
+        *,
+        user: User,
+        full_name: str,
+        password: str | None,
+    ) -> PendingSignup:
+        pending = await self._pending.get_by_email(user.email)
+        if pending is not None and await self._pending.is_expired(pending):
+            await self._otp.clear_all(pending.id)
+            await self._pending.delete_by_id(pending.id)
+            pending = None
+
+        password_hash = user.password_hash
+        if password_hash is None:
+            if not password:
+                raise ConflictError(
+                    "A password is required to continue organization signup for this account"
+                )
+            password_hash = hash_password(password)
+
+        if pending is not None:
+            pending.signup_kind = SignupKind.ORGANIZATION
+            pending.phone = None
+            pending.password_hash = password_hash
+            pending.full_name = full_name
+            pending.expires_at = datetime.now(tz=UTC) + timedelta(hours=24)
+            pending.email_verified_at = None
+            pending.phone_verified_at = None
+            pending.email_otp_sent_count = 0
+            pending.email_verify_attempt_count = 0
+            pending.email_last_otp_sent_at = None
+            pending.phone_otp_sent_count = 0
+            pending.phone_verify_attempt_count = 0
+            pending.phone_last_otp_sent_at = None
+            pending.completed_user_id = user.id
+            pending.completed_at = None
+            await self._session.flush()
+            return pending
+
+        pending = PendingSignup(
+            email=user.email,
+            phone=None,
+            signup_kind=SignupKind.ORGANIZATION,
+            password_hash=password_hash,
+            full_name=full_name,
+            expires_at=datetime.now(tz=UTC) + timedelta(hours=24),
+            completed_user_id=user.id,
+            completed_at=None,
+        )
+        self._session.add(pending)
+        await self._session.flush()
+        return pending
 
     async def resend_signup_otp(self, data: SignupResendRequest) -> SignupResendResponse:
         response = await self.resend_signup_email_otp(SignupChannelRequest(signup_session_id=data.signup_session_id))
