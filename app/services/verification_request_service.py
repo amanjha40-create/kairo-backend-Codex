@@ -17,6 +17,8 @@ from app.education.enums import EducationVerificationStatus
 from app.employment.enums import DocumentVerificationStatus
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.infrastructure.s3.presign import generate_presigned_get_url
+from app.models.education import Education
+from app.models.employment import Employment
 from app.models.organization_member import OrganizationMember
 from app.models.trust_invitation import TrustInvitation
 from app.models.user import User
@@ -381,6 +383,10 @@ class VerificationRequestService:
             organization_id=organization.id,
             payload=payload,
         )
+        employment, education = await self._resolve_organization_claim(
+            payload=payload,
+            subject_user_id=subject_user_id,
+        )
         status = VerificationRequestStatus.PENDING_SUBJECT_ACCEPTANCE
         origin_type = VerificationRequestOriginType.ORGANIZATION_CREATED
         if trust_invitation is not None:
@@ -394,6 +400,8 @@ class VerificationRequestService:
             organization_person_id=trust_invitation.organization_person_id if trust_invitation is not None else None,
             subject_user_id=subject_user_id,
             trust_invitation_id=trust_invitation.id if trust_invitation is not None else None,
+            employment_id=employment.id if employment is not None else None,
+            education_id=education.id if education is not None else None,
             subject_name=subject_name,
             subject_email=subject_email,
             target_organization_name=organization.name,
@@ -411,9 +419,15 @@ class VerificationRequestService:
             metadata={
                 "request_type": payload.request_type.value,
                 "origin_type": origin_type.value,
+                "employment_id": str(employment.id) if employment is not None else None,
+                "education_id": str(education.id) if education is not None else None,
             },
         )
-        await self._people.resolve_for_verification_request(request, actor_user_id=actor_user_id)
+        await self._people.resolve_for_verification_request(
+            request,
+            actor_user_id=actor_user_id,
+            employment=employment,
+        )
         return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def create_subject_request(
@@ -1226,6 +1240,34 @@ class VerificationRequestService:
         user = await self._users.get_by_email(normalized_email)
         subject_user_id = user.id if user is not None and user.email_verified_at is not None else None
         return payload.subject_name, normalized_email, subject_user_id, None
+
+    async def _resolve_organization_claim(
+        self,
+        *,
+        payload: VerificationRequestCreateRequest,
+        subject_user_id: UUID | None,
+    ) -> tuple[Employment | None, Education | None]:
+        if payload.request_type not in {VerificationRequestType.EMPLOYMENT, VerificationRequestType.EDUCATION}:
+            return None, None
+        if subject_user_id is None:
+            raise ConflictError("The candidate must have a verified Kairo account before a career record can be verified")
+
+        if payload.request_type == VerificationRequestType.EMPLOYMENT:
+            assert payload.employment_id is not None
+            employment = await self._employments.get_owned_active(payload.employment_id, subject_user_id)
+            if employment is None:
+                raise NotFoundError("Employment record not found")
+            if await self._requests.get_active_for_employment(employment.id) is not None:
+                raise ConflictError("An active verification request already exists for this employment record")
+            return employment, None
+
+        assert payload.education_id is not None
+        education = await self._educations.get_owned(payload.education_id, subject_user_id)
+        if education is None:
+            raise NotFoundError("Education record not found")
+        if await self._requests.get_active_for_education(education.id) is not None:
+            raise ConflictError("An active verification request already exists for this education record")
+        return None, education
 
     async def _require_subject_user(self, actor_user_id: UUID) -> User:
         user = await self._users.get_by_id(actor_user_id)

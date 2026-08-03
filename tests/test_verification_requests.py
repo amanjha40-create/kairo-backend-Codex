@@ -15,12 +15,16 @@ from app.main import app
 from app.schemas.pagination import filter_sort_paginate
 from app.schemas.verification_request import (
     VerificationRequestAssignReviewerRequest,
+    VerificationRequestCreateRequest,
     VerificationRequestInternalNoteUpdateRequest,
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
-from app.services.verification_request_service import is_internal_admin_note_event, is_private_organization_event
+from app.services.verification_request_service import (
+    is_internal_admin_note_event,
+    is_private_organization_event,
+)
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestStatus,
@@ -73,6 +77,46 @@ def test_openapi_exposes_membership_based_reviewer_assignment() -> None:
 
     assert "organization_member_public_id" in properties
     assert "assignee_user_id" in properties
+
+
+def test_organization_employment_verification_requires_one_canonical_employment_id() -> None:
+    employment_id = uuid4()
+
+    payload = VerificationRequestCreateRequest(
+        subject_name="Candidate",
+        subject_email="candidate@example.com",
+        request_type=VerificationRequestType.EMPLOYMENT,
+        employment_id=employment_id,
+    )
+
+    assert payload.employment_id == employment_id
+    assert payload.education_id is None
+    with pytest.raises(ValueError, match="Employment verification requires employment_id only"):
+        VerificationRequestCreateRequest(
+            subject_name="Candidate",
+            subject_email="candidate@example.com",
+            request_type=VerificationRequestType.EMPLOYMENT,
+        )
+
+
+def test_organization_education_verification_requires_one_canonical_education_id() -> None:
+    education_id = uuid4()
+
+    payload = VerificationRequestCreateRequest(
+        subject_name="Candidate",
+        subject_email="candidate@example.com",
+        request_type=VerificationRequestType.EDUCATION,
+        education_id=education_id,
+    )
+
+    assert payload.education_id == education_id
+    assert payload.employment_id is None
+    with pytest.raises(ValueError, match="Education verification requires education_id only"):
+        VerificationRequestCreateRequest(
+            subject_name="Candidate",
+            subject_email="candidate@example.com",
+            request_type=VerificationRequestType.EDUCATION,
+        )
 
 
 class FakeVerificationRequestService:
@@ -215,7 +259,7 @@ async def test_create_verification_request_returns_pending_subject_acceptance() 
             json={
                 "subject_name": "Aman Jha",
                 "subject_email": "aman3@test.com",
-                "request_type": "employment",
+                "request_type": "identity",
                 "trust_context": {"source": "api"},
             },
         )

@@ -63,6 +63,8 @@ class VerificationRequestCreateRequest(BaseModel):
     subject_name: str | None = Field(default=None, min_length=1, max_length=255)
     subject_email: EmailStr | None = None
     trust_invitation_public_id: UUID | None = None
+    employment_id: UUID | None = None
+    education_id: UUID | None = None
     request_type: VerificationRequestType
     due_date: date | None = None
     trust_context: dict[str, Any] = Field(default_factory=dict)
@@ -72,6 +74,14 @@ class VerificationRequestCreateRequest(BaseModel):
         has_direct_subject = self.subject_name is not None and self.subject_email is not None
         if self.trust_invitation_public_id is None and not has_direct_subject:
             raise ValueError("Provide subject_name and subject_email, or trust_invitation_public_id")
+        if self.request_type == VerificationRequestType.EMPLOYMENT:
+            if self.employment_id is None or self.education_id is not None:
+                raise ValueError("Employment verification requires employment_id only")
+        elif self.request_type == VerificationRequestType.EDUCATION:
+            if self.education_id is None or self.employment_id is not None:
+                raise ValueError("Education verification requires education_id only")
+        elif self.employment_id is not None or self.education_id is not None:
+            raise ValueError("Career record references are only supported for employment and education verification")
         return self
 
 
