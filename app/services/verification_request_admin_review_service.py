@@ -269,17 +269,7 @@ class VerificationRequestAdminReviewService:
 
     async def _to_admin_evidence_response(self, evidence) -> AdminReviewEvidenceResponse:  # noqa: ANN001
         base = await self._to_evidence_response(evidence)
-        document = None
-        if evidence.employment_document_id is not None:
-            document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
-        return AdminReviewEvidenceResponse(
-            **base.model_dump(),
-            document_type=document.document_type if document is not None else None,
-            original_filename=document.original_filename if document is not None else None,
-            mime_type=document.content_type if document is not None else None,
-            file_size=document.byte_size if document is not None else None,
-            upload_status=document.verification_status if document is not None else None,
-        )
+        return AdminReviewEvidenceResponse(**base.model_dump())
 
     @staticmethod
     def _to_admin_contact_response(contact) -> AdminVerificationContactResponse:  # noqa: ANN001

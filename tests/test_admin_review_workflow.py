@@ -172,6 +172,37 @@ async def test_admin_evidence_projection_excludes_default_download_url() -> None
 
 
 @pytest.mark.asyncio
+async def test_admin_evidence_projection_preserves_existing_document_metadata() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    now = datetime.now(tz=UTC)
+    evidence = SimpleNamespace(employment_document_id=None)
+    service._to_evidence_response = AsyncMock(
+        return_value=VerificationRequestEvidenceResponse(
+            public_id=uuid4(),
+            evidence_type="employment_letter",
+            field_key="employment.employer_name",
+            document_id=None,
+            value=None,
+            status="submitted",
+            document_type="offer_letter",
+            original_filename="offer.pdf",
+            mime_type="application/pdf",
+            file_size=1024,
+            upload_status="uploaded",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    result = await service._to_admin_evidence_response(evidence)
+
+    assert result.document_type == "offer_letter"
+    assert result.original_filename == "offer.pdf"
+    assert result.mime_type == "application/pdf"
+    assert result.file_size == 1024
+    assert result.upload_status == "uploaded"
+
+
+@pytest.mark.asyncio
 async def test_contact_review_refreshes_committed_contact_before_mapping() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     service._session = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
