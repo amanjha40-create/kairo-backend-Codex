@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -43,6 +44,9 @@ def _request(status: VerificationRequestStatus) -> SimpleNamespace:
         education_id=None,
         request_type=VerificationRequestType.EMPLOYMENT,
         subject_user_id=uuid4(),
+        consented_at=datetime.now(tz=UTC),
+        consented_fields=["employment.role"],
+        consented_evidence_scope=["employment_letter"],
     )
 
 
@@ -181,3 +185,14 @@ async def test_finalization_rejects_a_pre_dispatch_request() -> None:
             outcome="verified",
             decision_summary="Not yet verified by an organization.",
         )
+
+
+def test_admin_dispatch_requires_authoritative_consent() -> None:
+    request = SimpleNamespace(
+        consented_at=None,
+        consented_fields=[],
+        consented_evidence_scope=[],
+    )
+
+    with pytest.raises(ConflictError, match="authoritative candidate consent"):
+        VerificationRequestAdminReviewService._require_authoritative_consent(request)

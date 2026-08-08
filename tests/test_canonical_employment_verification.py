@@ -16,11 +16,13 @@ from app.exceptions import ConflictError, EmploymentWorkflowError
 from app.schemas.verification_request import (
     EducationVerificationDraftRequest,
     VerificationContactRequest,
+    VerificationRequestSubmitForReviewRequest,
 )
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.verification_request_service import VerificationRequestService
 from app.verification_requests.enums import (
     VerificationContactType,
+    VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
 )
@@ -219,6 +221,10 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
         status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
         submitted_for_admin_review_at=None,
         organization_outreach_sent_at=None,
+        consented_fields=[],
+        consented_evidence_scope=[],
+        consented_at=None,
+        consent_version=None,
     )
     evidence = SimpleNamespace(employment_document_id=uuid4())
     transitions: list[tuple[VerificationRequestStatus, str]] = []
@@ -248,11 +254,24 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
     service._contacts = ContactRepository()
     service._workflow = Workflow()
 
-    result = await service.submit_for_review(actor_id, "candidate@example.com", request.public_id)
+    result = await service.submit_for_review(
+        actor_id,
+        "candidate@example.com",
+        request.public_id,
+        VerificationRequestSubmitForReviewRequest(
+            consented_fields=["employment.role", "employment_dates"],
+            consented_evidence_scope=["employment_letter"],
+            consent_version="v1",
+        ),
+    )
 
     assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
     assert transitions == [(VerificationRequestStatus.PENDING_ADMIN_REVIEW, "verification_submitted")]
     assert request.organization_outreach_sent_at is None
+    assert request.consented_fields == ["employment.role", "employment_dates"]
+    assert request.consented_evidence_scope == ["employment_letter"]
+    assert request.consented_at is not None
+    assert request.consent_version == "v1"
 
 
 @pytest.mark.asyncio
@@ -266,6 +285,10 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
         request_type=VerificationRequestType.EDUCATION,
         status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
         submitted_for_admin_review_at=None,
+        consented_fields=[],
+        consented_evidence_scope=[],
+        consented_at=None,
+        consent_version=None,
     )
 
     async def require_subject(*_args):
@@ -295,6 +318,93 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
     result = await service.submit_for_review(actor_id, "candidate@example.com", request.public_id)
 
     assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_org_projection_only_exposes_consented_claim_fields_and_evidence() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    subject_id = uuid4()
+    actor_id = uuid4()
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        employment_id=uuid4(),
+        education_id=None,
+        origin_type=VerificationRequestOriginType.SUBJECT_INITIATED,
+        organization_id=uuid4(),
+        organization=SimpleNamespace(
+            public_id=uuid4(),
+            name="Acme Corp",
+            organization_type="employer",
+            verification_state="verified",
+            suspended_at=None,
+        ),
+        trust_invitation=None,
+        subject_name="Candidate",
+        subject_email="candidate@example.com",
+        target_organization_name="Acme Corp",
+        target_organization_email="hr@acme.com",
+        request_type=VerificationRequestType.EMPLOYMENT,
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+        priority="normal",
+        due_date=None,
+        trust_context={},
+        created_at=datetime.now(tz=UTC),
+        updated_at=datetime.now(tz=UTC),
+        accepted_at=None,
+        consented_at=datetime.now(tz=UTC),
+        consent_version="v1",
+        consented_fields=["employment_dates"],
+        consented_evidence_scope=["employment_letter"],
+        candidate_response=None,
+        candidate_response_submitted_at=None,
+        target_organization_metadata={},
+        assigned_to_user_id=None,
+        organization_internal_note=None,
+        subject_user_id=subject_id,
+    )
+    employment = SimpleNamespace(
+        employer_legal_name="Acme Corp",
+        job_title="Engineer",
+        start_date=datetime(2024, 1, 1, tzinfo=UTC).date(),
+        end_date=datetime(2025, 1, 1, tzinfo=UTC).date(),
+        employment_type="full_time",
+        work_location_country="IN",
+        work_location_region="KA",
+    )
+    service._evidence = SimpleNamespace(
+        list_for_request=AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    evidence_type="employment_letter",
+                    field_key="employment_evidence",
+                    document_id=None,
+                    employment_document_id=uuid4(),
+                    education_document_id=None,
+                ),
+                SimpleNamespace(
+                    evidence_type="paystub",
+                    field_key="employment_paystub",
+                    document_id=None,
+                    employment_document_id=uuid4(),
+                    education_document_id=None,
+                ),
+            ]
+        )
+    )
+    service._employments = SimpleNamespace(get_active_by_id=AsyncMock(return_value=employment))
+    service._educations = SimpleNamespace(get_active_by_id=AsyncMock(return_value=None))
+    service._users = SimpleNamespace(get_by_id=AsyncMock(return_value=None))
+
+    response = await service._to_org_response(request, actor_id)
+
+    assert response.employment_claim is not None
+    assert response.employment_claim.start_date == employment.start_date
+    assert response.employment_claim.end_date == employment.end_date
+    assert response.employment_claim.employer_name is None
+    assert response.employment_claim.role is None
+    assert response.evidence_summary.total_items == 1
+    assert response.evidence_summary.field_keys == ["employment_evidence"]
 
 
 @pytest.mark.asyncio

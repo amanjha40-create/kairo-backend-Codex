@@ -150,6 +150,7 @@ async def test_admin_response_projection_excludes_organization_private_fields() 
         request,
         viewer_user_id=None,
         include_org_private=False,
+        apply_consent_filter=False,
     )
 
 
@@ -265,6 +266,10 @@ class FakeVerificationRequestAdminReviewService:
             trust_context={"source": "subject"},
             created_at=self._now,
             updated_at=self._now,
+            consented_at=self._now,
+            consent_version="v1",
+            consented_fields=["employment_dates"],
+            consented_evidence_scope=["employment_letter"],
         )
 
     def _review_response(
@@ -448,6 +453,9 @@ async def test_admin_review_detail_exposes_employer_verification_public_id(
     assert response.status_code == 200
     expected = str(employer_verification_public_id) if employer_verification_public_id else None
     assert response.json()["employer_verification_public_id"] == expected
+    assert response.json()["request"]["consented_fields"] == ["employment_dates"]
+    assert response.json()["request"]["consented_evidence_scope"] == ["employment_letter"]
+    assert response.json()["request"]["consent_version"] == "v1"
 
 
 @pytest.mark.asyncio

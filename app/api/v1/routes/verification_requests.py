@@ -24,6 +24,7 @@ from app.schemas.verification_request import (
     VerificationRequestInformationSubmissionRequest,
     VerificationRequestInternalNoteUpdateRequest,
     VerificationRequestResponse,
+    VerificationRequestSubmitForReviewRequest,
     VerificationRequestTimelineResponse,
 )
 from app.services.verification_request_service import VerificationRequestService
@@ -188,8 +189,9 @@ async def submit_verification_request_for_review(
     verification_request_public_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
     svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+    payload: VerificationRequestSubmitForReviewRequest | None = None,
 ) -> VerificationRequestResponse:
-    return await svc.submit_for_review(current.id, current.email, verification_request_public_id)
+    return await svc.submit_for_review(current.id, current.email, verification_request_public_id, payload)
 
 
 @router.get(

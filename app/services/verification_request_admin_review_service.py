@@ -436,6 +436,7 @@ class VerificationRequestAdminReviewService:
         payload: AdminReviewDecisionRequest,
     ) -> VerificationRequestResponse:
         request = await self._require_admin_dispatch_review_request(verification_request_public_id)
+        self._require_authoritative_consent(request)
         review = await self._get_or_create_review(request, actor_user_id)
         review.review_status = VerificationRequestReviewStatus.APPROVED
         review.decision_by_user_id = actor_user_id
@@ -928,6 +929,13 @@ class VerificationRequestAdminReviewService:
             raise ConflictError("Verification request is awaiting final quality review")
         return request
 
+    @staticmethod
+    def _require_authoritative_consent(request) -> None:  # noqa: ANN001
+        if request.consented_at is None:
+            raise ConflictError("Verification request is missing authoritative candidate consent metadata")
+        if not (request.consented_fields or request.consented_evidence_scope):
+            raise ConflictError("Verification request is missing authoritative candidate consent metadata")
+
     async def _require_admin_quality_review_request(self, verification_request_public_id: UUID):
         request = await self._get_required_request(verification_request_public_id)
         if request.status != VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW:
@@ -1025,6 +1033,7 @@ class VerificationRequestAdminReviewService:
             request,
             viewer_user_id=None,
             include_org_private=False,
+            apply_consent_filter=False,
         )
 
     async def _to_evidence_response(self, evidence) -> VerificationRequestEvidenceResponse:  # noqa: ANN001

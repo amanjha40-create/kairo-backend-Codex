@@ -114,6 +114,20 @@ class VerificationRequestPriorityRequest(BaseModel):
     priority: Literal["low", "normal", "high", "urgent"]
 
 
+class VerificationRequestSubmitForReviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    consented_fields: list[str] = Field(default_factory=list, max_length=50)
+    consented_evidence_scope: list[str] = Field(default_factory=list, max_length=50)
+    consent_version: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_consent_scope(self) -> "VerificationRequestSubmitForReviewRequest":
+        if not self.consented_fields and not self.consented_evidence_scope:
+            raise ValueError("Provide at least one consented field or evidence scope value")
+        return self
+
+
 class SubjectVerificationRequestCreateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -253,6 +267,8 @@ class VerificationRequestResponse(BaseModel):
     candidate_response: str | None = None
     candidate_response_submitted_at: datetime | None = None
     accepted_at: datetime | None = None
+    consented_at: datetime | None = None
+    consent_version: str | None = None
     consented_fields: list[str] = Field(default_factory=list)
     consented_evidence_scope: list[str] = Field(default_factory=list)
     target_organization_metadata: dict[str, Any] = Field(default_factory=dict)

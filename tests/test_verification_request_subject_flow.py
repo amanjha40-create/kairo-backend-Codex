@@ -8,7 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.admin_review.enums import VerificationRequestEvidenceStatus, VerificationReviewCorrectionStatus
+from app.admin_review.enums import (
+    VerificationRequestEvidenceStatus,
+    VerificationReviewCorrectionStatus,
+)
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
@@ -19,7 +22,11 @@ from app.schemas.verification_request import (
     VerificationRequestEvidenceResponse,
     VerificationRequestResponse,
 )
-from app.verification_requests.enums import VerificationRequestOriginType, VerificationRequestStatus, VerificationRequestType
+from app.verification_requests.enums import (
+    VerificationRequestOriginType,
+    VerificationRequestStatus,
+    VerificationRequestType,
+)
 
 
 class FakeSubjectVerificationRequestService:
@@ -97,10 +104,15 @@ class FakeSubjectVerificationRequestService:
     async def update_evidence(self, actor_user_id, actor_email, verification_request_public_id, evidence_public_id, payload):  # noqa: ANN001
         return self._evidence_response()
 
-    async def submit_for_review(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
+    async def submit_for_review(self, actor_user_id, actor_email, verification_request_public_id, payload=None):  # noqa: ANN001
         if verification_request_public_id == UUID("00000000-0000-0000-0000-00000000cccc"):
             raise ConflictError("Add at least one evidence item before submitting for review")
-        return self._request_response(status=VerificationRequestStatus.PENDING_ADMIN_REVIEW)
+        response = self._request_response(status=VerificationRequestStatus.PENDING_ADMIN_REVIEW)
+        if payload is not None:
+            response.consented_fields = payload.consented_fields
+            response.consented_evidence_scope = payload.consented_evidence_scope
+            response.consent_version = payload.consent_version
+        return response
 
     async def list_corrections(self, actor_user_id, actor_email, verification_request_public_id, params=None):  # noqa: ANN001
         items = [
@@ -242,6 +254,30 @@ async def test_submit_for_review() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "pending_admin_review"
+
+
+@pytest.mark.asyncio
+async def test_submit_for_review_accepts_authoritative_consent_payload() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeSubjectVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/verification-requests/{request_public_id}/submit-for-review",
+            json={
+                "consented_fields": ["employment.role", "employment_dates"],
+                "consented_evidence_scope": ["employment_letter"],
+                "consent_version": "v1",
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["consented_fields"] == ["employment.role", "employment_dates"]
+    assert response.json()["consented_evidence_scope"] == ["employment_letter"]
+    assert response.json()["consent_version"] == "v1"
 
 
 @pytest.mark.asyncio

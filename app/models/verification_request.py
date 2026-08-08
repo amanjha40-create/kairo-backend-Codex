@@ -134,6 +134,8 @@ class VerificationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     candidate_response: Mapped[str | None] = mapped_column(String(4000), nullable=True)
     candidate_response_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     consented_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     consented_evidence_scope: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")

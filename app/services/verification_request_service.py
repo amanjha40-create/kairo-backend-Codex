@@ -55,6 +55,7 @@ from app.schemas.verification_request import (
     VerificationRequestInternalNoteUpdateRequest,
     VerificationRequestOrganizationSummary,
     VerificationRequestResponse,
+    VerificationRequestSubmitForReviewRequest,
     VerificationRequestTargetResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
@@ -87,6 +88,24 @@ def is_private_organization_event(event_type: str, metadata: dict | None) -> boo
     } or (metadata or {}).get("visibility") == "organization_internal"
 
 logger = logging.getLogger(__name__)
+
+_EMPLOYMENT_CONSENT_FIELD_MAP = {
+    "employment.employer_name": {"employment.employer_name", "employment.company_name"},
+    "employment.role": {"employment.role", "employment.job_title"},
+    "employment.start_date": {"employment.start_date", "employment_dates"},
+    "employment.end_date": {"employment.end_date", "employment_dates"},
+    "employment.employment_type": {"employment.employment_type"},
+    "employment.work_location_country": {"employment.work_location_country"},
+    "employment.work_location_region": {"employment.work_location_region"},
+}
+
+_EDUCATION_CONSENT_FIELD_MAP = {
+    "education.institution_name": {"education.institution_name"},
+    "education.degree": {"education.degree", "education.qualification"},
+    "education.field_of_study": {"education.field_of_study", "education.program", "education.field"},
+    "education.start_date": {"education.start_date", "education_dates"},
+    "education.end_date": {"education.end_date", "education_dates"},
+}
 
 
 _ORGANIZATION_VISIBLE_STATUSES = {
@@ -596,22 +615,14 @@ class VerificationRequestService:
 
         if request.subject_user_id is None:
             request.subject_user_id = actor_user_id
-        accepted_at = datetime.now(tz=UTC)
-        request.accepted_at = accepted_at
-        request.consented_fields = [str(value) for value in request.trust_context.get("requested_fields", []) if value]
-        request.consented_evidence_scope = [
-            str(value) for value in request.trust_context.get("evidence_scope", []) if value
-        ]
+        request.accepted_at = datetime.now(tz=UTC)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.ACCEPTED,
             actor_user_id=actor_user_id,
             event_type="verification_request_subject_accepted",
             event_source=VerificationRequestEventSource.CANDIDATE,
-            metadata={
-                "consented_fields": request.consented_fields,
-                "consented_evidence_scope": request.consented_evidence_scope,
-            },
+            metadata={},
         )
         await self._people.resolve_for_verification_request(request, actor_user_id=actor_user_id)
         return await self._commit_reload_access_response(request.public_id, actor_user_id, actor_email)
@@ -781,6 +792,7 @@ class VerificationRequestService:
         actor_user_id: UUID,
         actor_email: str,
         verification_request_public_id: UUID,
+        payload: VerificationRequestSubmitForReviewRequest | None = None,
     ) -> VerificationRequestResponse:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
         if request.status not in {
@@ -805,14 +817,23 @@ class VerificationRequestService:
                 raise ConflictError("Add an institution verification contact before submitting for review")
             if not any(item.education_document_id is not None for item in evidence_items):
                 raise ConflictError("Add completed education evidence before submitting for review")
-        request.submitted_for_admin_review_at = datetime.now(tz=UTC)
+        submitted_at = datetime.now(tz=UTC)
+        request.submitted_for_admin_review_at = submitted_at
+        if payload is not None:
+            self._apply_submission_consent(request, payload, submitted_at)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
             actor_user_id=actor_user_id,
             event_type="verification_submitted",
             event_source=VerificationRequestEventSource.CANDIDATE,
-            metadata={"evidence_count": len(evidence_items)},
+            metadata={
+                "evidence_count": len(evidence_items),
+                "consented_fields": list(request.consented_fields or []),
+                "consented_evidence_scope": list(request.consented_evidence_scope or []),
+                "consented_at": request.consented_at.isoformat() if request.consented_at is not None else None,
+                "consent_version": request.consent_version,
+            },
         )
         return await self._commit_reload_subject_response(request.public_id)
 
@@ -1418,14 +1439,24 @@ class VerificationRequestService:
         return False
 
     async def _to_subject_response(self, request: VerificationRequest) -> VerificationRequestResponse:
-        return await self._to_response(request, viewer_user_id=None, include_org_private=False)
+        return await self._to_response(
+            request,
+            viewer_user_id=request.subject_user_id,
+            include_org_private=False,
+            apply_consent_filter=False,
+        )
 
     async def _to_org_response(
         self,
         request: VerificationRequest,
         viewer_user_id: UUID,
     ) -> VerificationRequestResponse:
-        return await self._to_response(request, viewer_user_id=viewer_user_id, include_org_private=True)
+        return await self._to_response(
+            request,
+            viewer_user_id=viewer_user_id,
+            include_org_private=True,
+            apply_consent_filter=True,
+        )
 
     async def _to_response(
         self,
@@ -1433,8 +1464,11 @@ class VerificationRequestService:
         *,
         viewer_user_id: UUID | None,
         include_org_private: bool,
+        apply_consent_filter: bool,
     ) -> VerificationRequestResponse:
         evidence_items = await self._evidence.list_for_request(request.id)
+        if apply_consent_filter:
+            evidence_items = self._filter_evidence_by_consent(request, evidence_items)
         employment = (
             await self._employments.get_active_by_id(request.employment_id)
             if request.employment_id is not None
@@ -1474,6 +1508,8 @@ class VerificationRequestService:
             created_at=request.created_at,
             updated_at=request.updated_at,
             accepted_at=request.accepted_at,
+            consented_at=request.consented_at,
+            consent_version=request.consent_version,
             consented_fields=list(request.consented_fields or []),
             consented_evidence_scope=list(request.consented_evidence_scope or []),
             candidate_response=request.candidate_response,
@@ -1496,26 +1532,12 @@ class VerificationRequestService:
                 metadata=dict(request.target_organization_metadata or {}),
             ),
             employment_claim=(
-                VerificationRequestEmploymentClaimResponse(
-                    employer_name=employment.employer_legal_name,
-                    role=employment.job_title,
-                    start_date=employment.start_date,
-                    end_date=employment.end_date,
-                    employment_type=employment.employment_type,
-                    work_location_country=employment.work_location_country,
-                    work_location_region=employment.work_location_region,
-                )
+                self._build_employment_claim_response(request, employment, apply_consent_filter)
                 if employment is not None
                 else None
             ),
             education_claim=(
-                VerificationRequestEducationClaimResponse(
-                    institution_name=education.institution_name,
-                    degree=education.degree,
-                    field_of_study=education.field_of_study,
-                    start_date=education.start_date,
-                    end_date=education.end_date,
-                )
+                self._build_education_claim_response(request, education, apply_consent_filter)
                 if education is not None
                 else None
             ),
@@ -1539,6 +1561,92 @@ class VerificationRequestService:
             ),
             organization_internal_note=request.organization_internal_note if include_org_private else None,
         )
+
+    @staticmethod
+    def _normalize_consent_values(values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = value.strip()
+            if not cleaned or cleaned in seen:
+                continue
+            normalized.append(cleaned)
+            seen.add(cleaned)
+        return normalized
+
+    def _apply_submission_consent(
+        self,
+        request: VerificationRequest,
+        payload: VerificationRequestSubmitForReviewRequest,
+        consented_at: datetime,
+    ) -> None:
+        request.consented_fields = self._normalize_consent_values(payload.consented_fields)
+        request.consented_evidence_scope = self._normalize_consent_values(payload.consented_evidence_scope)
+        request.consented_at = consented_at
+        request.consent_version = payload.consent_version
+
+    @staticmethod
+    def _expand_consented_fields(consented_fields: list[str], mapping: dict[str, set[str]]) -> set[str]:
+        raw = {value.strip() for value in consented_fields if value and value.strip()}
+        expanded: set[str] = set()
+        for target, aliases in mapping.items():
+            if raw.intersection(aliases | {target}):
+                expanded.add(target)
+        return expanded
+
+    def _build_employment_claim_response(
+        self,
+        request: VerificationRequest,
+        employment,
+        apply_consent_filter: bool,
+    ) -> VerificationRequestEmploymentClaimResponse:
+        allowed = (
+            self._expand_consented_fields(list(request.consented_fields or []), _EMPLOYMENT_CONSENT_FIELD_MAP)
+            if apply_consent_filter
+            else set(_EMPLOYMENT_CONSENT_FIELD_MAP)
+        )
+        if apply_consent_filter and not allowed:
+            return VerificationRequestEmploymentClaimResponse()
+        return VerificationRequestEmploymentClaimResponse(
+            employer_name=employment.employer_legal_name if "employment.employer_name" in allowed else None,
+            role=employment.job_title if "employment.role" in allowed else None,
+            start_date=employment.start_date if "employment.start_date" in allowed else None,
+            end_date=employment.end_date if "employment.end_date" in allowed else None,
+            employment_type=employment.employment_type if "employment.employment_type" in allowed else None,
+            work_location_country=employment.work_location_country if "employment.work_location_country" in allowed else None,
+            work_location_region=employment.work_location_region if "employment.work_location_region" in allowed else None,
+        )
+
+    def _build_education_claim_response(
+        self,
+        request: VerificationRequest,
+        education,
+        apply_consent_filter: bool,
+    ) -> VerificationRequestEducationClaimResponse:
+        allowed = (
+            self._expand_consented_fields(list(request.consented_fields or []), _EDUCATION_CONSENT_FIELD_MAP)
+            if apply_consent_filter
+            else set(_EDUCATION_CONSENT_FIELD_MAP)
+        )
+        if apply_consent_filter and not allowed:
+            return VerificationRequestEducationClaimResponse()
+        return VerificationRequestEducationClaimResponse(
+            institution_name=education.institution_name if "education.institution_name" in allowed else None,
+            degree=education.degree if "education.degree" in allowed else None,
+            field_of_study=education.field_of_study if "education.field_of_study" in allowed else None,
+            start_date=education.start_date if "education.start_date" in allowed else None,
+            end_date=education.end_date if "education.end_date" in allowed else None,
+        )
+
+    def _filter_evidence_by_consent(
+        self,
+        request: VerificationRequest,
+        evidence_items: list[VerificationRequestEvidence],
+    ) -> list[VerificationRequestEvidence]:
+        allowed = {value.strip() for value in request.consented_evidence_scope or [] if value and value.strip()}
+        if not allowed:
+            return []
+        return [item for item in evidence_items if item.evidence_type in allowed or item.field_key in allowed]
 
     def _to_contact_response(self, contact: VerificationContact) -> VerificationContactResponse:
         return VerificationContactResponse(
