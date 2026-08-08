@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -23,11 +23,13 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDetailResponse,
     AdminReviewNoteResponse,
+    AdminReviewQueueItemResponse,
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
     AdminVerificationContactReviewRequest,
 )
+from app.schemas.pagination import ListQueryParams
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
     VerificationRequestEvidenceResponse,
@@ -40,6 +42,7 @@ from app.services.verification_request_admin_review_service import (
     normalize_contact_review_status,
     normalize_contact_type,
 )
+from app.services.verification_request_service import VerificationRequestService
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -70,6 +73,84 @@ def test_contact_review_status_queue_normalization(review_status, expected) -> N
 )
 def test_contact_type_detail_normalization(contact_type, expected) -> None:  # noqa: ANN001
     assert normalize_contact_type(contact_type) == expected
+
+
+def _verification_request_response(*, public_id: UUID | None = None) -> VerificationRequestResponse:
+    now = datetime.now(tz=UTC)
+    return VerificationRequestResponse(
+        public_id=public_id or uuid4(),
+        origin_type=VerificationRequestOriginType.SUBJECT_INITIATED,
+        organization_public_id=None,
+        trust_invitation_public_id=None,
+        subject_name="Candidate",
+        subject_email="candidate@example.com",
+        request_type=VerificationRequestType.EMPLOYMENT,
+        status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+        due_date=None,
+        trust_context={},
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_queue_serializes_reviewer_without_duplicate_response_field() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = SimpleNamespace(
+        id=uuid4(),
+        organization_id=None,
+        registry_resolution_state="unresolved",
+    )
+    service._get_required_request = AsyncMock(return_value=request)
+    service._reviews = SimpleNamespace(get_latest_review_for_request=AsyncMock(return_value=None))
+    service._users = SimpleNamespace(get_by_id=AsyncMock())
+    service._contacts = SimpleNamespace(get_current=AsyncMock(return_value=None))
+
+    result = await service._to_queue_item(_verification_request_response())
+
+    assert result.assigned_reviewer is None
+    assert result.organization_resolution_status == "unresolved"
+
+
+@pytest.mark.asyncio
+async def test_admin_queue_searches_request_public_id() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    response = _verification_request_response()
+    queue_item = AdminReviewQueueItemResponse(**response.model_dump())
+    service._requests = SimpleNamespace(list_by_status=AsyncMock(return_value=[SimpleNamespace()]))
+    service._to_request_response = AsyncMock(return_value=response)
+    service._to_queue_item = AsyncMock(return_value=queue_item)
+
+    result = await service.get_queue(
+        ListQueryParams(page=1, page_size=10, search=str(response.public_id)[:8])
+    )
+
+    assert result.total == 1
+    assert result.items == [queue_item]
+    service._to_request_response.assert_awaited_once()
+    service._to_queue_item.assert_awaited_once_with(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_response_projection_excludes_organization_private_fields() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._session = object()
+    request = SimpleNamespace()
+    response = _verification_request_response()
+
+    with patch.object(
+        VerificationRequestService,
+        "_to_response",
+        new=AsyncMock(return_value=response),
+    ) as to_response:
+        result = await service._to_request_response(request)
+
+    assert result == response
+    to_response.assert_awaited_once_with(
+        request,
+        viewer_user_id=None,
+        include_org_private=False,
+    )
 
 
 @pytest.mark.asyncio
