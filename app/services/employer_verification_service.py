@@ -7,7 +7,6 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.tokens import hash_refresh_token
@@ -18,34 +17,29 @@ from app.employment.enums import (
     VerificationMethod,
     VerificationStatus,
 )
-from app.employment.verification.state_machine import VerificationStatusManager
 from app.exceptions import (
     ActiveVerificationPipelineConflictError,
+    ConflictError,
     EmploymentCaseNotFoundError,
     EmploymentWorkflowError,
     ExpiredLinkError,
     NotFoundError,
-    ConflictError,
     ValidationAppError,
 )
-from app.integrations.email.employer_verification_pages import render_result_page, render_review_page
-from app.repositories.employment_document import EmploymentDocumentRepository
 from app.infrastructure.s3.presign import generate_presigned_get_url
+from app.integrations.email.employer_verification_pages import (
+    render_result_page,
+    render_review_page,
+)
 from app.integrations.email.sender import get_email_sender
 from app.models.employer_verification_request import EmployerVerificationRequest
-from app.models.employment_document import EmploymentDocument
+from app.notifications.contracts import NotificationRequest
 from app.repositories.employer_verification import EmployerVerificationRepository
 from app.repositories.employment import EmploymentRepository
+from app.repositories.employment_document import EmploymentDocumentRepository
 from app.repositories.verification_audit import VerificationAuditRepository
 from app.repositories.verification_request import VerificationRequestRepository
-from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
-from app.services.notification_service import NotificationService
-from app.notifications.contracts import NotificationRequest
-from app.verification_requests.enums import VerificationRequestEventSource, VerificationRequestStatus
 from app.schemas.employer_verification import (
-    EmployerVerificationRequestBody,
-    EmployerVerificationRequestResponse,
-    EmployerVerificationStatusResponse,
     AdminEmployerVerificationResponse,
     AdminEmployerVerificationSummary,
     EmployerDecisionBody,
@@ -56,8 +50,18 @@ from app.schemas.employer_verification import (
     EmployerPortalEvidence,
     EmployerPortalTimelineEvent,
     EmployerPortalWorkspace,
+    EmployerVerificationRequestBody,
+    EmployerVerificationRequestResponse,
+    EmployerVerificationStatusResponse,
     EmployerVerifyBody,
 )
+from app.services.notification_service import NotificationService
+from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.verification_requests.enums import (
+    VerificationRequestEventSource,
+    VerificationRequestStatus,
+)
+
 logger = logging.getLogger(__name__)
 
 _PIPELINE_BLOCKING_OTHERS: tuple[str, ...] = (
@@ -292,37 +296,31 @@ class EmployerVerificationService:
         decision: EmployerVerificationDecision,
     ) -> None:
         if request_row.verification_request_id is None:
-            return
+            raise ConflictError("Legacy unlinked verification requests cannot be finalized")
         request = await self._verification_requests.get_by_id(request_row.verification_request_id)
         if request is None:
-            return
-        if decision == EmployerVerificationDecision.CONFIRMED:
-            if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
-                await self._workflow.transition(
-                    request,
-                    target_status=VerificationRequestStatus.IN_PROGRESS,
-                    actor_user_id=None,
-                    event_type="hr_verified",
-                    event_source=VerificationRequestEventSource.ORGANIZATION,
-                    metadata={},
-                )
-            if request.status == VerificationRequestStatus.IN_PROGRESS:
-                await self._workflow.transition(
-                    request,
-                    target_status=VerificationRequestStatus.VERIFIED,
-                    actor_user_id=None,
-                    event_type="passport_updated",
-                    event_source=VerificationRequestEventSource.SYSTEM,
-                    metadata={"reason": "employment_verified"},
-                )
-        elif decision == EmployerVerificationDecision.DECLINED and request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+            raise ConflictError("Linked verification request no longer exists")
+        if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
             await self._workflow.transition(
                 request,
-                target_status=VerificationRequestStatus.REJECTED,
+                target_status=VerificationRequestStatus.IN_PROGRESS,
                 actor_user_id=None,
                 event_type="hr_verified",
                 event_source=VerificationRequestEventSource.ORGANIZATION,
                 metadata={"decision": decision.value},
+            )
+        if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
+            await self._workflow.transition(
+                request,
+                target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+                actor_user_id=None,
+                event_type="verification_response_received",
+                event_source=VerificationRequestEventSource.ORGANIZATION,
+                metadata={
+                    "verifier_outcome": "confirmed"
+                    if decision == EmployerVerificationDecision.CONFIRMED
+                    else "discrepancy",
+                },
             )
 
     async def get_portal_workspace(self, raw_token: str) -> EmployerPortalWorkspace:
@@ -484,14 +482,7 @@ class EmployerVerificationService:
         req.remarks = remarks
         req.response_metadata = metadata
 
-        if decision == EmployerVerificationDecision.CONFIRMED:
-            employment.verification_status = VerificationStatus.APPROVED.value
-            employment.reviewed_at = now
-            await self._session.execute(
-                sa_update(EmploymentDocument)
-                .where(EmploymentDocument.employment_id == employment.id)
-                .values(verification_status="approved", verified_at=now)
-            )
+        if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
             await self._workflow.transition(
                 request,
                 target_status=VerificationRequestStatus.IN_PROGRESS,
@@ -502,23 +493,16 @@ class EmployerVerificationService:
             )
             await self._workflow.transition(
                 request,
-                target_status=VerificationRequestStatus.VERIFIED,
+                target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
                 actor_user_id=None,
-                event_type="passport_updated",
-                event_source=VerificationRequestEventSource.SYSTEM,
-                metadata={"reason": "employment_verified"},
-            )
-            await self._notify_verification_completed(request, employment.employer_legal_name)
-        elif decision == EmployerVerificationDecision.DECLINED:
-            employment.verification_status = VerificationStatus.REJECTED.value
-            employment.reviewed_at = now
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.REJECTED,
-                actor_user_id=None,
-                event_type="hr_rejected",
+                event_type="verification_response_received",
                 event_source=VerificationRequestEventSource.ORGANIZATION,
-                metadata=metadata,
+                metadata={
+                    **metadata,
+                    "verifier_outcome": "confirmed"
+                    if decision == EmployerVerificationDecision.CONFIRMED
+                    else "discrepancy",
+                },
             )
         else:
             await self._workflow.transition(
@@ -593,103 +577,20 @@ class EmployerVerificationService:
 
     async def _respond(self, raw_token: str, *, decision: EmployerVerificationDecision) -> str:
         req = await self._load_by_token(raw_token)
-        employment = req.employment
-        now = datetime.now(tz=UTC)
-
-        if req.response != EmployerVerificationDecision.PENDING.value:
-            if req.response == decision.value:
-                title = "Already recorded"
-                message = (
-                    "Your response was already saved. No further action is needed."
-                )
-                return render_result_page(title=title, message=message, success=True)
-            title = "Link already used"
-            message = "This verification link has already been used with a different response."
-            return render_result_page(title=title, message=message, success=False)
-
-        if now > req.expires_at:
-            raise NotFoundError("This verification link has expired")
-
-        prev_status = employment.verification_status
-
-        if decision == EmployerVerificationDecision.CONFIRMED:
-            if VerificationStatus.SUBMITTED.value not in VerificationStatusManager.allowed_targets(
-                prev_status,
-                role="applicant",
-            ):
-                title = "Cannot verify"
-                message = "This employment case is no longer awaiting verification."
-                return render_result_page(title=title, message=message, success=False)
-
-            await self._assert_no_other_pipeline_case(employment)
-            employment.verification_status = VerificationStatus.SUBMITTED.value
-            employment.submitted_at = now
-            employment.verification_method = VerificationMethod.EMPLOYER_CONFIRMATION.value
-
-            req.response = EmployerVerificationDecision.CONFIRMED.value
-            req.responded_at = now
-
-            await self._session.execute(
-                sa_update(EmploymentDocument)
-                .where(EmploymentDocument.employment_id == employment.id)
-                .values(verification_status="approved")
-            )
-
-            await self._emit_audit(
-                employment_id=employment.id,
-                actor_user_id=None,
-                action=VerificationAuditAction.EMPLOYER_VERIFICATION_CONFIRMED,
-                previous_status=prev_status,
-                new_status=employment.verification_status,
-                metadata_payload={"verifier_email_domain": req.verifier_email.split("@")[-1]},
-            )
-            await self._emit_audit(
-                employment_id=employment.id,
-                actor_user_id=None,
-                action=VerificationAuditAction.EMPLOYMENT_SUBMITTED,
-                previous_status=prev_status,
-                new_status=employment.verification_status,
-                metadata_payload={"via": "employer_confirmation"},
-            )
-            await self._record_canonical_hr_result(req, decision)
-
-            await self._session.commit()
-            logger.info(
-                "employer_verification.confirmed",
-                extra={"employment_id": str(employment.id)},
-            )
+        if req.verification_request_id is None:
             return render_result_page(
-                title="Employment verified",
-                message="Thank you. The employment record has been submitted for review.",
-                success=True,
+                title="Verification unavailable",
+                message="This legacy verification link cannot finalize a Career record.",
+                success=False,
             )
-
-        req.response = EmployerVerificationDecision.DECLINED.value
-        req.responded_at = now
-
-        await self._session.execute(
-            sa_update(EmploymentDocument)
-            .where(EmploymentDocument.employment_id == employment.id)
-            .values(verification_status="rejected")
-        )
-
-        await self._emit_audit(
-            employment_id=employment.id,
-            actor_user_id=None,
-            action=VerificationAuditAction.EMPLOYER_VERIFICATION_DECLINED,
-            previous_status=prev_status,
-            new_status=employment.verification_status,
-            metadata_payload={"verifier_email_domain": req.verifier_email.split("@")[-1]},
-        )
-        await self._record_canonical_hr_result(req, decision)
-        await self._session.commit()
-        logger.info(
-            "employer_verification.declined",
-            extra={"employment_id": str(employment.id)},
-        )
+        response = await self._respond_portal(raw_token, decision, remarks=None, metadata={})
         return render_result_page(
             title="Response recorded",
-            message="You indicated this person was not employed as described. The applicant has been notified.",
+            message=(
+                "Thank you. Your response is awaiting Kairo's final quality review."
+                if not response.idempotent
+                else "Your response was already recorded."
+            ),
             success=True,
         )
 
@@ -746,7 +647,9 @@ class EmployerVerificationService:
         try:
             decision = EmployerVerificationDecision(action)
         except ValueError:
-            from app.integrations.email.employer_verification_pages import render_result_page as _render
+            from app.integrations.email.employer_verification_pages import (
+                render_result_page as _render,
+            )
             return _render(
                 title="Invalid action",
                 message="The action you submitted is not recognised. Please use the form buttons.",
@@ -770,89 +673,22 @@ class EmployerVerificationService:
         remarks: str | None,
     ) -> str:
         req = await self._load_by_token(raw_token)
-        employment = req.employment
-        now = datetime.now(tz=UTC)
-
-        if req.response != EmployerVerificationDecision.PENDING.value:
-            label = {"confirmed": "Approved", "declined": "Declined", "on_hold": "On Hold"}.get(
-                req.response, "responded"
-            )
+        if req.verification_request_id is None:
             return render_result_page(
-                title="Already responded",
-                message=f"Your response ({label}) has already been recorded. No further action needed.",
-                success=True,
+                title="Verification unavailable",
+                message="This legacy verification link cannot finalize a Career record.",
+                success=False,
             )
-
-        if now > req.expires_at:
-            raise NotFoundError("This verification link has expired")
-
-        prev_status = employment.verification_status
-        req.response = decision.value
-        req.responded_at = now
-        req.remarks = remarks or None
-
-        if decision == EmployerVerificationDecision.CONFIRMED:
-            if VerificationStatus.SUBMITTED.value not in VerificationStatusManager.allowed_targets(
-                prev_status, role="applicant"
-            ):
-                return render_result_page(
-                    title="Cannot verify",
-                    message="This employment case is no longer awaiting verification.",
-                    success=False,
-                )
-            employment.verification_status = VerificationStatus.SUBMITTED.value
-            employment.submitted_at = now
-            employment.verification_method = VerificationMethod.EMPLOYER_CONFIRMATION.value
-
-            await self._emit_audit(
-                employment_id=employment.id,
-                actor_user_id=None,
-                action=VerificationAuditAction.EMPLOYER_VERIFICATION_CONFIRMED,
-                previous_status=prev_status,
-                new_status=employment.verification_status,
-                metadata_payload={"verifier_email_domain": req.verifier_email.split("@")[-1]},
-            )
-            await self._emit_audit(
-                employment_id=employment.id,
-                actor_user_id=None,
-                action=VerificationAuditAction.EMPLOYMENT_SUBMITTED,
-                previous_status=prev_status,
-                new_status=employment.verification_status,
-                metadata_payload={"via": "employer_confirmation"},
-            )
-            await self._record_canonical_hr_result(req, decision)
-            await self._session.commit()
-            logger.info("employer_verification.confirmed", extra={"employment_id": str(employment.id)})
-            return render_result_page(
-                title="Employment verified",
-                message="Thank you. The employment record has been submitted for review.",
-                success=True,
-            )
-
-        if decision == EmployerVerificationDecision.ON_HOLD:
-            audit_action = VerificationAuditAction.EMPLOYER_VERIFICATION_HELD
-            result_title = "Placed on hold"
-            result_message = "Your response has been recorded. The applicant will be notified."
-        else:
-            audit_action = VerificationAuditAction.EMPLOYER_VERIFICATION_DECLINED
-            result_title = "Response recorded"
-            result_message = "You indicated this person was not employed as described. The applicant has been notified."
-
-        await self._emit_audit(
-            employment_id=employment.id,
-            actor_user_id=None,
-            action=audit_action,
-            previous_status=prev_status,
-            new_status=employment.verification_status,
-            metadata_payload={"verifier_email_domain": req.verifier_email.split("@")[-1]},
+        response = await self._respond_portal(raw_token, decision, remarks=remarks, metadata={})
+        return render_result_page(
+            title="Response recorded",
+            message=(
+                "Thank you. Your response is awaiting Kairo's final quality review."
+                if not response.idempotent
+                else "Your response was already recorded."
+            ),
+            success=True,
         )
-        await self._record_canonical_hr_result(req, decision)
-        await self._session.commit()
-        logger.info(
-            f"employer_verification.{decision.value}",
-            extra={"employment_id": str(employment.id)},
-        )
-        return render_result_page(title=result_title, message=result_message, success=True)
 
     @staticmethod
     def status_from_request(req: EmployerVerificationRequest | None) -> EmployerVerificationStatusResponse | None:

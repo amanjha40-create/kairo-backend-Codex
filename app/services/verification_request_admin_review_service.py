@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -13,62 +14,74 @@ from app.admin_review.enums import (
     VerificationReviewCorrectionStatus,
     VerificationReviewNoteVisibility,
 )
+from app.config import Settings, get_settings
 from app.core.permissions import Permission, has_permission
+from app.education.enums import EducationVerificationStatus
+from app.employment.enums import VerificationStatus
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
-from app.repositories.organization import OrganizationRepository
+from app.notifications.contracts import NotificationRequest
+from app.repositories.education import EducationRepository
+from app.repositories.employer_verification import EmployerVerificationRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
-from app.repositories.employer_verification import EmployerVerificationRepository
+from app.repositories.organization import OrganizationRepository
 from app.repositories.trust_registry import TrustRegistryRepository
 from app.repositories.user import UserRepository
+from app.repositories.verification_contact import VerificationContactRepository
 from app.repositories.verification_request import VerificationRequestRepository
 from app.repositories.verification_request_evidence import VerificationRequestEvidenceRepository
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
-from app.repositories.verification_contact import VerificationContactRepository
-from app.services.employer_verification_service import EmployerVerificationService
-from app.config import Settings, get_settings
-from app.schemas.employer_verification import EmployerVerificationRequestBody
-from app.verification_requests.enums import VerificationContactReviewStatus, VerificationContactType
-from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.admin_review_workflow import (
+    AdminEvidenceDownloadResponse,
+    AdminOrganizationResolutionResponse,
+    AdminRegistryResolutionResponse,
     AdminReviewAssignRequest,
-    AdminReviewCorrectionRequest,
     AdminReviewClarificationResponseRequest,
+    AdminReviewCorrectionRequest,
     AdminReviewCycleResponse,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
-    AdminEvidenceDownloadResponse,
-    AdminReviewEvidenceResponse,
-    AdminReviewInternalNoteResponse,
-    AdminReviewQueueItemResponse,
     AdminReviewerSummary,
-    AdminOrganizationResolutionResponse,
-    AdminRegistryResolutionResponse,
-    AdminVerificationContactResponse,
+    AdminReviewEvidenceResponse,
+    AdminReviewFinalizationRequest,
+    AdminReviewInternalNoteResponse,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
     AdminReviewOrganizationResolutionRequest,
     AdminReviewPriorityRequest,
+    AdminReviewQueueItemResponse,
     AdminReviewQueueResponse,
     AdminReviewTimelineResponse,
     AdminReviewUnableToVerifyRequest,
     AdminReviewWorkflowEnvelope,
+    AdminVerificationContactResponse,
     AdminVerificationContactReviewRequest,
 )
+from app.schemas.employer_verification import EmployerVerificationRequestBody
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.verification_request import (
+    VerificationContactResponse,
     VerificationRequestCorrectionResponse,
     VerificationRequestEvidenceResponse,
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
-    VerificationContactResponse,
 )
+from app.services.employer_verification_service import EmployerVerificationService
+from app.services.notification_service import NotificationService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
-from app.verification_requests.enums import VerificationRequestEventSource, VerificationRequestStatus
+from app.verification_requests.enums import (
+    VerificationContactReviewStatus,
+    VerificationContactType,
+    VerificationRequestEventSource,
+    VerificationRequestStatus,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_contact_review_status(
@@ -89,6 +102,7 @@ class VerificationRequestAdminReviewService:
         self._requests = VerificationRequestRepository(session)
         self._organizations = OrganizationRepository(session)
         self._employments = EmploymentRepository(session)
+        self._educations = EducationRepository(session)
         self._employment_documents = EmploymentDocumentRepository(session)
         self._employer_verifications = EmployerVerificationRepository(session)
         self._registry = TrustRegistryRepository(session)
@@ -99,6 +113,7 @@ class VerificationRequestAdminReviewService:
         self._settings = settings or get_settings()
         self._employer_outreach = EmployerVerificationService(session, self._settings)
         self._workflow = VerificationRequestWorkflowService(self._requests)
+        self._notifications = NotificationService(session, self._settings)
 
     async def get_queue(
         self,
@@ -109,6 +124,7 @@ class VerificationRequestAdminReviewService:
             [
                 VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
                 VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
+                VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW.value,
             ]
         )
         responses = [self._to_request_response(item) for item in items]
@@ -425,7 +441,7 @@ class VerificationRequestAdminReviewService:
         verification_request_public_id: UUID,
         payload: AdminReviewDecisionRequest,
     ) -> VerificationRequestResponse:
-        request = await self._require_admin_reviewable_request(verification_request_public_id)
+        request = await self._require_admin_dispatch_review_request(verification_request_public_id)
         review = await self._get_or_create_review(request, actor_user_id)
         review.review_status = VerificationRequestReviewStatus.APPROVED
         review.decision_by_user_id = actor_user_id
@@ -497,26 +513,23 @@ class VerificationRequestAdminReviewService:
         verification_request_public_id: UUID,
         payload: AdminReviewDecisionRequest,
     ) -> VerificationRequestResponse:
-        request = await self._require_admin_reviewable_request(verification_request_public_id)
-        review = await self._get_or_create_review(request, actor_user_id)
-        review.review_status = VerificationRequestReviewStatus.REJECTED
-        review.decision_by_user_id = actor_user_id
-        review.decision_at = datetime.now(tz=UTC)
-        review.decision_summary = payload.decision_summary
-
-        await self._workflow.transition(
-            request,
-            target_status=VerificationRequestStatus.REJECTED,
-            actor_user_id=actor_user_id,
-            event_type="verification_request_admin_rejected",
-            event_source=VerificationRequestEventSource.ADMIN,
-            metadata={"decision_summary": payload.decision_summary},
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status in {
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+        }:
+            return await self._close_pre_dispatch_request(
+                request,
+                actor_user_id,
+                target_status=VerificationRequestStatus.REJECTED,
+                decision_summary=payload.decision_summary,
+            )
+        return await self._finalize_request(
+            actor_user_id,
+            verification_request_public_id,
+            outcome="rejected",
+            decision_summary=payload.decision_summary,
         )
-        await self._session.commit()
-        refreshed = await self._requests.get_by_public_id(request.public_id)
-        if refreshed is None:
-            raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
 
     async def unable_to_verify(
         self,
@@ -524,25 +537,80 @@ class VerificationRequestAdminReviewService:
         verification_request_public_id: UUID,
         payload: AdminReviewUnableToVerifyRequest,
     ) -> VerificationRequestResponse:
-        request = await self._require_admin_reviewable_request(verification_request_public_id)
-        review = await self._get_or_create_review(request, actor_user_id)
-        review.review_status = VerificationRequestReviewStatus.REJECTED
-        review.decision_by_user_id = actor_user_id
-        review.decision_at = datetime.now(tz=UTC)
-        review.decision_summary = payload.decision_summary
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status in {
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+        }:
+            return await self._close_pre_dispatch_request(
+                request,
+                actor_user_id,
+                target_status=VerificationRequestStatus.UNABLE_TO_VERIFY,
+                decision_summary=payload.decision_summary,
+            )
+        return await self._finalize_request(
+            actor_user_id,
+            verification_request_public_id,
+            outcome="unable_to_verify",
+            decision_summary=payload.decision_summary,
+        )
+
+    async def finalize(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewFinalizationRequest,
+    ) -> VerificationRequestResponse:
+        return await self._finalize_request(
+            actor_user_id,
+            verification_request_public_id,
+            outcome=payload.outcome,
+            decision_summary=payload.decision_summary,
+        )
+
+    async def return_to_verifier(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewDecisionRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._require_admin_quality_review_request(verification_request_public_id)
         await self._workflow.transition(
             request,
-            target_status=VerificationRequestStatus.REJECTED,
+            target_status=VerificationRequestStatus.IN_PROGRESS,
             actor_user_id=actor_user_id,
-            event_type="verification_request_admin_unable_to_verify",
+            event_type="admin_returned_to_verifier",
             event_source=VerificationRequestEventSource.ADMIN,
-            metadata={"decision_summary": payload.decision_summary, "outcome": "unable_to_verify"},
+            metadata={"decision_summary": payload.decision_summary},
         )
         await self._session.commit()
-        refreshed = await self._requests.get_by_public_id(request.public_id)
-        if refreshed is None:
-            raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return self._to_request_response(request)
+
+    async def cancel(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewDecisionRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status in {
+            VerificationRequestStatus.VERIFIED,
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.UNABLE_TO_VERIFY,
+            VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.EXPIRED,
+        }:
+            raise ConflictError("Verification request is already closed")
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.CANCELLED,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_admin_cancelled",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"decision_summary": payload.decision_summary},
+        )
+        await self._session.commit()
+        return self._to_request_response(request)
 
     async def record_clarification_response(
         self,
@@ -671,13 +739,179 @@ class VerificationRequestAdminReviewService:
             )
         )
 
+    async def _finalize_request(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        *,
+        outcome: str,
+        decision_summary: str,
+    ) -> VerificationRequestResponse:
+        target_status = {
+            "verified": VerificationRequestStatus.VERIFIED,
+            "rejected": VerificationRequestStatus.REJECTED,
+            "unable_to_verify": VerificationRequestStatus.UNABLE_TO_VERIFY,
+        }[outcome]
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status == target_status:
+            return self._to_request_response(request)
+        if request.status != VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW:
+            raise ConflictError("Verification request is not awaiting final quality review")
+
+        await self._require_linked_canonical_claim(request)
+        review = await self._get_or_create_review(request, actor_user_id)
+        review.review_status = (
+            VerificationRequestReviewStatus.APPROVED
+            if outcome == "verified"
+            else VerificationRequestReviewStatus.REJECTED
+        )
+        review.decision_by_user_id = actor_user_id
+        review.decision_at = datetime.now(tz=UTC)
+        review.decision_summary = decision_summary
+        await self._workflow.transition(
+            request,
+            target_status=target_status,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_admin_finalized",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"decision_summary": decision_summary, "outcome": outcome},
+        )
+        await self._apply_canonical_outcome(request, actor_user_id, outcome, decision_summary)
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="trust_score_recalculation_requested",
+            event_source=VerificationRequestEventSource.SYSTEM,
+            metadata={"outcome": outcome},
+        )
+        await self._session.commit()
+        await self._notify_finalization(request, actor_user_id, outcome)
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return self._to_request_response(refreshed)
+
+    async def _close_pre_dispatch_request(
+        self,
+        request,
+        actor_user_id: UUID,
+        *,
+        target_status: VerificationRequestStatus,
+        decision_summary: str,
+    ) -> VerificationRequestResponse:  # noqa: ANN001
+        review = await self._get_or_create_review(request, actor_user_id)
+        review.review_status = VerificationRequestReviewStatus.REJECTED
+        review.decision_by_user_id = actor_user_id
+        review.decision_at = datetime.now(tz=UTC)
+        review.decision_summary = decision_summary
+        await self._workflow.transition(
+            request,
+            target_status=target_status,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_admin_pre_dispatch_closed",
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={"decision_summary": decision_summary, "pre_dispatch": True},
+        )
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return self._to_request_response(refreshed)
+
+    async def _require_linked_canonical_claim(self, request) -> None:  # noqa: ANN001
+        linked_count = int(request.employment_id is not None) + int(request.education_id is not None)
+        if linked_count != 1:
+            raise ConflictError("Legacy unlinked verification requests cannot be finalized")
+        request_type = getattr(request.request_type, "value", request.request_type)
+        if request_type not in {"employment", "education"}:
+            raise ConflictError("Only employment and education requests can finalize Career claims")
+        if request_type == "employment" and request.employment_id is None:
+            raise ConflictError("Employment verification request is not linked to an employment")
+        if request_type == "education" and request.education_id is None:
+            raise ConflictError("Education verification request is not linked to an education")
+
+    async def _apply_canonical_outcome(
+        self,
+        request,
+        actor_user_id: UUID,
+        outcome: str,
+        decision_summary: str,
+    ) -> None:  # noqa: ANN001
+        if request.employment_id is not None:
+            employment = await self._employments.get_active_by_id(request.employment_id)
+            if employment is None or employment.created_by_user_id != request.subject_user_id:
+                raise ConflictError("Linked employment is not owned by the verification subject")
+            employment.verification_status = {
+                "verified": VerificationStatus.APPROVED.value,
+                "rejected": VerificationStatus.REJECTED.value,
+                "unable_to_verify": VerificationStatus.UNABLE_TO_VERIFY.value,
+            }[outcome]
+            employment.reviewed_at = datetime.now(tz=UTC)
+            employment.reviewed_by_user_id = actor_user_id
+            employment.reviewer_summary = decision_summary
+            return
+        education = await self._educations.get_active_by_id(request.education_id)
+        if education is None or education.user_id != request.subject_user_id:
+            raise ConflictError("Linked education is not owned by the verification subject")
+        education.verification_status = {
+            "verified": EducationVerificationStatus.VERIFIED.value,
+            "rejected": EducationVerificationStatus.REJECTED.value,
+            "unable_to_verify": EducationVerificationStatus.UNABLE_TO_VERIFY.value,
+        }[outcome]
+        education.reviewed_at = datetime.now(tz=UTC)
+        education.reviewed_by_user_id = actor_user_id
+        education.reviewer_note = decision_summary
+
+    async def _notify_finalization(self, request, actor_user_id: UUID, outcome: str) -> None:  # noqa: ANN001
+        recipients = [(request.subject_user_id, request.subject_email, "candidate")]
+        for event in reversed(await self._requests.list_timeline(request.id)):
+            if event.event_source == VerificationRequestEventSource.ORGANIZATION and event.actor_user_id:
+                verifier = await self._users.get_by_id(event.actor_user_id)
+                if verifier is not None:
+                    recipients.append((verifier.id, verifier.email, "verifier"))
+                break
+        for recipient_user_id, recipient_email, audience in recipients:
+            try:
+                await self._notifications.create_and_dispatch(
+                    NotificationRequest(
+                        event_type="verification_completed",
+                        recipient_user_id=recipient_user_id,
+                        recipient_email=recipient_email,
+                        dedupe_key=f"verification-final:{request.public_id}:{outcome}:{audience}",
+                        payload={
+                            "verification_request_public_id": str(request.public_id),
+                            "request_type": request.request_type.value,
+                            "outcome": outcome,
+                        },
+                    ),
+                    actor_user_id=actor_user_id,
+                )
+            except Exception:
+                logger.warning(
+                    "verification_finalization_notification_failed",
+                    extra={"verification_request_public_id": str(request.public_id), "audience": audience},
+                )
+
     async def _require_admin_reviewable_request(self, verification_request_public_id: UUID):
         request = await self._get_required_request(verification_request_public_id)
         if request.status not in {
             VerificationRequestStatus.PENDING_ADMIN_REVIEW,
             VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+            VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
         }:
             raise ConflictError("Verification request is not awaiting admin review")
+        return request
+
+    async def _require_admin_dispatch_review_request(self, verification_request_public_id: UUID):
+        request = await self._require_admin_reviewable_request(verification_request_public_id)
+        if request.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW:
+            raise ConflictError("Verification request is awaiting final quality review")
+        return request
+
+    async def _require_admin_quality_review_request(self, verification_request_public_id: UUID):
+        request = await self._get_required_request(verification_request_public_id)
+        if request.status != VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW:
+            raise ConflictError("Verification request is not awaiting final quality review")
         return request
 
     async def _get_required_request(self, verification_request_public_id: UUID):

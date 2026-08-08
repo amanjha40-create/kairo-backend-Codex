@@ -54,8 +54,10 @@ class VerificationRequestStatus(StrEnum):
     PENDING_ORGANIZATION_ACCEPTANCE = "pending_organization_acceptance"
     IN_PROGRESS = "in_progress"
     AWAITING_INFORMATION = "awaiting_information"
+    PENDING_ADMIN_QUALITY_REVIEW = "pending_admin_quality_review"
     VERIFIED = "verified"
     REJECTED = "rejected"
+    UNABLE_TO_VERIFY = "unable_to_verify"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
 

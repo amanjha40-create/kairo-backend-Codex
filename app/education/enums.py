@@ -37,3 +37,4 @@ class EducationVerificationStatus(StrEnum):
     UNDER_REVIEW = "under_review"
     VERIFIED = "verified"
     REJECTED = "rejected"
+    UNABLE_TO_VERIFY = "unable_to_verify"

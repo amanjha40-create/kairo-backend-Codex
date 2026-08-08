@@ -19,11 +19,6 @@ from app.admin_review.enums import (
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_verification_request_admin_review_service
 from app.main import app
-from app.services.verification_request_admin_review_service import (
-    VerificationRequestAdminReviewService,
-    normalize_contact_review_status,
-    normalize_contact_type,
-)
 from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDetailResponse,
@@ -39,6 +34,11 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
+)
+from app.services.verification_request_admin_review_service import (
+    VerificationRequestAdminReviewService,
+    normalize_contact_review_status,
+    normalize_contact_type,
 )
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
@@ -223,11 +223,20 @@ class FakeVerificationRequestAdminReviewService:
     async def approve(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION)
 
+    async def finalize(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        return self._request_response(status=VerificationRequestStatus.VERIFIED)
+
+    async def return_to_verifier(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        return self._request_response(status=VerificationRequestStatus.IN_PROGRESS)
+
+    async def cancel(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        return self._request_response(status=VerificationRequestStatus.CANCELLED)
+
     async def reject(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.REJECTED)
 
     async def unable_to_verify(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
-        return self._request_response(status=VerificationRequestStatus.REJECTED)
+        return self._request_response(status=VerificationRequestStatus.UNABLE_TO_VERIFY)
 
     async def record_clarification_response(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.IN_PROGRESS)
@@ -352,7 +361,7 @@ async def test_assign_is_forbidden_for_hr() -> None:
 
 @pytest.mark.asyncio
 async def test_request_corrections_updates_request_status() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
     app.dependency_overrides[get_verification_request_admin_review_service] = (
         lambda: FakeVerificationRequestAdminReviewService()
     )
@@ -382,7 +391,7 @@ async def test_request_corrections_updates_request_status() -> None:
 
 @pytest.mark.asyncio
 async def test_approve_returns_approved_for_organization_verification() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
     app.dependency_overrides[get_verification_request_admin_review_service] = (
         lambda: FakeVerificationRequestAdminReviewService()
     )
@@ -402,7 +411,7 @@ async def test_approve_returns_approved_for_organization_verification() -> None:
 
 @pytest.mark.asyncio
 async def test_unable_to_verify_is_available_to_reviewer() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
     app.dependency_overrides[get_verification_request_admin_review_service] = lambda: (
         FakeVerificationRequestAdminReviewService()
     )
@@ -416,12 +425,12 @@ async def test_unable_to_verify_is_available_to_reviewer() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["status"] == "rejected"
+    assert response.json()["status"] == "unable_to_verify"
 
 
 @pytest.mark.asyncio
 async def test_clarification_response_recording_returns_in_progress() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
     app.dependency_overrides[get_verification_request_admin_review_service] = lambda: (
         FakeVerificationRequestAdminReviewService()
     )
@@ -458,7 +467,7 @@ async def test_priority_change_is_restricted_to_admin_manager() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_organization_returns_pending_organization_acceptance() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
     app.dependency_overrides[get_verification_request_admin_review_service] = (
         lambda: FakeVerificationRequestAdminReviewService()
     )
@@ -475,6 +484,49 @@ async def test_resolve_organization_returns_pending_organization_acceptance() ->
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "pending_organization_acceptance"
+
+
+@pytest.mark.asyncio
+async def test_hr_cannot_dispatch_or_finalize_verification() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        approve_response = await client.post(
+            f"/api/v1/admin/verification-requests/{request_public_id}/approve",
+            json={"decision_summary": "Ready for outreach."},
+        )
+        finalize_response = await client.post(
+            f"/api/v1/admin/verification-requests/{request_public_id}/finalize",
+            json={"outcome": "verified", "decision_summary": "Confirmed by the verifier."},
+        )
+
+    app.dependency_overrides.clear()
+    assert approve_response.status_code == 403
+    assert finalize_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_can_finalize_verification() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{uuid4()}/finalize",
+            json={"outcome": "verified", "decision_summary": "Confirmed by the verifier."},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "verified"
 
 
 @pytest.mark.asyncio

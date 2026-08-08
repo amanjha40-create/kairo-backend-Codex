@@ -23,7 +23,6 @@ from app.models.user import User
 from app.models.verification_contact import VerificationContact
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_evidence import VerificationRequestEvidence
-from app.notifications.contracts import NotificationRequest
 from app.repositories.education import EducationDocumentRepository, EducationRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
@@ -88,6 +87,13 @@ def is_private_organization_event(event_type: str, metadata: dict | None) -> boo
     } or (metadata or {}).get("visibility") == "organization_internal"
 
 logger = logging.getLogger(__name__)
+
+
+_ORGANIZATION_VISIBLE_STATUSES = {
+    VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+    VerificationRequestStatus.IN_PROGRESS,
+    VerificationRequestStatus.AWAITING_INFORMATION,
+}
 
 
 class VerificationRequestService:
@@ -476,7 +482,11 @@ class VerificationRequestService:
         params: ListQueryParams | None = None,
     ) -> list[VerificationRequestResponse] | Page[VerificationRequestResponse]:
         organization = await self._require_organization_member(actor_user_id, organization_public_id, require_active=True)
-        items = await self._requests.list_for_organization(organization.id)
+        items = [
+            item
+            for item in await self._requests.list_for_organization(organization.id)
+            if item.status in _ORGANIZATION_VISIBLE_STATUSES
+        ]
         responses = [await self._to_org_response(item, actor_user_id) for item in items]
         if params is None:
             return responses
@@ -494,6 +504,7 @@ class VerificationRequestService:
             verification_request_public_id=verification_request_public_id,
         )
         if membership is not None:
+            self._require_organization_visibility(request)
             return await self._to_org_response(request, actor_user_id)
         if is_subject:
             return await self._to_subject_response(request)
@@ -982,66 +993,25 @@ class VerificationRequestService:
             **self._merge_note_metadata(payload),
             **connector_metadata,
         }
-        if result.status == VerificationConnectorResultStatus.VERIFIED.value:
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.VERIFIED,
-                actor_user_id=actor_user_id,
-                event_type="verification_request_verified",
-                event_source=VerificationRequestEventSource.ORGANIZATION,
-                metadata=final_metadata,
-            )
-            await self._sync_linked_education_status(
-                request,
-                EducationVerificationStatus.VERIFIED.value,
-            )
-            try:
-                await self._notifications.create_and_dispatch(
-                    NotificationRequest(
-                        event_type="verification_completed",
-                        recipient_user_id=request.subject_user_id,
-                        recipient_email=request.subject_email,
-                        payload={
-                            "subject_name": request.subject_name,
-                            "organization_name": self._organization_name(request),
-                            "request_type": request.request_type.value,
-                            "completed_at_iso": datetime.now(tz=UTC).isoformat(),
-                        },
-                        metadata={
-                            "verification_request_public_id": str(request.public_id),
-                            "organization_public_id": str(request.organization.public_id)
-                            if request.organization is not None
-                            else None,
-                            "connector_run_public_id": str(run.public_id),
-                        },
-                    ),
-                    actor_user_id=actor_user_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "verification_completion_notification_failed",
-                    extra={
-                        "event": "verification_completion_notification_failed",
-                        "verification_request_public_id": str(request.public_id),
-                        "error_type": type(exc).__name__,
-                    },
-                )
-        elif result.status == VerificationConnectorResultStatus.FAILED.value:
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.REJECTED,
-                actor_user_id=actor_user_id,
-                event_type="verification_request_rejected",
-                event_source=VerificationRequestEventSource.ORGANIZATION,
-                metadata=final_metadata,
-            )
-            await self._sync_linked_education_status(
-                request,
-                EducationVerificationStatus.REJECTED.value,
-            )
-        else:
+        if result.status not in {
+            VerificationConnectorResultStatus.VERIFIED.value,
+            VerificationConnectorResultStatus.FAILED.value,
+        }:
             await self._session.commit()
             raise ServiceUnavailableError("Verification connector is unavailable")
+        final_metadata["verifier_outcome"] = (
+            "confirmed"
+            if result.status == VerificationConnectorResultStatus.VERIFIED.value
+            else "discrepancy"
+        )
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+            actor_user_id=actor_user_id,
+            event_type="verification_response_received",
+            event_source=VerificationRequestEventSource.ORGANIZATION,
+            metadata=final_metadata,
+        )
         return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def reject(
@@ -1063,15 +1033,38 @@ class VerificationRequestService:
         )
         await self._workflow.transition(
             request,
-            target_status=VerificationRequestStatus.REJECTED,
+            target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
             actor_user_id=actor_user_id,
-            event_type="verification_request_rejected",
+            event_type="verification_response_received",
             event_source=VerificationRequestEventSource.ORGANIZATION,
-            metadata=self._merge_note_metadata(payload),
+            metadata={**self._merge_note_metadata(payload), "verifier_outcome": "discrepancy"},
         )
-        await self._sync_linked_education_status(
+        return await self._commit_reload_org_response(request.public_id, actor_user_id)
+
+    async def unable_to_verify(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: VerificationRequestActionPayload,
+    ) -> VerificationRequestResponse:
+        request = await self._require_manageable_request(actor_user_id, verification_request_public_id)
+        await self._transition_to_in_progress_if_needed(
             request,
-            EducationVerificationStatus.REJECTED.value,
+            actor_user_id,
+            payload.metadata,
+            allowed_current_statuses={
+                VerificationRequestStatus.ACCEPTED,
+                VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+                VerificationRequestStatus.AWAITING_INFORMATION,
+            },
+        )
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+            actor_user_id=actor_user_id,
+            event_type="verification_response_received",
+            event_source=VerificationRequestEventSource.ORGANIZATION,
+            metadata={**self._merge_note_metadata(payload), "verifier_outcome": "unable_to_verify"},
         )
         return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
@@ -1265,6 +1258,7 @@ class VerificationRequestService:
             request.organization.suspended_at if request.organization is not None else None,
             membership,
         )
+        self._require_organization_visibility(request)
         return request
 
     async def _require_subject_request(
@@ -1317,6 +1311,7 @@ class VerificationRequestService:
                     request.organization.suspended_at if request.organization is not None else None,
                     membership,
                 )
+            self._require_organization_visibility(request)
             return request, membership, False
         if self._is_subject_actor(request, actor_user_id, actor_email):
             return request, None, True
@@ -1386,16 +1381,10 @@ class VerificationRequestService:
         if existing is not None and existing.public_id != exclude_evidence_public_id:
             raise ConflictError("Education document is already attached as evidence")
 
-    async def _sync_linked_education_status(
-        self,
-        request: VerificationRequest,
-        status: str,
-    ) -> None:
-        if request.education_id is None:
-            return
-        education = await self._educations.get_active_by_id(request.education_id)
-        if education is not None:
-            education.verification_status = status
+    @staticmethod
+    def _require_organization_visibility(request: VerificationRequest) -> None:
+        if request.status not in _ORGANIZATION_VISIBLE_STATUSES:
+            raise NotFoundError("Verification request not found")
 
     async def _get_membership_for_request(
         self,

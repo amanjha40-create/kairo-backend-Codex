@@ -9,12 +9,15 @@ import pytest
 
 from app.exceptions import ServiceUnavailableError
 from app.models.organization import Organization
-from app.notifications.contracts import NotificationRequest
 from app.models.verification_connector import VerificationConnector
 from app.models.verification_connector_run import VerificationConnectorRun
 from app.models.verification_request import VerificationRequest
+from app.notifications.contracts import NotificationRequest
 from app.schemas.verification_connector import VerificationConnectorResult
-from app.schemas.verification_request import VerificationRequestActionPayload, VerificationRequestResponse
+from app.schemas.verification_request import (
+    VerificationRequestActionPayload,
+    VerificationRequestResponse,
+)
 from app.services.verification_request_service import VerificationRequestService
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
@@ -165,7 +168,7 @@ class FakeNotificationService:
 
 
 @pytest.mark.asyncio
-async def test_verify_uses_connector_and_marks_request_verified() -> None:
+async def test_verify_uses_connector_and_routes_result_to_admin_quality_review() -> None:
     session = FakeSession()
     request = _build_request()
     connector = _build_connector()
@@ -208,16 +211,14 @@ async def test_verify_uses_connector_and_marks_request_verified() -> None:
 
     assert service._connector_selector.called is True  # type: ignore[attr-defined]
     assert service._connector_executor.called is True  # type: ignore[attr-defined]
-    assert response.status == VerificationRequestStatus.VERIFIED
-    assert len(notifications.calls) == 1
-    assert notifications.calls[0].event_type == "verification_completed"
-    assert notifications.calls[0].recipient_email == "aman3@test.com"
+    assert response.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW
+    assert notifications.calls == []
     assert any(event[0] == "verification_connector_selected" for event in service._workflow.events)  # type: ignore[attr-defined]
-    assert any(event[0] == "verification_request_verified" for event in service._workflow.events)  # type: ignore[attr-defined]
+    assert any(event[0] == "verification_response_received" for event in service._workflow.events)  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
-async def test_verify_marks_request_rejected_for_negative_connector_result() -> None:
+async def test_verify_routes_negative_connector_result_to_admin_quality_review() -> None:
     session = FakeSession()
     request = _build_request()
     connector = _build_connector()
@@ -258,9 +259,9 @@ async def test_verify_marks_request_rejected_for_negative_connector_result() -> 
         payload=VerificationRequestActionPayload(note=None, metadata={"connector_mode": "failed"}),
     )
 
-    assert response.status == VerificationRequestStatus.REJECTED
+    assert response.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW
     assert notifications.calls == []
-    assert any(event[0] == "verification_request_rejected" for event in service._workflow.events)  # type: ignore[attr-defined]
+    assert any(event[0] == "verification_response_received" for event in service._workflow.events)  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -297,7 +298,7 @@ async def test_verify_preserves_fail_closed_behavior_for_unavailable_connector()
 
 
 @pytest.mark.asyncio
-async def test_verify_survives_notification_delivery_failure() -> None:
+async def test_verify_does_not_notify_before_final_admin_review() -> None:
     session = FakeSession()
     request = _build_request()
     connector = _build_connector()
@@ -338,5 +339,5 @@ async def test_verify_survives_notification_delivery_failure() -> None:
         payload=VerificationRequestActionPayload(note="Verified", metadata={}),
     )
 
-    assert response.status == VerificationRequestStatus.VERIFIED
-    assert len(notifications.calls) == 1
+    assert response.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW
+    assert notifications.calls == []

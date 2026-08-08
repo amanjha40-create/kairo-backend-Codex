@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,14 +13,14 @@ from app.admin_review.enums import (
     VerificationReviewNoteType,
     VerificationReviewNoteVisibility,
 )
+from app.schemas.employment.responses import EmploymentResponse
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
     VerificationRequestEvidenceResponse,
+    VerificationRequestPriorityRequest,
     VerificationRequestResponse,
     VerificationRequestTimelineResponse,
 )
-from app.schemas.verification_request import VerificationRequestPriorityRequest
-from app.schemas.employment.responses import EmploymentResponse
 from app.verification_requests.enums import VerificationContactReviewStatus
 
 
@@ -136,6 +137,10 @@ class AdminReviewDecisionRequest(BaseModel):
 
 class AdminReviewUnableToVerifyRequest(AdminReviewDecisionRequest):
     pass
+
+
+class AdminReviewFinalizationRequest(AdminReviewDecisionRequest):
+    outcome: Literal["verified", "rejected", "unable_to_verify"]
 
 
 class AdminReviewClarificationResponseRequest(BaseModel):

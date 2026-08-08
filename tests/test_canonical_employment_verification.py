@@ -118,26 +118,6 @@ async def test_education_evidence_requires_completed_owned_document() -> None:
 
 
 @pytest.mark.asyncio
-async def test_education_verification_status_syncs_only_the_linked_record() -> None:
-    service = VerificationRequestService.__new__(VerificationRequestService)
-    education_id = uuid4()
-    education = SimpleNamespace(verification_status=EducationVerificationStatus.PENDING.value)
-
-    class Educations:
-        async def get_active_by_id(self, candidate_education_id):
-            assert candidate_education_id == education_id
-            return education
-
-    service._educations = Educations()
-    await service._sync_linked_education_status(
-        SimpleNamespace(education_id=education_id),
-        EducationVerificationStatus.VERIFIED.value,
-    )
-
-    assert education.verification_status == EducationVerificationStatus.VERIFIED.value
-
-
-@pytest.mark.asyncio
 async def test_education_draft_links_completed_owned_evidence() -> None:
     service = VerificationRequestService.__new__(VerificationRequestService)
     actor_id = uuid4()

@@ -81,8 +81,10 @@ _VERIFICATION_STATUS_MAP: dict[VerificationRequestStatus, OrganizationPersonVeri
     VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE: OrganizationPersonVerificationStatusSummary.IN_VERIFICATION,
     VerificationRequestStatus.IN_PROGRESS: OrganizationPersonVerificationStatusSummary.IN_VERIFICATION,
     VerificationRequestStatus.AWAITING_INFORMATION: OrganizationPersonVerificationStatusSummary.CLARIFICATION_REQUIRED,
+    VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW: OrganizationPersonVerificationStatusSummary.IN_VERIFICATION,
     VerificationRequestStatus.VERIFIED: OrganizationPersonVerificationStatusSummary.COMPLETED,
     VerificationRequestStatus.REJECTED: OrganizationPersonVerificationStatusSummary.UNABLE_TO_VERIFY,
+    VerificationRequestStatus.UNABLE_TO_VERIFY: OrganizationPersonVerificationStatusSummary.UNABLE_TO_VERIFY,
     VerificationRequestStatus.CANCELLED: OrganizationPersonVerificationStatusSummary.CANCELLED,
     VerificationRequestStatus.EXPIRED: OrganizationPersonVerificationStatusSummary.UNABLE_TO_VERIFY,
 }
@@ -1127,7 +1129,10 @@ class OrganizationPersonService:
             return "clarification-req"
         if new_status == VerificationRequestStatus.VERIFIED:
             return "completed"
-        if new_status == VerificationRequestStatus.REJECTED:
+        if new_status in {
+            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.UNABLE_TO_VERIFY,
+        }:
             return "unable"
         if new_status == VerificationRequestStatus.CANCELLED:
             return "revoked"

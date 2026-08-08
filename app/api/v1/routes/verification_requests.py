@@ -12,19 +12,19 @@ from app.api.dependencies.services import get_verification_request_service
 from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.verification_request import (
     SubjectVerificationRequestCreateRequest,
+    VerificationContactRequest,
+    VerificationContactResponse,
     VerificationRequestActionPayload,
     VerificationRequestAssignReviewerRequest,
     VerificationRequestCorrectionResponse,
     VerificationRequestCreateRequest,
     VerificationRequestEvidenceCreateRequest,
     VerificationRequestEvidenceResponse,
-    VerificationRequestInternalNoteUpdateRequest,
     VerificationRequestEvidenceUpdateRequest,
-    VerificationRequestResponse,
     VerificationRequestInformationSubmissionRequest,
+    VerificationRequestInternalNoteUpdateRequest,
+    VerificationRequestResponse,
     VerificationRequestTimelineResponse,
-    VerificationContactRequest,
-    VerificationContactResponse,
 )
 from app.services.verification_request_service import VerificationRequestService
 
@@ -260,6 +260,19 @@ async def reject_verification_request(
     svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
 ) -> VerificationRequestResponse:
     return await svc.reject(current.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/verification-requests/{verification_request_public_id}/unable-to-verify",
+    response_model=VerificationRequestResponse,
+)
+async def unable_to_verify_verification_request(
+    verification_request_public_id: UUID,
+    payload: VerificationRequestActionPayload,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await svc.unable_to_verify(current.id, verification_request_public_id, payload)
 
 
 @router.post("/verification-requests/{verification_request_public_id}/cancel", response_model=VerificationRequestResponse)

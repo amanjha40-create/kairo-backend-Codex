@@ -76,17 +76,24 @@ class VerificationRequestWorkflowService:
         },
         VerificationRequestStatus.IN_PROGRESS: {
             VerificationRequestStatus.AWAITING_INFORMATION,
-            VerificationRequestStatus.VERIFIED,
-            VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
             VerificationRequestStatus.CANCELLED,
         },
         VerificationRequestStatus.AWAITING_INFORMATION: {
             VerificationRequestStatus.IN_PROGRESS,
+            VerificationRequestStatus.CANCELLED,
+        },
+        VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW: {
+            VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+            VerificationRequestStatus.IN_PROGRESS,
+            VerificationRequestStatus.VERIFIED,
             VerificationRequestStatus.REJECTED,
+            VerificationRequestStatus.UNABLE_TO_VERIFY,
             VerificationRequestStatus.CANCELLED,
         },
         VerificationRequestStatus.VERIFIED: set(),
         VerificationRequestStatus.REJECTED: set(),
+        VerificationRequestStatus.UNABLE_TO_VERIFY: set(),
         VerificationRequestStatus.CANCELLED: set(),
         VerificationRequestStatus.EXPIRED: set(),
     }

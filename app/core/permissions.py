@@ -48,6 +48,8 @@ class Permission(StrEnum):
     CHANGE_VERIFICATION_PRIORITY = "change_verification_priority"
     REVIEW_VERIFICATION = "review_verification"   # approve / reject
     REQUEST_MORE_INFO = "request_more_info"        # → additional_info_requested
+    DISPATCH_VERIFICATION = "dispatch_verification"
+    FINALIZE_VERIFICATION = "finalize_verification"
 
     # --- User-management operations ---
     MANAGE_USERS = "manage_users"    # create / update / deactivate users
@@ -111,6 +113,8 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.CHANGE_VERIFICATION_PRIORITY,
         Permission.REVIEW_VERIFICATION,
         Permission.REQUEST_MORE_INFO,
+        Permission.DISPATCH_VERIFICATION,
+        Permission.FINALIZE_VERIFICATION,
         Permission.MANAGE_USERS,
     }
 )

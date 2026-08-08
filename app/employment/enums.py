@@ -14,6 +14,7 @@ class VerificationStatus(StrEnum):
     ADDITIONAL_INFO_REQUESTED = "additional_info_requested"
     APPROVED = "approved"
     REJECTED = "rejected"
+    UNABLE_TO_VERIFY = "unable_to_verify"
     CANCELLED = "cancelled"
 
 
