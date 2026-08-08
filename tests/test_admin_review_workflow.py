@@ -634,10 +634,15 @@ async def test_hr_cannot_dispatch_or_finalize_verification() -> None:
             f"/api/v1/admin/verification-requests/{request_public_id}/finalize",
             json={"outcome": "verified", "decision_summary": "Confirmed by the verifier."},
         )
+        resolution_response = await client.post(
+            f"/api/v1/admin/verification-requests/{request_public_id}/resolve-organization",
+            json={"organization_public_id": str(uuid4())},
+        )
 
     app.dependency_overrides.clear()
     assert approve_response.status_code == 403
     assert finalize_response.status_code == 403
+    assert resolution_response.status_code == 403
 
 
 @pytest.mark.asyncio

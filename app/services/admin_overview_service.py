@@ -127,7 +127,13 @@ class AdminOverviewService:
                 public_id=event.public_id,
                 verification_request_public_id=event.verification_request.public_id,
                 event_type=event.event_type,
-                event_source=event.event_source.value,
+                # PostgreSQL enum columns may be materialized as strings by an async
+                # driver, while tests and other paths retain the StrEnum instance.
+                event_source=(
+                    event.event_source.value
+                    if hasattr(event.event_source, "value")
+                    else str(event.event_source)
+                ),
                 actor_user_id=event.actor_user_id,
                 created_at=event.created_at,
             )

@@ -667,18 +667,44 @@ class VerificationRequestAdminReviewService:
         payload: AdminReviewOrganizationResolutionRequest,
     ) -> VerificationRequestResponse:
         request = await self._get_required_request(verification_request_public_id)
-        if request.status not in {
+        pre_dispatch_statuses = {
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+        }
+        post_approval_resolution_statuses = {
             VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
             VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
-        }:
+        }
+        if request.status not in pre_dispatch_statuses | post_approval_resolution_statuses:
             raise ConflictError("Verification request is not awaiting organization resolution")
 
         organization = await self._organizations.get_by_public_id(payload.organization_public_id)
         if organization is None:
             raise NotFoundError("Organization not found")
 
+        if request.organization_id is not None:
+            if request.organization_id == organization.id:
+                return await self._to_request_response(request)
+            raise ConflictError("Verification request organization is already resolved")
+
         request.organization_id = organization.id
         request.target_organization_name = organization.name
+        if request.status in pre_dispatch_statuses:
+            # Resolution selects the eventual verifier; dispatch stays an explicit
+            # admin approval so no outreach or canonical-claim mutation happens here.
+            await self._workflow.record_action(
+                request,
+                actor_user_id=actor_user_id,
+                event_type="verification_request_organization_resolved",
+                event_source=VerificationRequestEventSource.ADMIN,
+                metadata={"organization_public_id": str(organization.public_id)},
+            )
+            await self._session.commit()
+            refreshed = await self._requests.get_by_public_id(request.public_id)
+            if refreshed is None:
+                raise NotFoundError("Verification request not found")
+            return await self._to_request_response(refreshed)
+
         await self._advance_to_organization_stage(
             request,
             actor_user_id=actor_user_id,
