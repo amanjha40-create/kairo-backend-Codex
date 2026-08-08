@@ -268,7 +268,7 @@ class VerificationRequestAdminReviewService:
         )
 
     async def _to_admin_evidence_response(self, evidence) -> AdminReviewEvidenceResponse:  # noqa: ANN001
-        base = self._to_evidence_response(evidence)
+        base = await self._to_evidence_response(evidence)
         document = None
         if evidence.employment_document_id is not None:
             document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
@@ -1011,10 +1011,13 @@ class VerificationRequestAdminReviewService:
             include_org_private=False,
         )
 
-    def _to_evidence_response(self, evidence) -> VerificationRequestEvidenceResponse:  # noqa: ANN001
+    async def _to_evidence_response(self, evidence) -> VerificationRequestEvidenceResponse:  # noqa: ANN001
         from app.services.verification_request_service import VerificationRequestService
 
-        return VerificationRequestService(self._session)._to_evidence_response(evidence)
+        return await VerificationRequestService(self._session)._to_evidence_response(
+            evidence,
+            include_download_url=False,
+        )
 
     def _to_correction_response(self, correction) -> VerificationRequestCorrectionResponse:  # noqa: ANN001
         from app.services.verification_request_service import VerificationRequestService

@@ -154,6 +154,24 @@ async def test_admin_response_projection_excludes_organization_private_fields() 
 
 
 @pytest.mark.asyncio
+async def test_admin_evidence_projection_excludes_default_download_url() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._session = object()
+    evidence = SimpleNamespace()
+    response = SimpleNamespace()
+
+    with patch.object(
+        VerificationRequestService,
+        "_to_evidence_response",
+        new=AsyncMock(return_value=response),
+    ) as to_evidence_response:
+        result = await service._to_evidence_response(evidence)
+
+    assert result == response
+    to_evidence_response.assert_awaited_once_with(evidence, include_download_url=False)
+
+
+@pytest.mark.asyncio
 async def test_contact_review_refreshes_committed_contact_before_mapping() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     service._session = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
