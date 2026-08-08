@@ -127,7 +127,7 @@ class VerificationRequestAdminReviewService:
                 VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW.value,
             ]
         )
-        responses = [self._to_request_response(item) for item in items]
+        responses = [await self._to_request_response(item) for item in items]
         if priorities:
             accepted_priorities = {value.strip().lower() for value in priorities if value.strip()}
             responses = [item for item in responses if item.priority in accepted_priorities]
@@ -236,7 +236,7 @@ class VerificationRequestAdminReviewService:
         )
         employer_verification = await self._employer_verifications.get_by_verification_request_id(request.id)
         return AdminReviewDetailResponse(
-            request=self._to_request_response(request),
+            request=await self._to_request_response(request),
             employer_verification_public_id=(
                 employer_verification.public_id if employer_verification is not None else None
             ),
@@ -345,7 +345,7 @@ class VerificationRequestAdminReviewService:
         if refreshed_review is None:
             raise NotFoundError("Verification request review not found")
         return AdminReviewWorkflowEnvelope(
-            request=self._to_request_response(request),
+            request=await self._to_request_response(request),
             review=self._to_review_response(refreshed_review),
         )
 
@@ -433,7 +433,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def approve(
         self,
@@ -475,7 +475,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def review_contact(
         self,
@@ -584,7 +584,7 @@ class VerificationRequestAdminReviewService:
             metadata={"decision_summary": payload.decision_summary},
         )
         await self._session.commit()
-        return self._to_request_response(request)
+        return await self._to_request_response(request)
 
     async def cancel(
         self,
@@ -610,7 +610,7 @@ class VerificationRequestAdminReviewService:
             metadata={"decision_summary": payload.decision_summary},
         )
         await self._session.commit()
-        return self._to_request_response(request)
+        return await self._to_request_response(request)
 
     async def record_clarification_response(
         self,
@@ -635,7 +635,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def change_priority(
         self,
@@ -664,7 +664,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def resolve_organization(
         self,
@@ -694,7 +694,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def get_timeline(
         self,
@@ -754,7 +754,7 @@ class VerificationRequestAdminReviewService:
         }[outcome]
         request = await self._get_required_request(verification_request_public_id)
         if request.status == target_status:
-            return self._to_request_response(request)
+            return await self._to_request_response(request)
         if request.status != VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW:
             raise ConflictError("Verification request is not awaiting final quality review")
 
@@ -789,7 +789,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def _close_pre_dispatch_request(
         self,
@@ -816,7 +816,7 @@ class VerificationRequestAdminReviewService:
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
-        return self._to_request_response(refreshed)
+        return await self._to_request_response(refreshed)
 
     async def _require_linked_canonical_claim(self, request) -> None:  # noqa: ANN001
         linked_count = int(request.employment_id is not None) + int(request.education_id is not None)
@@ -997,10 +997,15 @@ class VerificationRequestAdminReviewService:
             metadata=metadata,
         )
 
-    def _to_request_response(self, request) -> VerificationRequestResponse:  # noqa: ANN001
+    async def _to_request_response(self, request) -> VerificationRequestResponse:  # noqa: ANN001
         from app.services.verification_request_service import VerificationRequestService
 
-        return VerificationRequestService(self._session)._to_response(request)
+        # Admin review is globally authorized, but not organization membership.
+        return await VerificationRequestService(self._session)._to_response(
+            request,
+            viewer_user_id=None,
+            include_org_private=True,
+        )
 
     def _to_evidence_response(self, evidence) -> VerificationRequestEvidenceResponse:  # noqa: ANN001
         from app.services.verification_request_service import VerificationRequestService

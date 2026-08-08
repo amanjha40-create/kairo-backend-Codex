@@ -40,6 +40,7 @@ from app.services.verification_request_admin_review_service import (
     normalize_contact_review_status,
     normalize_contact_type,
 )
+from app.services.verification_request_service import VerificationRequestService
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -70,6 +71,30 @@ def test_contact_review_status_queue_normalization(review_status, expected) -> N
 )
 def test_contact_type_detail_normalization(contact_type, expected) -> None:  # noqa: ANN001
     assert normalize_contact_type(contact_type) == expected
+
+
+@pytest.mark.asyncio
+async def test_admin_request_response_uses_authorized_org_private_projection(monkeypatch) -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._session = object()
+    request = SimpleNamespace()
+    expected = object()
+    captured: dict[str, object] = {}
+
+    async def to_response(_self, value, *, viewer_user_id, include_org_private):  # noqa: ANN001
+        captured["request"] = value
+        captured["viewer_user_id"] = viewer_user_id
+        captured["include_org_private"] = include_org_private
+        return expected
+
+    monkeypatch.setattr(VerificationRequestService, "_to_response", to_response)
+
+    assert await service._to_request_response(request) is expected
+    assert captured == {
+        "request": request,
+        "viewer_user_id": None,
+        "include_org_private": True,
+    }
 
 
 @pytest.mark.asyncio
