@@ -49,6 +49,12 @@ def _build_request() -> VerificationRequest:
     request.public_id = uuid4()
     request.created_at = datetime.now(tz=UTC)
     request.updated_at = request.created_at
+    request.consented_fields = [
+        "employment.role",
+        "employment.date_range",
+        "employment.employer_name",
+    ]
+    request.consented_evidence_scope = ["employment.start_date"]
     request.organization_internal_note = "Private to the responding HR team."
     request.assigned_to_user_id = uuid4()
     request.organization = Organization(
@@ -93,7 +99,12 @@ async def test_org_projection_exposes_reviewer_and_internal_note() -> None:
     )
     service._evidence.list_for_request = AsyncMock(  # type: ignore[method-assign]
         return_value=[
-            SimpleNamespace(field_key="employment.start_date", document_id=None, employment_document_id=uuid4())
+            SimpleNamespace(
+                evidence_type="employment_detail",
+                field_key="employment.start_date",
+                document_id=None,
+                employment_document_id=uuid4(),
+            )
         ]
     )
     service._employments.get_active_by_id = AsyncMock(  # type: ignore[method-assign]
@@ -121,7 +132,9 @@ async def test_org_projection_exposes_reviewer_and_internal_note() -> None:
 
 
 @pytest.mark.asyncio
-async def test_org_evidence_projection_includes_download_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_org_evidence_projection_includes_download_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = _build_service()
     evidence = VerificationRequestEvidence(
         verification_request_id=uuid4(),
@@ -146,7 +159,10 @@ async def test_org_evidence_projection_includes_download_metadata(monkeypatch: p
     )
 
     presign = AsyncMock(return_value="https://example.test/download")
-    monkeypatch.setattr("app.services.verification_request_service.generate_presigned_get_url", presign)
+    monkeypatch.setattr(
+        "app.services.verification_request_service.generate_presigned_get_url",
+        presign,
+    )
 
     response: VerificationRequestEvidenceResponse = await service._to_evidence_response(  # type: ignore[attr-defined]
         evidence,
