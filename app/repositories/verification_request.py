@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -16,34 +16,36 @@ class VerificationRequestRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @staticmethod
+    def _with_response_relationships(
+        stmt: Select[tuple[VerificationRequest]],
+    ) -> Select[tuple[VerificationRequest]]:
+        return stmt.options(
+            joinedload(VerificationRequest.organization),
+            joinedload(VerificationRequest.registry_record),
+            joinedload(VerificationRequest.trust_invitation),
+        )
+
     async def create(self, request: VerificationRequest) -> VerificationRequest:
         self._session.add(request)
         await self._session.flush()
         return request
 
     async def get_by_public_id(self, request_public_id: UUID) -> VerificationRequest | None:
-        stmt = (
-            select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
-            .where(VerificationRequest.public_id == request_public_id)
+        stmt = self._with_response_relationships(
+            select(VerificationRequest).where(VerificationRequest.public_id == request_public_id)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id(self, request_id: UUID) -> VerificationRequest | None:
-        return (await self._session.execute(select(VerificationRequest).where(VerificationRequest.id == request_id))).scalar_one_or_none()
+        stmt = self._with_response_relationships(
+            select(VerificationRequest).where(VerificationRequest.id == request_id)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_organization(self, organization_id: UUID) -> list[VerificationRequest]:
-        stmt = (
+        stmt = self._with_response_relationships(
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
             .where(VerificationRequest.organization_id == organization_id)
             .order_by(VerificationRequest.created_at.desc())
         )
@@ -51,13 +53,8 @@ class VerificationRequestRepository:
         return list(rows.scalars().all())
 
     async def list_for_subject(self, subject_user_id: UUID) -> list[VerificationRequest]:
-        stmt = (
+        stmt = self._with_response_relationships(
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
             .where(VerificationRequest.subject_user_id == subject_user_id)
             .order_by(VerificationRequest.created_at.desc())
         )
@@ -66,7 +63,7 @@ class VerificationRequestRepository:
 
     async def get_active_for_employment(self, employment_id: UUID) -> VerificationRequest | None:
         terminal_statuses = ("verified", "rejected", "cancelled", "expired")
-        stmt = (
+        stmt = self._with_response_relationships(
             select(VerificationRequest)
             .where(
                 VerificationRequest.employment_id == employment_id,
@@ -78,7 +75,7 @@ class VerificationRequestRepository:
 
     async def get_active_for_education(self, education_id: UUID) -> VerificationRequest | None:
         terminal_statuses = ("verified", "rejected", "cancelled", "expired")
-        stmt = (
+        stmt = self._with_response_relationships(
             select(VerificationRequest)
             .where(
                 VerificationRequest.education_id == education_id,
@@ -89,13 +86,8 @@ class VerificationRequestRepository:
         return (await self._session.execute(stmt)).scalars().first()
 
     async def list_by_status(self, statuses: list[str]) -> list[VerificationRequest]:
-        stmt = (
+        stmt = self._with_response_relationships(
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
             .where(VerificationRequest.status.in_(statuses))
             .order_by(VerificationRequest.created_at.asc())
         )
