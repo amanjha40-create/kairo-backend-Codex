@@ -17,12 +17,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        sa.text(
-            "ALTER TYPE verification_status_enum "
-            "ADD VALUE IF NOT EXISTS 'verified'"
+    with op.get_context().autocommit_block():
+        op.execute(
+            sa.text(
+                "ALTER TYPE verification_status_enum "
+                "ADD VALUE IF NOT EXISTS 'verified'"
+            )
         )
-    )
     op.add_column("employments", sa.Column("verified_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("educations", sa.Column("verified_at", sa.DateTime(timezone=True), nullable=True))
 
