@@ -12,7 +12,11 @@ from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization_member import OrganizationMember
 from app.models.user import User
-from app.organization.enums import OrganizationInvitationStatus, OrganizationVerificationState
+from app.organization.enums import (
+    OrganizationInvitationStatus,
+    OrganizationType,
+    OrganizationVerificationState,
+)
 from app.organization.permissions import build_workspace_permission_flags
 from app.repositories.organization import OrganizationRepository
 from app.repositories.organization_invitation import OrganizationInvitationRepository
@@ -265,12 +269,12 @@ class WorkspaceService:
             return WorkspaceAccessState.MEMBERSHIP_SUSPENDED
         if organization.suspended_at is not None:
             return WorkspaceAccessState.ORG_SUSPENDED
-        if (
-            organization.setup_completed_at is None
-            or organization.verification_state == OrganizationVerificationState.SETUP_INCOMPLETE
-        ):
+        if organization.setup_completed_at is None:
             return WorkspaceAccessState.SETUP_INCOMPLETE
-        if organization.verification_state != OrganizationVerificationState.VERIFIED:
+        if (
+            organization.organization_type == OrganizationType.UNIVERSITY
+            and organization.verification_state != OrganizationVerificationState.VERIFIED
+        ):
             return WorkspaceAccessState.VERIFICATION_PENDING
         return WorkspaceAccessState.READY
 
