@@ -9,8 +9,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.education.enums import EducationVerificationStatus
+from app.employment.enums import VerificationStatus as EmploymentVerificationStatus
 from app.exceptions import NotFoundError
-from app.models import Certification, Education, Employment, GigPlatform, Internship, PortfolioItem, Project, Skill, UserDocument
+from app.models import (
+    Certification,
+    Education,
+    Employment,
+    GigPlatform,
+    Internship,
+    PortfolioItem,
+    Project,
+    Skill,
+    UserDocument,
+)
 from app.models.employment_document import EmploymentDocument
 from app.models.freelance_contract import FreelanceContract
 from app.models.passport_share_link import PassportShareLink
@@ -18,8 +30,6 @@ from app.repositories.passport_share import PassportShareRepository
 from app.schemas.passport_share import PassportSharePermissions
 from app.schemas.public_passport import (
     PublicPassportCertification,
-    PublicPassportProject,
-    PublicPassportSkill,
     PublicPassportDocument,
     PublicPassportEducation,
     PublicPassportEmployment,
@@ -28,8 +38,10 @@ from app.schemas.public_passport import (
     PublicPassportInternship,
     PublicPassportPortfolioItem,
     PublicPassportProfile,
+    PublicPassportProject,
     PublicPassportResponse,
     PublicPassportShareMetadata,
+    PublicPassportSkill,
     PublicPassportUserDocument,
     PublicPassportVault,
 )
@@ -54,7 +66,7 @@ class PublicPassportService:
         if permissions.show_trust_score:
             trust_score = await self._trust.calculate_trust_score(link.owner_user_id)
 
-        vault = await self.build_vault_for_user(link.owner_user_id, permissions)
+        vault = await self.build_vault_for_user(link.owner_user_id, permissions, public_only=True)
         return PublicPassportResponse(
             profile=PublicPassportProfile(
                 full_name=profile.full_name,
@@ -88,19 +100,26 @@ class PublicPassportService:
         self,
         user_id,
         permissions: PassportSharePermissions,
+        *,
+        public_only: bool = False,
     ) -> PublicPassportVault:
         show_documents = permissions.show_documents
 
         employments: list[PublicPassportEmployment] = []
         if permissions.include_employments:
-            emp_rows = (await self._session.execute(
+            employment_query = (
                 select(Employment)
                 .where(
                     Employment.created_by_user_id == user_id,
                     Employment.deleted_at.is_(None),
                 )
                 .order_by(Employment.start_date.desc())
-            )).scalars().all()
+            )
+            if public_only:
+                employment_query = employment_query.where(
+                    Employment.verification_status == EmploymentVerificationStatus.APPROVED.value,
+                )
+            emp_rows = (await self._session.execute(employment_query)).scalars().all()
 
             doc_rows: list[EmploymentDocument] = []
             emp_ids = [row.id for row in emp_rows]
@@ -127,7 +146,9 @@ class PublicPassportService:
             employments = [
                 PublicPassportEmployment(
                     id=row.id,
-                    employer_legal_name=row.employer_legal_name if permissions.show_employer_names else None,
+                    employer_legal_name=(
+                        row.employer_legal_name if permissions.show_employer_names else None
+                    ),
                     job_title=row.job_title,
                     start_date=row.start_date,
                     end_date=row.end_date,
@@ -140,11 +161,16 @@ class PublicPassportService:
 
         educations: list[PublicPassportEducation] = []
         if permissions.include_educations:
-            edu_rows = (await self._session.execute(
+            education_query = (
                 select(Education)
                 .where(Education.user_id == user_id, Education.deleted_at.is_(None))
                 .order_by(Education.start_date.desc())
-            )).scalars().all()
+            )
+            if public_only:
+                education_query = education_query.where(
+                    Education.verification_status == EducationVerificationStatus.VERIFIED.value,
+                )
+            edu_rows = (await self._session.execute(education_query)).scalars().all()
             educations = [
                 PublicPassportEducation(
                     id=row.id,
@@ -288,23 +314,44 @@ class PublicPassportService:
 
         skills = []
         if permissions.include_skills:
-            skill_rows = (await self._session.execute(
-                select(Skill).where(Skill.user_id == user_id, Skill.deleted_at.is_(None)).order_by(Skill.name.asc())
-            )).scalars().all()
-            skills = [PublicPassportSkill(name=row.name, verification_status=row.verification_status) for row in skill_rows]
+            skill_rows = (
+                await self._session.execute(
+                    select(Skill)
+                    .where(Skill.user_id == user_id, Skill.deleted_at.is_(None))
+                    .order_by(Skill.name.asc())
+                )
+            ).scalars().all()
+            skills = [
+                PublicPassportSkill(name=row.name, verification_status=row.verification_status)
+                for row in skill_rows
+            ]
 
         projects = []
         if permissions.include_projects:
-            project_rows = (await self._session.execute(
-                select(Project).where(Project.user_id == user_id, Project.deleted_at.is_(None))
-                .order_by(Project.is_ongoing.desc(), Project.start_date.desc().nullslast(), Project.created_at.desc())
-            )).scalars().all()
+            project_rows = (
+                await self._session.execute(
+                    select(Project)
+                    .where(Project.user_id == user_id, Project.deleted_at.is_(None))
+                    .order_by(
+                        Project.is_ongoing.desc(),
+                        Project.start_date.desc().nullslast(),
+                        Project.created_at.desc(),
+                    )
+                )
+            ).scalars().all()
             projects = [
                 PublicPassportProject(
-                    id=row.id, title=row.title, role=row.role, description=row.description,
-                    start_date=row.start_date, end_date=row.end_date, is_ongoing=row.is_ongoing,
-                    project_url=row.project_url, repository_url=row.repository_url,
-                    organization_name=row.organization_name, verification_status=row.verification_status,
+                    id=row.id,
+                    title=row.title,
+                    role=row.role,
+                    description=row.description,
+                    start_date=row.start_date,
+                    end_date=row.end_date,
+                    is_ongoing=row.is_ongoing,
+                    project_url=row.project_url,
+                    repository_url=row.repository_url,
+                    organization_name=row.organization_name,
+                    verification_status=row.verification_status,
                 )
                 for row in project_rows
             ]
