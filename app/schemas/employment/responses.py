@@ -46,6 +46,7 @@ class EmploymentResponse(BaseModel):
     verification_status: VerificationStatus
     submitted_at: datetime | None
     reviewed_at: datetime | None
+    verified_at: datetime | None = None
     assigned_reviewer_user_id: uuid.UUID | None = None
     assigned_at: datetime | None = None
     created_at: datetime

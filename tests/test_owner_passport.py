@@ -72,7 +72,7 @@ class FakePassportEngineService:
                         job_title="Backend Engineer",
                         start_date=now.date(),
                         end_date=None,
-                        verification_status="approved",
+                        verification_status="verified",
                         verification_method="document",
                         documents=[
                             PublicPassportDocument(
@@ -190,7 +190,7 @@ class FakePassportEngineService:
             ),
             verification_summary=PassportVerificationSummary(
                 overall=PassportSectionStatusSummary(total=8, statuses={"verified": 5, "pending": 3}),
-                employments=PassportSectionStatusSummary(total=1, statuses={"approved": 1}),
+                employments=PassportSectionStatusSummary(total=1, statuses={"verified": 1}),
                 educations=PassportSectionStatusSummary(total=1, statuses={"verified": 1}),
                 internships=PassportSectionStatusSummary(total=1, statuses={"verified": 1}),
                 freelance=PassportSectionStatusSummary(total=1, statuses={"pending": 1}),

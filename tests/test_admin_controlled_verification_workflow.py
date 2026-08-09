@@ -96,6 +96,7 @@ async def test_admin_finalization_updates_linked_employment_only() -> None:
         created_by_user_id=subject_user_id,
         verification_status=VerificationStatus.SUBMITTED.value,
         reviewed_at=None,
+        verified_at=None,
         reviewed_by_user_id=None,
         reviewer_summary=None,
     )
@@ -108,7 +109,8 @@ async def test_admin_finalization_updates_linked_employment_only() -> None:
 
     await service._apply_canonical_outcome(request, uuid4(), "verified", "Confirmed by verifier")
 
-    assert employment.verification_status == VerificationStatus.APPROVED.value
+    assert employment.verification_status == VerificationStatus.VERIFIED.value
+    assert employment.verified_at is not None
     assert employment.reviewer_summary == "Confirmed by verifier"
     assert employment.reviewed_by_user_id is not None
 
@@ -121,6 +123,7 @@ async def test_admin_finalization_updates_linked_education_only() -> None:
         user_id=subject_user_id,
         verification_status=EducationVerificationStatus.SUBMITTED.value,
         reviewed_at=None,
+        verified_at=None,
         reviewed_by_user_id=None,
         reviewer_note=None,
     )
@@ -134,8 +137,61 @@ async def test_admin_finalization_updates_linked_education_only() -> None:
     await service._apply_canonical_outcome(request, uuid4(), "rejected", "Discrepancy confirmed")
 
     assert education.verification_status == EducationVerificationStatus.REJECTED.value
+    assert education.verified_at is None
     assert education.reviewer_note == "Discrepancy confirmed"
     assert education.reviewed_by_user_id is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_finalization_marks_linked_education_verified_with_timestamp() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    subject_user_id = uuid4()
+    education = SimpleNamespace(
+        user_id=subject_user_id,
+        verification_status=EducationVerificationStatus.SUBMITTED.value,
+        reviewed_at=None,
+        verified_at=None,
+        reviewed_by_user_id=None,
+        reviewer_note=None,
+    )
+    service._educations = SimpleNamespace(get_active_by_id=AsyncMock(return_value=education))
+    request = SimpleNamespace(
+        employment_id=None,
+        education_id=uuid4(),
+        subject_user_id=subject_user_id,
+    )
+
+    await service._apply_canonical_outcome(request, uuid4(), "verified", "Education verified")
+
+    assert education.verification_status == EducationVerificationStatus.VERIFIED.value
+    assert education.verified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_finalization_notifies_candidate_once_with_authoritative_payload() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._notifications = SimpleNamespace(create_and_dispatch=AsyncMock())
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        subject_name="Candidate User",
+        target_organization_name="Example Corp",
+        organization=None,
+        request_type=VerificationRequestType.EMPLOYMENT,
+    )
+
+    await service._notify_finalization(request, uuid4(), "verified")
+
+    service._notifications.create_and_dispatch.assert_awaited_once()
+    notification_request = service._notifications.create_and_dispatch.await_args.args[0]
+    assert notification_request.recipient_user_id == request.subject_user_id
+    assert notification_request.recipient_email == request.subject_email
+    assert notification_request.dedupe_key.endswith(":candidate")
+    assert notification_request.payload["subject_name"] == request.subject_name
+    assert notification_request.payload["organization_name"] == request.target_organization_name
+    assert notification_request.payload["request_type"] == "employment"
+    assert notification_request.payload["completed_at_iso"]
 
 
 @pytest.mark.asyncio

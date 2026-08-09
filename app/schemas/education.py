@@ -14,7 +14,6 @@ from app.education.enums import (
     EducationVerificationStatus,
 )
 
-
 # --- Education records ---
 
 
@@ -78,6 +77,7 @@ class EducationResponse(BaseModel):
     verification_status: EducationVerificationStatus
     submitted_at: datetime | None = None
     reviewed_at: datetime | None = None
+    verified_at: datetime | None = None
     reviewed_by_user_id: uuid.UUID | None = None
     reviewer_note: str | None = None
     created_at: datetime

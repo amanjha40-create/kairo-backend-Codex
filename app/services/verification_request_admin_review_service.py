@@ -858,16 +858,18 @@ class VerificationRequestAdminReviewService:
         outcome: str,
         decision_summary: str,
     ) -> None:  # noqa: ANN001
+        finalized_at = datetime.now(tz=UTC)
         if request.employment_id is not None:
             employment = await self._employments.get_active_by_id(request.employment_id)
             if employment is None or employment.created_by_user_id != request.subject_user_id:
                 raise ConflictError("Linked employment is not owned by the verification subject")
             employment.verification_status = {
-                "verified": VerificationStatus.APPROVED.value,
+                "verified": VerificationStatus.VERIFIED.value,
                 "rejected": VerificationStatus.REJECTED.value,
                 "unable_to_verify": VerificationStatus.UNABLE_TO_VERIFY.value,
             }[outcome]
-            employment.reviewed_at = datetime.now(tz=UTC)
+            employment.reviewed_at = finalized_at
+            employment.verified_at = finalized_at if outcome == "verified" else None
             employment.reviewed_by_user_id = actor_user_id
             employment.reviewer_summary = decision_summary
             return
@@ -876,42 +878,43 @@ class VerificationRequestAdminReviewService:
             raise ConflictError("Linked education is not owned by the verification subject")
         education.verification_status = {
             "verified": EducationVerificationStatus.VERIFIED.value,
-            "rejected": EducationVerificationStatus.REJECTED.value,
-            "unable_to_verify": EducationVerificationStatus.UNABLE_TO_VERIFY.value,
-        }[outcome]
-        education.reviewed_at = datetime.now(tz=UTC)
+                "rejected": EducationVerificationStatus.REJECTED.value,
+                "unable_to_verify": EducationVerificationStatus.UNABLE_TO_VERIFY.value,
+            }[outcome]
+        education.reviewed_at = finalized_at
+        education.verified_at = finalized_at if outcome == "verified" else None
         education.reviewed_by_user_id = actor_user_id
         education.reviewer_note = decision_summary
 
     async def _notify_finalization(self, request, actor_user_id: UUID, outcome: str) -> None:  # noqa: ANN001
-        recipients = [(request.subject_user_id, request.subject_email, "candidate")]
-        for event in reversed(await self._requests.list_timeline(request.id)):
-            if event.event_source == VerificationRequestEventSource.ORGANIZATION and event.actor_user_id:
-                verifier = await self._users.get_by_id(event.actor_user_id)
-                if verifier is not None:
-                    recipients.append((verifier.id, verifier.email, "verifier"))
-                break
-        for recipient_user_id, recipient_email, audience in recipients:
-            try:
-                await self._notifications.create_and_dispatch(
-                    NotificationRequest(
-                        event_type="verification_completed",
-                        recipient_user_id=recipient_user_id,
-                        recipient_email=recipient_email,
-                        dedupe_key=f"verification-final:{request.public_id}:{outcome}:{audience}",
-                        payload={
-                            "verification_request_public_id": str(request.public_id),
-                            "request_type": request.request_type.value,
-                            "outcome": outcome,
-                        },
-                    ),
-                    actor_user_id=actor_user_id,
-                )
-            except Exception:
-                logger.warning(
-                    "verification_finalization_notification_failed",
-                    extra={"verification_request_public_id": str(request.public_id), "audience": audience},
-                )
+        try:
+            await self._notifications.create_and_dispatch(
+                NotificationRequest(
+                    event_type="verification_completed",
+                    recipient_user_id=request.subject_user_id,
+                    recipient_email=request.subject_email,
+                    dedupe_key=f"verification-final:{request.public_id}:{outcome}:candidate",
+                    payload={
+                        "verification_request_public_id": str(request.public_id),
+                        "subject_name": request.subject_name,
+                        "organization_name": (
+                            request.organization.name
+                            if request.organization is not None
+                            else request.target_organization_name or "the verifier organization"
+                        ),
+                        "request_type": request.request_type.value,
+                        "completed_at_iso": datetime.now(tz=UTC).isoformat(),
+                        "outcome": outcome,
+                    },
+                    metadata={"verification_request_public_id": str(request.public_id)},
+                ),
+                actor_user_id=actor_user_id,
+            )
+        except Exception:
+            logger.warning(
+                "verification_finalization_notification_failed",
+                extra={"verification_request_public_id": str(request.public_id), "audience": "candidate"},
+            )
 
     async def _require_admin_reviewable_request(self, verification_request_public_id: UUID):
         request = await self._get_required_request(verification_request_public_id)

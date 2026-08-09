@@ -271,6 +271,47 @@ def test_resume_import_does_not_require_location_but_normal_career_contract_stil
         )
 
 
+@pytest.mark.asyncio
+async def test_employment_duplicate_protection_treats_verified_records_as_protected() -> None:
+    existing_id = uuid4()
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            self.calls += 1
+            if self.calls == 2:
+                return SimpleNamespace(all=lambda: [])
+            return SimpleNamespace(
+                all=lambda: [
+                    SimpleNamespace(
+                        id=existing_id,
+                        employer_legal_name="Example Corp",
+                        job_title="Engineer",
+                        start_date=date(2020, 1, 1),
+                        end_date=date(2021, 1, 1),
+                        verification_status="verified",
+                        verified_at=None,
+                    )
+                ]
+            )
+
+    result = await ResumeDuplicateService(FakeSession()).assess(
+        uuid4(),
+        "employment",
+        {
+            "company_name": "Example Corp",
+            "role_title": "Engineer",
+            "start_date": date(2020, 1, 1),
+            "end_date": date(2021, 1, 1),
+        },
+    )
+
+    assert result.status == "exact_match"
+    assert result.candidates[0]["protected"] is True
+
+
 def test_review_payload_bounds_profile_headline_to_canonical_user_limit() -> None:
     payload = ResumeReviewService._review_payload(
         "profile",

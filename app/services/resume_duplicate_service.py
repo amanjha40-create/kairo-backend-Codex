@@ -121,7 +121,7 @@ class ResumeDuplicateService:
     @staticmethod
     def _spec(claim_type: str) -> tuple[Any, str, str | None, str | None, str | None, set[str]]:
         specs = {
-            "employment": (Employment, "employer_legal_name", "job_title", "start_date", "end_date", {"submitted", "under_review", "approved"}),
+            "employment": (Employment, "employer_legal_name", "job_title", "start_date", "end_date", {"submitted", "under_review", "approved", "verified"}),
             "education": (Education, "institution_name", "degree", "start_date", "end_date", {"submitted", "under_review", "verified"}),
             "internship": (Internship, "company_name", "role", "start_date", "end_date", {"submitted", "under_review", "verified"}),
             "freelance": (FreelanceContract, "client_name", "project_title", "start_date", "end_date", {"submitted", "under_review", "verified"}),

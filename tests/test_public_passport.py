@@ -62,7 +62,7 @@ class FakePublicPassportService:
                         job_title="Backend Engineer",
                         start_date=date(2024, 1, 1),
                         end_date=None,
-                        verification_status="approved",
+                        verification_status="verified",
                         verification_method="document",
                         documents=[],
                     )

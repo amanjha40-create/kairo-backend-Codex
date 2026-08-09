@@ -12,6 +12,7 @@ class VerificationStatus(StrEnum):
     SUBMITTED = "submitted"
     UNDER_REVIEW = "under_review"
     ADDITIONAL_INFO_REQUESTED = "additional_info_requested"
+    VERIFIED = "verified"
     APPROVED = "approved"
     REJECTED = "rejected"
     UNABLE_TO_VERIFY = "unable_to_verify"

@@ -52,7 +52,7 @@ class FakePassportEngineService:
             ),
             verification_summary=PassportVerificationSummary(
                 overall=PassportSectionStatusSummary(total=4, statuses={"verified": 2, "pending": 2}),
-                employments=PassportSectionStatusSummary(total=1, statuses={"approved": 1}),
+                employments=PassportSectionStatusSummary(total=1, statuses={"verified": 1}),
                 educations=PassportSectionStatusSummary(total=1, statuses={"verified": 1}),
                 internships=PassportSectionStatusSummary(total=0, statuses={}),
                 freelance=PassportSectionStatusSummary(total=0, statuses={}),
