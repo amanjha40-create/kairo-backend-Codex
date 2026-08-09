@@ -271,6 +271,8 @@ class WorkspaceService:
             return WorkspaceAccessState.ORG_SUSPENDED
         if organization.setup_completed_at is None:
             return WorkspaceAccessState.SETUP_INCOMPLETE
+        if organization.verification_state == OrganizationVerificationState.SETUP_INCOMPLETE:
+            return WorkspaceAccessState.READY
         if (
             organization.organization_type == OrganizationType.UNIVERSITY
             and organization.verification_state != OrganizationVerificationState.VERIFIED

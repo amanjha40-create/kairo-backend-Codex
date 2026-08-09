@@ -7,8 +7,8 @@ from fastapi import APIRouter
 from app.api.v1.routes import (
     account_settings,
     admin_directory,
-    admin_overview,
     admin_employer_verifications,
+    admin_overview,
     admin_review,
     admin_review_workflow,
     admin_session,
@@ -25,6 +25,7 @@ from app.api.v1.routes import (
     gig_platforms,
     health,
     institution_people,
+    institution_workspace,
     internships,
     notifications,
     onboarding,
@@ -68,6 +69,7 @@ api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
 api_router.include_router(organization_people.router)
 api_router.include_router(institution_people.router)
+api_router.include_router(institution_workspace.router)
 api_router.include_router(workspace.router)
 api_router.include_router(trust_invitations.org_router)
 api_router.include_router(verification_requests.org_router)

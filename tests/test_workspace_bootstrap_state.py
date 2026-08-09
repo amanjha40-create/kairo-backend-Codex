@@ -144,6 +144,34 @@ async def test_bootstrap_normalizes_stale_setup_incomplete_employer_to_ready() -
     )
 
 
+@pytest.mark.asyncio
+async def test_bootstrap_normalizes_stale_setup_incomplete_university_to_ready() -> None:
+    service = _build_service()
+    now = datetime.now(tz=UTC)
+    organization = _build_organization(
+        organization_type=OrganizationType.UNIVERSITY,
+        verification_state=OrganizationVerificationState.SETUP_INCOMPLETE,
+        setup_completed_at=now,
+    )
+    user = _build_user(active_organization_id=organization.id)
+    membership = _build_membership(role=OrganizationRole.OWNER)
+    membership.organization_id = organization.id
+    membership.user_id = user.id
+
+    service._users.get_by_id = AsyncMock(return_value=user)  # type: ignore[attr-defined]
+    service._organizations.get_by_id = AsyncMock(return_value=organization)  # type: ignore[attr-defined]
+    service._organizations.get_membership = AsyncMock(return_value=membership)  # type: ignore[attr-defined]
+
+    response = await service.bootstrap(user.id)
+
+    assert response.setup_completed is True
+    assert response.state == WorkspaceAccessState.READY
+    assert (
+        response.organization_verification_state
+        == OrganizationVerificationState.SETUP_INCOMPLETE
+    )
+
+
 def test_derive_state_returns_setup_incomplete_when_setup_not_finished() -> None:
     service = _build_service()
     organization = _build_organization(

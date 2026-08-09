@@ -37,8 +37,8 @@ from app.services import (
     PassportShareViewService,
     PublicPassportService,
     TrustInvitationService,
-    TrustRegistryResolutionService,
     TrustRegistryAdminService,
+    TrustRegistryResolutionService,
     TrustRegistrySearchService,
     TrustRegistryService,
     TrustScoreService,
@@ -50,6 +50,7 @@ from app.services import (
     WorkspaceService,
 )
 from app.services.institution_people_service import InstitutionPeopleService
+from app.services.institution_workspace_service import InstitutionWorkspaceService
 from app.services.resume_review_service import ResumeReviewService
 from app.services.resume_service import ResumeService
 
@@ -182,6 +183,12 @@ def get_institution_people_service(
     session: AsyncSession = Depends(get_session),
 ) -> InstitutionPeopleService:
     return InstitutionPeopleService(session)
+
+
+def get_institution_workspace_service(
+    session: AsyncSession = Depends(get_session),
+) -> InstitutionWorkspaceService:
+    return InstitutionWorkspaceService(session)
 
 
 def get_workspace_service(session: AsyncSession = Depends(get_session)) -> WorkspaceService:
