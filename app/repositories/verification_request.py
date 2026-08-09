@@ -12,6 +12,20 @@ from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
 
 
+_DETAIL_OPTIONS = (
+    joinedload(VerificationRequest.organization),
+    joinedload(VerificationRequest.registry_record),
+    joinedload(VerificationRequest.trust_invitation),
+)
+_TERMINAL_STATUSES = (
+    "verified",
+    "rejected",
+    "unable_to_verify",
+    "cancelled",
+    "expired",
+)
+
+
 class VerificationRequestRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -24,11 +38,7 @@ class VerificationRequestRepository:
     async def get_by_public_id(self, request_public_id: UUID) -> VerificationRequest | None:
         stmt = (
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
+            .options(*_DETAIL_OPTIONS)
             .where(VerificationRequest.public_id == request_public_id)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
@@ -39,11 +49,7 @@ class VerificationRequestRepository:
     async def list_for_organization(self, organization_id: UUID) -> list[VerificationRequest]:
         stmt = (
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
+            .options(*_DETAIL_OPTIONS)
             .where(VerificationRequest.organization_id == organization_id)
             .order_by(VerificationRequest.created_at.desc())
         )
@@ -53,11 +59,7 @@ class VerificationRequestRepository:
     async def list_for_subject(self, subject_user_id: UUID) -> list[VerificationRequest]:
         stmt = (
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
+            .options(*_DETAIL_OPTIONS)
             .where(VerificationRequest.subject_user_id == subject_user_id)
             .order_by(VerificationRequest.created_at.desc())
         )
@@ -65,37 +67,67 @@ class VerificationRequestRepository:
         return list(rows.scalars().all())
 
     async def get_active_for_employment(self, employment_id: UUID) -> VerificationRequest | None:
-        terminal_statuses = ("verified", "rejected", "cancelled", "expired")
         stmt = (
             select(VerificationRequest)
+            .options(*_DETAIL_OPTIONS)
             .where(
                 VerificationRequest.employment_id == employment_id,
-                VerificationRequest.status.not_in(terminal_statuses),
+                VerificationRequest.status.not_in(_TERMINAL_STATUSES),
             )
             .order_by(VerificationRequest.created_at.desc())
         )
         return (await self._session.execute(stmt)).scalars().first()
 
     async def get_active_for_education(self, education_id: UUID) -> VerificationRequest | None:
-        terminal_statuses = ("verified", "rejected", "cancelled", "expired")
         stmt = (
             select(VerificationRequest)
+            .options(*_DETAIL_OPTIONS)
             .where(
                 VerificationRequest.education_id == education_id,
-                VerificationRequest.status.not_in(terminal_statuses),
+                VerificationRequest.status.not_in(_TERMINAL_STATUSES),
             )
             .order_by(VerificationRequest.created_at.desc())
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
+    async def get_latest_for_subject_employment(
+        self,
+        *,
+        employment_id: UUID,
+        subject_user_id: UUID,
+    ) -> VerificationRequest | None:
+        stmt = (
+            select(VerificationRequest)
+            .options(*_DETAIL_OPTIONS)
+            .where(
+                VerificationRequest.employment_id == employment_id,
+                VerificationRequest.subject_user_id == subject_user_id,
+            )
+            .order_by(VerificationRequest.created_at.desc(), VerificationRequest.id.desc())
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
+    async def get_latest_for_subject_education(
+        self,
+        *,
+        education_id: UUID,
+        subject_user_id: UUID,
+    ) -> VerificationRequest | None:
+        stmt = (
+            select(VerificationRequest)
+            .options(*_DETAIL_OPTIONS)
+            .where(
+                VerificationRequest.education_id == education_id,
+                VerificationRequest.subject_user_id == subject_user_id,
+            )
+            .order_by(VerificationRequest.created_at.desc(), VerificationRequest.id.desc())
         )
         return (await self._session.execute(stmt)).scalars().first()
 
     async def list_by_status(self, statuses: list[str]) -> list[VerificationRequest]:
         stmt = (
             select(VerificationRequest)
-            .options(
-                joinedload(VerificationRequest.organization),
-                joinedload(VerificationRequest.registry_record),
-                joinedload(VerificationRequest.trust_invitation),
-            )
+            .options(*_DETAIL_OPTIONS)
             .where(VerificationRequest.status.in_(statuses))
             .order_by(VerificationRequest.created_at.asc())
         )

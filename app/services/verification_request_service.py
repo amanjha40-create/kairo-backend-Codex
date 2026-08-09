@@ -243,8 +243,11 @@ class VerificationRequestService:
         employment = await self._employments.get_owned_active(employment_id, actor_user_id)
         if employment is None:
             raise NotFoundError("Employment not found")
-        request = await self._requests.get_active_for_employment(employment_id)
-        if request is None or request.subject_user_id != actor_user_id:
+        request = await self._requests.get_latest_for_subject_employment(
+            employment_id=employment_id,
+            subject_user_id=actor_user_id,
+        )
+        if request is None:
             raise NotFoundError("Employment verification request not found")
         return await self._to_subject_response(request)
 
@@ -337,8 +340,11 @@ class VerificationRequestService:
         education = await self._educations.get_owned(education_id, actor_user_id)
         if education is None:
             raise NotFoundError("Education not found")
-        request = await self._requests.get_active_for_education(education_id)
-        if request is None or request.subject_user_id != actor_user_id:
+        request = await self._requests.get_latest_for_subject_education(
+            education_id=education_id,
+            subject_user_id=actor_user_id,
+        )
+        if request is None:
             raise NotFoundError("Education verification request not found")
         return await self._to_subject_response(request)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -320,6 +320,68 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
     result = await service.submit_for_review(actor_id, "candidate@example.com", request.public_id)
 
     assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_get_employment_verification_request_returns_latest_terminal_request_for_owner() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    claim_employment_id = uuid4()
+    request = SimpleNamespace(public_id=uuid4(), status=VerificationRequestStatus.VERIFIED)
+
+    class Employments:
+        async def get_owned_active(self, candidate_employment_id, candidate_user_id):
+            assert candidate_employment_id == claim_employment_id
+            assert candidate_user_id == actor_id
+            return SimpleNamespace(id=claim_employment_id)
+
+    class Requests:
+        async def get_latest_for_subject_employment(self, *, employment_id: UUID, subject_user_id: UUID):
+            assert employment_id == claim_employment_id
+            assert subject_user_id == actor_id
+            return request
+
+    async def response(_request):
+        return _request
+
+    service._employments = Employments()
+    service._requests = Requests()
+    service._to_subject_response = response
+
+    result = await service.get_employment_verification_request(actor_id, claim_employment_id)
+
+    assert result is request
+
+
+@pytest.mark.asyncio
+async def test_get_education_verification_request_returns_latest_terminal_request_for_owner() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    claim_education_id = uuid4()
+    request = SimpleNamespace(public_id=uuid4(), status=VerificationRequestStatus.VERIFIED)
+
+    class Educations:
+        async def get_owned(self, candidate_education_id, candidate_user_id):
+            assert candidate_education_id == claim_education_id
+            assert candidate_user_id == actor_id
+            return SimpleNamespace(id=claim_education_id)
+
+    class Requests:
+        async def get_latest_for_subject_education(self, *, education_id: UUID, subject_user_id: UUID):
+            assert education_id == claim_education_id
+            assert subject_user_id == actor_id
+            return request
+
+    async def response(_request):
+        return _request
+
+    service._educations = Educations()
+    service._requests = Requests()
+    service._to_subject_response = response
+
+    result = await service.get_education_verification_request(actor_id, claim_education_id)
+
+    assert result is request
 
 
 @pytest.mark.asyncio

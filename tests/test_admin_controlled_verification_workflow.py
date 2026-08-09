@@ -195,6 +195,35 @@ async def test_admin_finalization_notifies_candidate_once_with_authoritative_pay
 
 
 @pytest.mark.asyncio
+async def test_admin_finalization_notifies_candidate_for_education_when_request_type_is_string() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._notifications = SimpleNamespace(create_and_dispatch=AsyncMock())
+    education_id = uuid4()
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        subject_name="Candidate User",
+        target_organization_name="Example University",
+        organization=None,
+        request_type="education",
+        employment_id=None,
+        education_id=education_id,
+    )
+
+    await service._notify_finalization(request, uuid4(), "verified")
+
+    service._notifications.create_and_dispatch.assert_awaited_once()
+    notification_request = service._notifications.create_and_dispatch.await_args.args[0]
+    assert notification_request.payload["request_type"] == "education"
+    assert notification_request.payload["linked_record_type"] == "education"
+    assert notification_request.payload["linked_record_id"] == str(education_id)
+    assert notification_request.metadata["verification_request_public_id"] == str(request.public_id)
+    assert notification_request.metadata["linked_record_type"] == "education"
+    assert notification_request.metadata["linked_record_id"] == str(education_id)
+
+
+@pytest.mark.asyncio
 async def test_unlinked_legacy_request_fails_closed_at_finalization() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     request = SimpleNamespace(

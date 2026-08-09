@@ -887,6 +887,11 @@ class VerificationRequestAdminReviewService:
         education.reviewer_note = decision_summary
 
     async def _notify_finalization(self, request, actor_user_id: UUID, outcome: str) -> None:  # noqa: ANN001
+        request_type = getattr(request.request_type, "value", request.request_type)
+        employment_id = getattr(request, "employment_id", None)
+        education_id = getattr(request, "education_id", None)
+        linked_record_type = "employment" if employment_id is not None else "education"
+        linked_record_id = employment_id if employment_id is not None else education_id
         try:
             await self._notifications.create_and_dispatch(
                 NotificationRequest(
@@ -902,11 +907,17 @@ class VerificationRequestAdminReviewService:
                             if request.organization is not None
                             else request.target_organization_name or "the verifier organization"
                         ),
-                        "request_type": request.request_type.value,
+                        "request_type": request_type,
                         "completed_at_iso": datetime.now(tz=UTC).isoformat(),
                         "outcome": outcome,
+                        "linked_record_type": linked_record_type,
+                        "linked_record_id": str(linked_record_id) if linked_record_id is not None else None,
                     },
-                    metadata={"verification_request_public_id": str(request.public_id)},
+                    metadata={
+                        "verification_request_public_id": str(request.public_id),
+                        "linked_record_type": linked_record_type,
+                        "linked_record_id": str(linked_record_id) if linked_record_id is not None else None,
+                    },
                 ),
                 actor_user_id=actor_user_id,
             )
