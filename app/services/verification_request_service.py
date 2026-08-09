@@ -607,10 +607,38 @@ class VerificationRequestService:
         verification_request_public_id: UUID,
     ) -> VerificationRequestResponse:
         request = await self._get_required_request(verification_request_public_id)
-        if not self._is_subject_actor(request, actor_user_id, actor_email):
-            membership = await self._get_membership_for_request(request, actor_user_id)
-            if membership is not None:
-                raise ForbiddenError("Only the request subject can accept this verification request")
+        membership = await self._get_membership_for_request(request, actor_user_id)
+        is_subject = self._is_subject_actor(request, actor_user_id, actor_email)
+
+        if membership is not None:
+            self._assert_active_membership_access(
+                request.organization.suspended_at if request.organization is not None else None,
+                membership,
+            )
+            if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+                organization_role = getattr(membership.role, "value", membership.role)
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.IN_PROGRESS,
+                    actor_user_id=actor_user_id,
+                    event_type="verification_request_organization_accepted",
+                    event_source=VerificationRequestEventSource.ORGANIZATION,
+                    metadata={
+                        "organization_member_public_id": str(membership.public_id),
+                        "organization_role": str(organization_role),
+                    },
+                )
+                return await self._commit_reload_org_response(request.public_id, actor_user_id)
+            if not is_subject:
+                raise ConflictError("Verification request is not awaiting organization acceptance")
+
+        if (
+            request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE
+            and is_subject
+        ):
+            raise ForbiddenError("Only the target organization can accept this verification request")
+
+        if not is_subject:
             raise NotFoundError("Verification request not found")
 
         if request.subject_user_id is None:

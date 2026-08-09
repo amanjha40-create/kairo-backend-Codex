@@ -12,7 +12,8 @@ import pytest
 from app.api.v1.router import api_router
 from app.education.enums import EducationVerificationStatus
 from app.employment.enums import DocumentVerificationStatus
-from app.exceptions import ConflictError, EmploymentWorkflowError
+from app.exceptions import ConflictError, EmploymentWorkflowError, ForbiddenError, NotFoundError
+from app.organization.enums import OrganizationRole
 from app.schemas.verification_request import (
     EducationVerificationDraftRequest,
     VerificationContactRequest,
@@ -22,6 +23,7 @@ from app.services.employer_verification_service import EmployerVerificationServi
 from app.services.verification_request_service import VerificationRequestService
 from app.verification_requests.enums import (
     VerificationContactType,
+    VerificationRequestEventSource,
     VerificationRequestOriginType,
     VerificationRequestStatus,
     VerificationRequestType,
@@ -427,7 +429,9 @@ async def test_employer_outreach_fails_before_admin_approval() -> None:
 @pytest.mark.asyncio
 async def test_employer_outreach_allows_admin_approved_request_after_organization_resolution() -> None:
     service = EmployerVerificationService.__new__(EmployerVerificationService)
-    service.request_verification = AsyncMock(return_value=SimpleNamespace(verifier_email_masked="h***@example.com"))
+    service.request_verification = AsyncMock(
+        return_value=SimpleNamespace(verifier_email_masked="h***@example.com")
+    )
     service._workflow = SimpleNamespace(record_action=AsyncMock())
     service._session = SimpleNamespace(commit=AsyncMock())
     request = SimpleNamespace(
@@ -447,3 +451,284 @@ async def test_employer_outreach_allows_admin_approved_request_after_organizatio
     service.request_verification.assert_awaited_once()
     service._workflow.record_action.assert_awaited_once()
     service._session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_target_hr_member_can_accept_pending_organization_acceptance() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    organization_id = uuid4()
+    organization_public_id = uuid4()
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        organization_id=organization_id,
+        organization=SimpleNamespace(public_id=organization_public_id, suspended_at=None),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+        employment_id=uuid4(),
+    )
+    membership = SimpleNamespace(
+        public_id=uuid4(),
+        role=OrganizationRole.OWNER.value,
+        suspended_at=None,
+    )
+    transitions: list[
+        tuple[
+            VerificationRequestStatus,
+            str,
+            VerificationRequestEventSource,
+            dict[str, object],
+        ]
+    ] = []
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return membership
+
+    class Workflow:
+        async def transition(
+            self,
+            target,
+            *,
+            target_status,
+            event_type,
+            event_source,
+            metadata,
+            **_kwargs,
+        ):
+            transitions.append((target_status, event_type, event_source, metadata))
+            target.status = target_status
+
+    async def commit_reload_org_response(_public_id, _actor_user_id):
+        return request
+
+    bind = VerificationRequestService
+
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._workflow = Workflow()
+    service._commit_reload_org_response = commit_reload_org_response
+    service._assert_active_membership_access = bind._assert_active_membership_access.__get__(service, bind)
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    result = await service.accept(actor_id, "hr@example.com", request.public_id)
+
+    assert result is request
+    assert request.status == VerificationRequestStatus.IN_PROGRESS
+    assert transitions == [
+        (
+            VerificationRequestStatus.IN_PROGRESS,
+            "verification_request_organization_accepted",
+            VerificationRequestEventSource.ORGANIZATION,
+            {
+                "organization_member_public_id": str(membership.public_id),
+                "organization_role": OrganizationRole.OWNER.value,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_subject_cannot_accept_pending_organization_acceptance() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        organization_id=uuid4(),
+        organization=SimpleNamespace(suspended_at=None),
+        subject_user_id=actor_id,
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+    )
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return None
+
+    bind = VerificationRequestService
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    with pytest.raises(
+        ForbiddenError,
+        match="Only the target organization can accept this verification request",
+    ):
+        await service.accept(actor_id, "candidate@example.com", request.public_id)
+
+
+@pytest.mark.asyncio
+async def test_unrelated_organization_cannot_accept_request() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        organization_id=uuid4(),
+        organization=SimpleNamespace(suspended_at=None),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+    )
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return None
+
+    bind = VerificationRequestService
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    with pytest.raises(NotFoundError, match="Verification request not found"):
+        await service.accept(uuid4(), "hr@example.com", request.public_id)
+
+
+@pytest.mark.asyncio
+async def test_suspended_membership_is_rejected_for_organization_acceptance() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        organization_id=uuid4(),
+        organization=SimpleNamespace(suspended_at=None),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+    )
+    membership = SimpleNamespace(
+        public_id=uuid4(),
+        role=OrganizationRole.REVIEWER,
+        suspended_at=datetime.now(tz=UTC),
+    )
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return membership
+
+    bind = VerificationRequestService
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._assert_active_membership_access = bind._assert_active_membership_access.__get__(service, bind)
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    with pytest.raises(ForbiddenError, match="Organization membership is suspended"):
+        await service.accept(uuid4(), "hr@example.com", request.public_id)
+
+
+@pytest.mark.asyncio
+async def test_wrong_state_is_rejected_for_organization_acceptance() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        organization_id=uuid4(),
+        organization=SimpleNamespace(suspended_at=None),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+    )
+    membership = SimpleNamespace(public_id=uuid4(), role=OrganizationRole.ADMIN, suspended_at=None)
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return membership
+
+    bind = VerificationRequestService
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._assert_active_membership_access = bind._assert_active_membership_access.__get__(service, bind)
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    with pytest.raises(
+        ConflictError,
+        match="Verification request is not awaiting organization acceptance",
+    ):
+        await service.accept(uuid4(), "hr@example.com", request.public_id)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_organization_accept_is_safely_rejected() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    request = SimpleNamespace(
+        public_id=uuid4(),
+        organization_id=uuid4(),
+        organization=SimpleNamespace(suspended_at=None),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.IN_PROGRESS,
+    )
+    membership = SimpleNamespace(public_id=uuid4(), role=OrganizationRole.ADMIN, suspended_at=None)
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return membership
+
+    bind = VerificationRequestService
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._assert_active_membership_access = bind._assert_active_membership_access.__get__(service, bind)
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    with pytest.raises(
+        ConflictError,
+        match="Verification request is not awaiting organization acceptance",
+    ):
+        await service.accept(uuid4(), "hr@example.com", request.public_id)
+
+
+@pytest.mark.asyncio
+async def test_institution_member_can_accept_pending_organization_acceptance_for_education() -> None:
+    service = VerificationRequestService.__new__(VerificationRequestService)
+    actor_id = uuid4()
+    education = SimpleNamespace(
+        verification_status=EducationVerificationStatus.DRAFT.value,
+    )
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        organization_id=uuid4(),
+        organization=SimpleNamespace(public_id=uuid4(), suspended_at=None),
+        subject_user_id=uuid4(),
+        subject_email="candidate@example.com",
+        status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+        education_id=uuid4(),
+    )
+    membership = SimpleNamespace(public_id=uuid4(), role=OrganizationRole.REVIEWER, suspended_at=None)
+
+    async def get_required_request(_public_id):
+        return request
+
+    async def get_membership_for_request(_request, _actor_id):
+        return membership
+
+    class Workflow:
+        async def transition(self, target, *, target_status, **_kwargs):
+            target.status = target_status
+
+    async def commit_reload_org_response(_public_id, _actor_user_id):
+        return request
+
+    bind = VerificationRequestService
+    service._get_required_request = get_required_request
+    service._get_membership_for_request = get_membership_for_request
+    service._workflow = Workflow()
+    service._commit_reload_org_response = commit_reload_org_response
+    service._assert_active_membership_access = bind._assert_active_membership_access.__get__(service, bind)
+    service._is_subject_actor = bind._is_subject_actor.__get__(service, bind)
+
+    result = await service.accept(actor_id, "registrar@example.edu", request.public_id)
+
+    assert result is request
+    assert request.status == VerificationRequestStatus.IN_PROGRESS
+    assert education.verification_status == EducationVerificationStatus.DRAFT.value
