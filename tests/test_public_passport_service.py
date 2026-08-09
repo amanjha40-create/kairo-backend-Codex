@@ -40,16 +40,30 @@ class _FakeSession:
         if entity is Employment:
             rows = self._employments
             for criterion in statement._where_criteria:
-                right = getattr(criterion.right, "value", None)
-                if right is not None and str(criterion.left).endswith("verification_status"):
-                    rows = [row for row in rows if row.verification_status == right]
+                if str(criterion.left).endswith("verification_status"):
+                    right = getattr(criterion.right, "value", None)
+                    if right is None:
+                        continue
+                    allowed = (
+                        set(right)
+                        if isinstance(right, (tuple, list, set, frozenset))
+                        else {right}
+                    )
+                    rows = [row for row in rows if row.verification_status in allowed]
             return _ExecuteResult(rows)
         if entity is Education:
             rows = self._educations
             for criterion in statement._where_criteria:
-                right = getattr(criterion.right, "value", None)
-                if right is not None and str(criterion.left).endswith("verification_status"):
-                    rows = [row for row in rows if row.verification_status == right]
+                if str(criterion.left).endswith("verification_status"):
+                    right = getattr(criterion.right, "value", None)
+                    if right is None:
+                        continue
+                    allowed = (
+                        set(right)
+                        if isinstance(right, (tuple, list, set, frozenset))
+                        else {right}
+                    )
+                    rows = [row for row in rows if row.verification_status in allowed]
             return _ExecuteResult(rows)
         raise AssertionError(f"Unexpected entity query: {entity}")
 
@@ -90,6 +104,7 @@ async def test_public_vault_filters_employment_and_education_to_trusted_records_
     session = _FakeSession(
         employments=[
             _employment(status="approved", employer="Verified Employer"),
+            _employment(status="verified", employer="Verified Legacy Employer"),
             _employment(status="draft", employer="Draft Employer"),
             _employment(status="submitted", employer="Pending Employer"),
             _employment(status="rejected", employer="Rejected Employer"),
@@ -122,8 +137,8 @@ async def test_public_vault_filters_employment_and_education_to_trusted_records_
         public_only=True,
     )
 
-    assert [row.verification_status for row in vault.employments] == ["approved"]
-    assert [row.employer_legal_name for row in vault.employments] == [None]
+    assert [row.verification_status for row in vault.employments] == ["approved", "verified"]
+    assert [row.employer_legal_name for row in vault.employments] == [None, None]
     assert [row.verification_status for row in vault.educations] == ["verified"]
     assert [row.institution_name for row in vault.educations] == ["Verified University"]
 
@@ -133,6 +148,7 @@ async def test_owner_vault_keeps_full_career_history() -> None:
     session = _FakeSession(
         employments=[
             _employment(status="approved", employer="Verified Employer"),
+            _employment(status="verified", employer="Verified Legacy Employer"),
             _employment(status="draft", employer="Draft Employer"),
             _employment(status="submitted", employer="Pending Employer"),
         ],
@@ -165,11 +181,13 @@ async def test_owner_vault_keeps_full_career_history() -> None:
 
     assert [row.verification_status for row in vault.employments] == [
         "approved",
+        "verified",
         "draft",
         "submitted",
     ]
     assert [row.employer_legal_name for row in vault.employments] == [
         "Verified Employer",
+        "Verified Legacy Employer",
         "Draft Employer",
         "Pending Employer",
     ]

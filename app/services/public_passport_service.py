@@ -50,6 +50,14 @@ from app.services.user_service import UserService
 
 
 class PublicPassportService:
+    _PUBLIC_EMPLOYMENT_STATUSES = frozenset(
+        {
+            EmploymentVerificationStatus.APPROVED.value,
+            EmploymentVerificationStatus.VERIFIED.value,
+        }
+    )
+    _PUBLIC_EDUCATION_STATUSES = frozenset({EducationVerificationStatus.VERIFIED.value})
+
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self._session = session
         self._settings = settings
@@ -117,7 +125,7 @@ class PublicPassportService:
             )
             if public_only:
                 employment_query = employment_query.where(
-                    Employment.verification_status == EmploymentVerificationStatus.APPROVED.value,
+                    Employment.verification_status.in_(self._PUBLIC_EMPLOYMENT_STATUSES),
                 )
             emp_rows = (await self._session.execute(employment_query)).scalars().all()
 
@@ -168,7 +176,7 @@ class PublicPassportService:
             )
             if public_only:
                 education_query = education_query.where(
-                    Education.verification_status == EducationVerificationStatus.VERIFIED.value,
+                    Education.verification_status.in_(self._PUBLIC_EDUCATION_STATUSES),
                 )
             edu_rows = (await self._session.execute(education_query)).scalars().all()
             educations = [
