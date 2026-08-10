@@ -6,6 +6,15 @@ from collections.abc import Callable
 from typing import Any
 
 from app.integrations.email.templates import DEFAULT_TEMPLATE_VERSION, EmailTemplateKey
+from app.integrations.email.templates.employer_verification import (
+    EmployerVerificationContext,
+    render_employer_verification,
+)
+from app.integrations.email.templates.password_reset import (
+    PasswordResetContext,
+    render_password_reset,
+)
+from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
 from app.integrations.email.templates.trust_invitation import (
     TrustInvitationContext,
     render_trust_invitation,
@@ -15,13 +24,88 @@ from app.integrations.email.templates.verification_completed import (
     render_verification_completed,
 )
 from app.schemas.email_delivery import (
+    EmployerVerificationEmailTemplateData,
+    PasswordResetEmailTemplateData,
     RenderedEmailMessage,
+    SignupOtpEmailTemplateData,
     TrustInvitationEmailTemplateData,
     VerificationCompletedEmailTemplateData,
 )
 
-
 RendererFn = Callable[[str, dict[str, Any]], RenderedEmailMessage]
+
+
+def _render_signup_otp(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = SignupOtpEmailTemplateData.model_validate(data)
+    content = render_signup_otp(
+        SignupOtpContext(
+            code=payload.code,
+            ttl_minutes=payload.ttl_minutes,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.SIGNUP_OTP.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={
+            "ttl_minutes": payload.ttl_minutes,
+        },
+    )
+
+
+def _render_password_reset(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = PasswordResetEmailTemplateData.model_validate(data)
+    content = render_password_reset(
+        PasswordResetContext(
+            reset_token=payload.reset_token,
+            ttl_minutes=payload.ttl_minutes,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.PASSWORD_RESET.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={
+            "ttl_minutes": payload.ttl_minutes,
+        },
+    )
+
+
+def _render_employer_verification(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = EmployerVerificationEmailTemplateData.model_validate(data)
+    content = render_employer_verification(
+        EmployerVerificationContext(
+            contact_name=payload.contact_name,
+            subject_full_name=payload.subject_full_name,
+            employer_name=payload.employer_name,
+            job_title=payload.job_title,
+            relationship=payload.relationship,
+            review_url=payload.review_url,
+            expires_hours=payload.ttl_hours,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.EMPLOYER_VERIFICATION.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={
+            "contact_name": payload.contact_name,
+            "subject_full_name": payload.subject_full_name,
+            "employer_name": payload.employer_name,
+            "job_title": payload.job_title,
+            "relationship": payload.relationship,
+            "ttl_hours": payload.ttl_hours,
+        },
+    )
 
 
 def _render_trust_invitation(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
@@ -80,6 +164,9 @@ class EmailTemplateRenderer:
 
     def __init__(self) -> None:
         self._registry: dict[str, RendererFn] = {
+            EmailTemplateKey.SIGNUP_OTP.value: _render_signup_otp,
+            EmailTemplateKey.PASSWORD_RESET.value: _render_password_reset,
+            EmailTemplateKey.EMPLOYER_VERIFICATION.value: _render_employer_verification,
             EmailTemplateKey.TRUST_INVITATION.value: _render_trust_invitation,
             EmailTemplateKey.VERIFICATION_COMPLETED.value: _render_verification_completed,
         }

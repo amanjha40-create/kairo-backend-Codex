@@ -5,9 +5,9 @@ Environment variables use SCREAMING_SNAKE_CASE. Values are documented in `.env.e
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from functools import lru_cache
-import re
 from math import isclose
 from typing import Self
 
@@ -219,7 +219,11 @@ class Settings(BaseSettings):
     )
     email_from: str = Field(
         default="noreply@kairo.app",
-        validation_alias=AliasChoices("EMAIL_FROM"),
+        validation_alias=AliasChoices("EMAIL_FROM_ADDRESS", "EMAIL_FROM"),
+    )
+    email_from_name: str = Field(
+        default="Kairo",
+        validation_alias=AliasChoices("EMAIL_FROM_NAME"),
     )
     email_reply_to: str = Field(
         default="support@kairoid.com",
@@ -227,8 +231,8 @@ class Settings(BaseSettings):
     )
     email_backend: str = Field(
         default="console",
-        description="console | smtp | ses — external delivery requires EMAIL_SEND_ENABLED=true",
-        validation_alias=AliasChoices("EMAIL_BACKEND"),
+        description="console | smtp | ses | brevo — external delivery requires EMAIL_SEND_ENABLED=true",
+        validation_alias=AliasChoices("EMAIL_PROVIDER", "EMAIL_BACKEND"),
     )
     email_send_enabled: bool = Field(
         default=False,
@@ -262,6 +266,20 @@ class Settings(BaseSettings):
     )
     ses_from_email: str | None = Field(
         default=None, validation_alias=AliasChoices("SES_FROM_EMAIL")
+    )
+    brevo_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BREVO_API_KEY"),
+    )
+    brevo_api_base_url: str = Field(
+        default="https://api.brevo.com/v3",
+        validation_alias=AliasChoices("BREVO_API_BASE_URL"),
+    )
+    brevo_timeout_seconds: float = Field(
+        default=15.0,
+        ge=5.0,
+        le=120.0,
+        validation_alias=AliasChoices("BREVO_TIMEOUT_SECONDS"),
     )
 
     # --- Employer verification magic links ---
@@ -532,7 +550,7 @@ class Settings(BaseSettings):
                 msg = "JWT_SECRET_KEY must be at least 48 characters in APP_ENV=production."
                 raise ValueError(msg)
             if self.email_backend == "console":
-                msg = "EMAIL_BACKEND must be smtp or ses in APP_ENV=production."
+                msg = "EMAIL_PROVIDER must not be console in APP_ENV=production."
                 raise ValueError(msg)
             if self.phone_otp_enabled and self.phone_otp_backend == "console":
                 msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
@@ -569,9 +587,12 @@ class Settings(BaseSettings):
             if not self.ses_from_email:
                 msg = "SES_FROM_EMAIL is required when EMAIL_BACKEND=ses."
                 raise ValueError(msg)
+        if self.email_backend == "brevo" and self.brevo_api_key is None:
+            msg = "BREVO_API_KEY is required when EMAIL_PROVIDER=brevo."
+            raise ValueError(msg)
 
-        if self.email_backend not in {"console", "smtp", "ses"}:
-            msg = "EMAIL_BACKEND must be one of: console, smtp, ses."
+        if self.email_backend not in {"console", "smtp", "ses", "brevo"}:
+            msg = "EMAIL_PROVIDER must be one of: console, smtp, ses, brevo."
             raise ValueError(msg)
 
         if self.phone_otp_backend not in {"console", "staging_fixed", "sns"}:

@@ -44,8 +44,12 @@ class SesEmailProvider:
                 text_body=message.text_body,
             ),
             to_email=message.to_email,
-            from_email=self._settings.ses_from_email or self._settings.email_from,
-            reply_to=self._settings.email_reply_to,
+            from_email=(
+                message.from_email
+                or self._settings.ses_from_email
+                or self._settings.email_from
+            ),
+            reply_to=message.reply_to or self._settings.email_reply_to,
         )
 
         try:

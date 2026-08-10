@@ -8,8 +8,8 @@ import smtplib
 
 from app.config import Settings, get_settings
 from app.exceptions import ServiceUnavailableError
-from app.integrations.email.smtp import send_message_via_smtp
 from app.integrations.email.message import build_mime_message
+from app.integrations.email.smtp import send_message_via_smtp
 from app.integrations.email.templates.base import TransactionalEmailContent
 from app.schemas.email_delivery import EmailSendResult, RenderedEmailMessage
 
@@ -41,8 +41,8 @@ class SmtpEmailProvider:
                 text_body=message.text_body,
             ),
             to_email=message.to_email,
-            from_email=self._settings.email_from,
-            reply_to=self._settings.email_reply_to,
+            from_email=message.from_email or self._settings.email_from,
+            reply_to=message.reply_to or self._settings.email_reply_to,
         )
 
         try:

@@ -31,6 +31,51 @@ def test_render_trust_invitation_template() -> None:
     assert message.audit_payload["organization_name"] == "Kairo Labs"
 
 
+@pytest.mark.parametrize(
+    ("template_key", "data", "expected_phrase"),
+    [
+        (
+            EmailTemplateKey.SIGNUP_OTP.value,
+            {"code": "123456", "ttl_minutes": 10},
+            "verification code",
+        ),
+        (
+            EmailTemplateKey.PASSWORD_RESET.value,
+            {"reset_token": "reset-token", "ttl_minutes": 15},
+            "password reset token",
+        ),
+        (
+            EmailTemplateKey.EMPLOYER_VERIFICATION.value,
+            {
+                "contact_name": "Reviewer",
+                "subject_full_name": "Candidate",
+                "employer_name": "Example Company",
+                "job_title": "Engineer",
+                "relationship": "HR",
+                "review_url": "https://example.com/review/token",
+                "ttl_hours": 72,
+            },
+            "verify their employment",
+        ),
+    ],
+)
+def test_render_additional_transactional_templates(
+    template_key: str,
+    data: dict[str, object],
+    expected_phrase: str,
+) -> None:
+    renderer = EmailTemplateRenderer()
+
+    message = renderer.render(
+        template_key=template_key,
+        to_email="aman3@test.com",
+        data=data,
+    )
+
+    assert message.template_key == template_key
+    assert expected_phrase in message.text_body.lower()
+
+
 def test_unknown_template_key_is_rejected() -> None:
     renderer = EmailTemplateRenderer()
 

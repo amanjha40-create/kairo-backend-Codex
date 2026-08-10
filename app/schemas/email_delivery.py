@@ -17,6 +17,32 @@ class TrustInvitationEmailTemplateData(BaseModel):
     expires_at_iso: str = Field(min_length=1, max_length=64)
 
 
+class SignupOtpEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    code: str = Field(min_length=6, max_length=12)
+    ttl_minutes: int = Field(ge=1, le=1440)
+
+
+class PasswordResetEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reset_token: str = Field(min_length=1, max_length=2048)
+    ttl_minutes: int = Field(ge=1, le=1440)
+
+
+class EmployerVerificationEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    contact_name: str = Field(min_length=1, max_length=255)
+    subject_full_name: str = Field(min_length=1, max_length=255)
+    employer_name: str = Field(min_length=1, max_length=255)
+    job_title: str = Field(min_length=1, max_length=255)
+    relationship: str = Field(min_length=1, max_length=255)
+    review_url: str = Field(min_length=1, max_length=4096)
+    ttl_hours: int = Field(ge=1, le=720)
+
+
 class VerificationCompletedEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -33,6 +59,10 @@ class RenderedEmailMessage(BaseModel):
     subject: str = Field(min_length=1, max_length=255)
     text_body: str = Field(min_length=1)
     html_body: str | None = None
+    from_email: str | None = Field(default=None, min_length=3, max_length=320)
+    reply_to: str | None = Field(default=None, min_length=3, max_length=320)
+    tags: list[str] = Field(default_factory=list)
+    correlation_id: str | None = Field(default=None, max_length=255)
     audit_payload: dict[str, Any] = Field(default_factory=dict)
 
 

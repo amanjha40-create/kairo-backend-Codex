@@ -8,12 +8,12 @@ from email import policy
 from email.parser import BytesParser
 
 import pytest
+from botocore.exceptions import ClientError
 
 from app.config import Settings
-from app.integrations.email.sender import get_email_sender
-from app.integrations.email.ses import SesEmailSender, send_message_via_ses
-from botocore.exceptions import ClientError
 from app.integrations.email.message import build_mime_message
+from app.integrations.email.sender import ProviderEmailSender, get_email_sender
+from app.integrations.email.ses import SesEmailSender, send_message_via_ses
 from app.integrations.email.templates.base import TransactionalEmailContent
 
 
@@ -40,7 +40,7 @@ def _settings(**overrides: object) -> Settings:
 
 
 def test_sender_factory_selects_ses() -> None:
-    assert isinstance(get_email_sender(_settings()), SesEmailSender)
+    assert isinstance(get_email_sender(_settings()), ProviderEmailSender)
 
 
 def test_mime_builder_uses_valid_smtp_multipart_message() -> None:
@@ -66,8 +66,10 @@ def test_mime_builder_uses_valid_smtp_multipart_message() -> None:
     assert parsed["Message-ID"]
     assert parsed["MIME-Version"] == "1.0"
     assert parsed.get_content_type() == "multipart/alternative"
-    assert parsed.get_body(preferencelist=("plain",)).get_content().replace("\r\n", "\n") == "Plain résumé\n"
-    assert parsed.get_body(preferencelist=("html",)).get_content().replace("\r\n", "\n") == "<p>HTML résumé</p>\n"
+    plain_body = parsed.get_body(preferencelist=("plain",)).get_content().replace("\r\n", "\n")
+    html_body = parsed.get_body(preferencelist=("html",)).get_content().replace("\r\n", "\n")
+    assert plain_body == "Plain résumé\n"
+    assert html_body == "<p>HTML résumé</p>\n"
 
 
 @pytest.mark.parametrize("field", ["subject", "to_email", "from_email", "reply_to"])
