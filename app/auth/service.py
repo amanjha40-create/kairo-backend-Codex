@@ -437,7 +437,12 @@ class AuthService:
         self._session.add(new_row)
         await self._session.flush()
 
-        access = create_access_token(self._settings, subject=user.id, role=user.role)
+        access = create_access_token(
+            self._settings,
+            subject=user.id,
+            role=user.role,
+            extra_claims={"sid": str(existing.family_id)},
+        )
         ttl_sec = self._settings.jwt_access_ttl_minutes * 60
         tokens = TokenResponse(
             access_token=access,
@@ -857,7 +862,12 @@ class AuthService:
         self._session.add(row)
         await self._session.flush()
 
-        access = create_access_token(self._settings, subject=user.id, role=user.role)
+        access = create_access_token(
+            self._settings,
+            subject=user.id,
+            role=user.role,
+            extra_claims={"sid": str(family_id)},
+        )
         ttl_sec = self._settings.jwt_access_ttl_minutes * 60
         return TokenResponse(
             access_token=access,
