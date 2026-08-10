@@ -30,6 +30,7 @@ class CurrentUser:
     role: str
     full_name: str | None = None
     is_active: bool = True
+    session_family_id: UUID | None = None
 
 
 async def get_current_user(
@@ -51,8 +52,12 @@ async def get_current_user(
 
     try:
         uid = UUID(str(payload["sub"]))
-    except (KeyError, ValueError, TypeError):
-        raise UnauthorizedError("Invalid token")
+    except (KeyError, ValueError, TypeError) as exc:
+        raise UnauthorizedError("Invalid token") from None
+    try:
+        session_family_id = UUID(str(payload["sid"])) if payload.get("sid") is not None else None
+    except (ValueError, TypeError):
+        session_family_id = None
 
     repo = UserRepository(session)
     user = await repo.get_by_id(uid)
@@ -66,6 +71,7 @@ async def get_current_user(
         role=user.role,
         full_name=user.full_name,
         is_active=user.is_active,
+        session_family_id=session_family_id,
     )
 
 
@@ -84,6 +90,10 @@ async def get_optional_current_user(
         uid = UUID(str(payload["sub"]))
     except (KeyError, ValueError, TypeError):
         return None
+    try:
+        session_family_id = UUID(str(payload["sid"])) if payload.get("sid") is not None else None
+    except (ValueError, TypeError):
+        session_family_id = None
     repo = UserRepository(session)
     user = await repo.get_by_id(uid)
     if user is None or not user.is_active or user.email_verified_at is None:
@@ -94,6 +104,7 @@ async def get_optional_current_user(
         role=user.role,
         full_name=user.full_name,
         is_active=user.is_active,
+        session_family_id=session_family_id,
     )
 
 

@@ -5,17 +5,17 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.config import Settings, get_settings
+from app.db.session import get_session
 from app.schemas.account_settings import (
     AccountSessionResponse,
     AccountSettingsResponse,
     AccountSettingsUpdate,
 )
 from app.services.account_settings_service import AccountSettingsService
-from app.db.session import get_session
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -49,7 +49,7 @@ async def list_account_sessions(
     current: CurrentUser = Depends(get_current_user),
     service: AccountSettingsService = Depends(get_account_settings_service),
 ) -> list[AccountSessionResponse]:
-    return await service.list_sessions(current.id)
+    return await service.list_sessions(current.id, current.session_family_id)
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -58,7 +58,7 @@ async def revoke_account_session(
     current: CurrentUser = Depends(get_current_user),
     service: AccountSettingsService = Depends(get_account_settings_service),
 ) -> None:
-    await service.revoke_session(current.id, session_id)
+    await service.revoke_session(current.id, session_id, current.session_family_id)
 
 
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
@@ -66,4 +66,4 @@ async def revoke_all_account_sessions(
     current: CurrentUser = Depends(get_current_user),
     service: AccountSettingsService = Depends(get_account_settings_service),
 ) -> None:
-    await service.revoke_all_sessions(current.id)
+    await service.revoke_all_sessions(current.id, current.session_family_id)

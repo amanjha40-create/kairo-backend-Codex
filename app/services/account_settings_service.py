@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.exceptions import NotFoundError
+from app.exceptions import ConflictError, NotFoundError
 from app.models import RefreshToken, User
 from app.repositories.notification import NotificationPreferenceRepository
 from app.repositories.refresh_token import RefreshTokenRepository
@@ -75,7 +75,11 @@ class AccountSettingsService:
             await self._session.commit()
         return await self.get(user_id)
 
-    async def list_sessions(self, user_id: UUID) -> list[AccountSessionResponse]:
+    async def list_sessions(
+        self,
+        user_id: UUID,
+        current_session_family_id: UUID | None = None,
+    ) -> list[AccountSessionResponse]:
         await self._require_user(user_id)
         rows = list(
             (
@@ -97,11 +101,17 @@ class AccountSettingsService:
                 created_at=row.created_at,
                 expires_at=row.expires_at,
                 last_active_at=row.updated_at,
+                current=row.family_id == current_session_family_id,
             )
             for row in rows
         ]
 
-    async def revoke_session(self, user_id: UUID, session_public_id: UUID) -> None:
+    async def revoke_session(
+        self,
+        user_id: UUID,
+        session_public_id: UUID,
+        current_session_family_id: UUID | None = None,
+    ) -> None:
         await self._require_user(user_id)
         row = await self._session.scalar(
             select(RefreshToken).where(
@@ -112,12 +122,17 @@ class AccountSettingsService:
         )
         if row is None:
             raise NotFoundError("Session not found")
+        if current_session_family_id is not None and row.family_id == current_session_family_id:
+            raise ConflictError("Current session cannot be revoked")
         await self._refresh.revoke(row.id)
         await self._session.commit()
 
-    async def revoke_all_sessions(self, user_id: UUID) -> None:
+    async def revoke_all_sessions(self, user_id: UUID, current_session_family_id: UUID | None = None) -> None:
         await self._require_user(user_id)
-        await self._refresh.revoke_all_for_user(user_id)
+        if current_session_family_id is None:
+            await self._refresh.revoke_all_for_user(user_id)
+        else:
+            await self._refresh.revoke_all_for_user_except_family(user_id, current_session_family_id)
         await self._session.commit()
 
     async def _require_user(self, user_id: UUID) -> User:
