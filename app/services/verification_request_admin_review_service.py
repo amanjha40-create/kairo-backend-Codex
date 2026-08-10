@@ -83,6 +83,12 @@ from app.verification_requests.enums import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_QUEUE_STATUS_VALUES = (
+    VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
+    VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
+    VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW.value,
+)
+
 
 def normalize_contact_review_status(
     review_status: VerificationContactReviewStatus | str,
@@ -120,20 +126,16 @@ class VerificationRequestAdminReviewService:
         params: ListQueryParams | None = None,
         priorities: list[str] | None = None,
     ) -> AdminReviewQueueResponse:
-        items = await self._requests.list_by_status(
-            [
-                VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
-                VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
-                VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW.value,
-            ]
-        )
+        normalized_params = params or ListQueryParams()
+        queue_statuses = self._queue_status_values(normalized_params)
+        items = await self._requests.list_by_status(queue_statuses)
         responses = [await self._to_request_response(item) for item in items]
         if priorities:
             accepted_priorities = {value.strip().lower() for value in priorities if value.strip()}
             responses = [item for item in responses if item.priority in accepted_priorities]
         page = filter_sort_paginate(
             responses,
-            params=params or ListQueryParams(),
+            params=normalized_params,
             search_fields=(
                 "public_id",
                 "subject_name",
@@ -158,6 +160,12 @@ class VerificationRequestAdminReviewService:
             offset=page.offset,
             limit=page.limit,
         )
+
+    @staticmethod
+    def _queue_status_values(params: ListQueryParams) -> list[str]:
+        if not params.status:
+            return list(_DEFAULT_QUEUE_STATUS_VALUES)
+        return [value.strip() for value in params.status.split(",") if value.strip()]
 
     async def _to_queue_item(self, item: VerificationRequestResponse) -> AdminReviewQueueItemResponse:
         request = await self._get_required_request(item.public_id)

@@ -132,6 +132,46 @@ async def test_admin_queue_searches_request_public_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_queue_defaults_to_active_review_statuses() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    response = _verification_request_response()
+    queue_item = AdminReviewQueueItemResponse(**response.model_dump())
+    service._requests = SimpleNamespace(list_by_status=AsyncMock(return_value=[SimpleNamespace()]))
+    service._to_request_response = AsyncMock(return_value=response)
+    service._to_queue_item = AsyncMock(return_value=queue_item)
+
+    result = await service.get_queue(ListQueryParams(page=1, page_size=10))
+
+    assert result.total == 1
+    service._requests.list_by_status.assert_awaited_once_with(
+        [
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
+            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
+            VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW.value,
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_queue_honors_explicit_terminal_status_filters() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    response = _verification_request_response()
+    response.status = VerificationRequestStatus.VERIFIED
+    queue_item = AdminReviewQueueItemResponse(**response.model_dump())
+    service._requests = SimpleNamespace(list_by_status=AsyncMock(return_value=[SimpleNamespace()]))
+    service._to_request_response = AsyncMock(return_value=response)
+    service._to_queue_item = AsyncMock(return_value=queue_item)
+
+    result = await service.get_queue(
+        ListQueryParams(page=1, page_size=10, status="verified,rejected")
+    )
+
+    assert result.total == 1
+    assert result.items == [queue_item]
+    service._requests.list_by_status.assert_awaited_once_with(["verified", "rejected"])
+
+
+@pytest.mark.asyncio
 async def test_admin_response_projection_excludes_organization_private_fields() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     service._session = object()

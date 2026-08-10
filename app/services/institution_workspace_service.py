@@ -61,6 +61,21 @@ FINAL_STATUSES = {
     VerificationRequestStatus.CANCELLED,
     VerificationRequestStatus.EXPIRED,
 }
+FINAL_STATUS_VALUES = {status.value for status in FINAL_STATUSES}
+INSTITUTION_ACTIVE_STATUS_VALUES = {
+    VerificationRequestStatus.DRAFT.value,
+    VerificationRequestStatus.PENDING_SUBJECT_ACCEPTANCE.value,
+    VerificationRequestStatus.ACCEPTED.value,
+    VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION.value,
+    VerificationRequestStatus.PENDING_ADMIN_REVIEW.value,
+    VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS.value,
+    VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
+    VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION.value,
+    VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION.value,
+    VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE.value,
+    VerificationRequestStatus.IN_PROGRESS.value,
+    VerificationRequestStatus.AWAITING_INFORMATION.value,
+}
 PRIORITY_ORDER = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
 
 
@@ -81,7 +96,7 @@ class InstitutionWorkspaceService:
         organization, _ = await self._require_university_access(actor_user_id, org_public_id)
         requests = await self._requests_for_organization(organization.id)
         profiles = await self._people.list_profiles(organization.id)
-        status_counts = Counter(request.status.value for request in requests)
+        status_counts = Counter(self._request_status_value(request) for request in requests)
         lifecycle_counts = Counter(profile.lifecycle_status for profile in profiles)
         recent_credentials = sorted(
             (
@@ -96,7 +111,9 @@ class InstitutionWorkspaceService:
         events = await self._recent_events(organization.id)
         return InstitutionDashboardResponse(
             pending_verifications=sum(
-                1 for request in requests if request.status not in FINAL_STATUSES
+                1
+                for request in requests
+                if self._request_status_value(request) in INSTITUTION_ACTIVE_STATUS_VALUES
             ),
             recently_verified_credentials=[
                 InstitutionDashboardCredential(
@@ -326,11 +343,13 @@ class InstitutionWorkspaceService:
         actor_user_id: UUID,
         params: InstitutionVerificationInboxQuery,
     ) -> bool:
-        if params.statuses and request.status.value not in params.statuses:
+        request_status = InstitutionWorkspaceService._request_status_value(request)
+        if params.statuses and request_status not in params.statuses:
             return False
         if params.priority and request.priority != params.priority:
             return False
-        if params.request_type and request.request_type != params.request_type:
+        request_type = InstitutionWorkspaceService._request_type_value(request)
+        if params.request_type and request_type != params.request_type.value:
             return False
         if params.assigned_to_me is True and request.assigned_to_user_id != actor_user_id:
             return False
@@ -374,8 +393,8 @@ class InstitutionWorkspaceService:
         return InstitutionVerificationInboxItem(
             public_id=request.public_id,
             subject_name=request.subject_name,
-            request_type=request.request_type,
-            status=request.status,
+            request_type=InstitutionWorkspaceService._request_type_value(request),
+            status=InstitutionWorkspaceService._request_status_value(request),
             priority=request.priority or "normal",
             due_date=request.due_date,
             created_at=request.created_at,
@@ -384,6 +403,16 @@ class InstitutionWorkspaceService:
             education_institution_name=education.institution_name if education else None,
             education_degree=education.degree if education else None,
         )
+
+    @staticmethod
+    def _request_status_value(request: VerificationRequest) -> str:
+        status = request.status
+        return status.value if hasattr(status, "value") else str(status)
+
+    @staticmethod
+    def _request_type_value(request: VerificationRequest) -> str:
+        request_type = request.request_type
+        return request_type.value if hasattr(request_type, "value") else str(request_type)
 
     async def _comparison(
         self, organization_id: UUID, request: VerificationRequest
