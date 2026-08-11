@@ -248,6 +248,7 @@ class VerificationRequestEvidenceSummaryResponse(BaseModel):
 
 class VerificationRequestResponse(BaseModel):
     public_id: UUID
+    candidate_user_public_id: UUID | None = None
     employment_id: UUID | None = None
     education_id: UUID | None = None
     origin_type: VerificationRequestOriginType | None = None

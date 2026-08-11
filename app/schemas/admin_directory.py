@@ -86,10 +86,13 @@ class AdminUserVerificationItem(BaseModel):
     public_id: UUID
     request_type: str
     status: str
+    employment_public_id: UUID | None = None
+    education_public_id: UUID | None = None
     organization_public_id: UUID | None = None
     organization_name: str | None = None
     linked_record_label: str
     created_at: datetime
+    submitted_at: datetime | None = None
     updated_at: datetime
 
 

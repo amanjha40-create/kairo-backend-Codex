@@ -79,6 +79,7 @@ def _verification_request_response(*, public_id: UUID | None = None) -> Verifica
     now = datetime.now(tz=UTC)
     return VerificationRequestResponse(
         public_id=public_id or uuid4(),
+        candidate_user_public_id=UUID("00000000-0000-0000-0000-000000000111"),
         origin_type=VerificationRequestOriginType.SUBJECT_INITIATED,
         organization_public_id=None,
         trust_invitation_public_id=None,
@@ -293,6 +294,7 @@ class FakeVerificationRequestAdminReviewService:
     ) -> VerificationRequestResponse:
         return VerificationRequestResponse(
             public_id=self._request_public_id,
+            candidate_user_public_id=UUID("00000000-0000-0000-0000-000000000111"),
             origin_type=VerificationRequestOriginType.SUBJECT_INITIATED,
             organization_public_id=None,
             trust_invitation_public_id=None,
@@ -473,6 +475,10 @@ async def test_admin_review_queue_is_available_to_hr() -> None:
     assert response.status_code == 200
     assert len(response.json()["items"]) == 1
     assert response.json()["total"] == 1
+    assert (
+        response.json()["items"][0]["candidate_user_public_id"]
+        == "00000000-0000-0000-0000-000000000111"
+    )
 
 
 @pytest.mark.asyncio
@@ -493,6 +499,10 @@ async def test_admin_review_detail_exposes_employer_verification_public_id(
     assert response.status_code == 200
     expected = str(employer_verification_public_id) if employer_verification_public_id else None
     assert response.json()["employer_verification_public_id"] == expected
+    assert (
+        response.json()["request"]["candidate_user_public_id"]
+        == "00000000-0000-0000-0000-000000000111"
+    )
     assert response.json()["request"]["consented_fields"] == ["employment_dates"]
     assert response.json()["request"]["consented_evidence_scope"] == ["employment_letter"]
     assert response.json()["request"]["consent_version"] == "v1"

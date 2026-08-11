@@ -645,6 +645,8 @@ class AdminDirectoryService:
                     public_id=request.public_id,
                     request_type=_enum_value(request.request_type) or "unknown",
                     status=_enum_value(request.status) or "unknown",
+                    employment_public_id=request.employment_id,
+                    education_public_id=request.education_id,
                     organization_public_id=(
                         request.organization.public_id
                         if request.organization is not None
@@ -657,6 +659,11 @@ class AdminDirectoryService:
                     ),
                     linked_record_label=build_linked_record_label(request, redacted=redacted),
                     created_at=request.created_at,
+                    submitted_at=(
+                        request.accepted_at
+                        or request.candidate_response_submitted_at
+                        or request.created_at
+                    ),
                     updated_at=request.updated_at,
                 )
             )

@@ -148,9 +148,11 @@ class FakeAdminDirectoryService:
                         public_id=uuid4(),
                         request_type="employment",
                         status="verified",
+                        employment_public_id=uuid4(),
                         organization_name="Acme Corp",
                         linked_record_label="Employment record",
                         created_at=now,
+                        submitted_at=now,
                         updated_at=now,
                     )
                 ],
@@ -204,11 +206,24 @@ class FakeAdminDirectoryService:
                     public_id=uuid4(),
                     request_type="employment",
                     status="verified",
+                    employment_public_id=uuid4(),
                     organization_name="Acme Corp",
                     linked_record_label="Operations Lead at Acme Corp",
                     created_at=now,
+                    submitted_at=now,
                     updated_at=now,
-                )
+                ),
+                AdminUserVerificationItem(
+                    public_id=uuid4(),
+                    request_type="education",
+                    status="pending_admin_review",
+                    education_public_id=uuid4(),
+                    organization_name="State University",
+                    linked_record_label="B.Tech at State University",
+                    created_at=now,
+                    submitted_at=now,
+                    updated_at=now,
+                ),
             ],
             passport=AdminUserPassportSummary(
                 ready=True,
@@ -292,11 +307,15 @@ async def test_admin_read_contract_routes() -> None:
     assert user_detail.status_code == 200
     assert user_detail.json()["email"] == "candidate.one@example.com"
     assert "password_hash" not in user_detail.text
+    assert user_detail.json()["verifications"][0]["employment_public_id"] is not None
+    assert user_detail.json()["verifications"][1]["education_public_id"] is not None
     assert deleted_user_detail.status_code == 200
     assert deleted_user_detail.json()["display_name"] == "Deleted Candidate"
     assert deleted_user_detail.json()["email"] == "Redacted"
     assert deleted_user_detail.json()["phone"] is None
     assert deleted_user_detail.json()["career_summary"]["total_items"] == 0
+    assert deleted_user_detail.json()["verifications"][0]["employment_public_id"] is not None
+    assert deleted_user_detail.json()["verifications"][0]["submitted_at"] is not None
     assert evidence.status_code == 200
     assert evidence.json()["evidence_public_id"] == str(evidence_id)
     assert outreach.status_code == 200

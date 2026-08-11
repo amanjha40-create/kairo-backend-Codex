@@ -1525,6 +1525,7 @@ class VerificationRequestService:
                 )
         return VerificationRequestResponse(
             public_id=request.public_id,
+            candidate_user_public_id=request.subject_user_id,
             employment_id=request.employment_id,
             education_id=request.education_id,
             origin_type=request.origin_type,
