@@ -15,14 +15,13 @@ from pydantic import ValidationError
 from app.auth.service import AuthService
 from app.auth.signup_otp import SignupOtpStore
 from app.config import Settings
-from app.exceptions import UnauthorizedError
+from app.exceptions import ServiceUnavailableError, UnauthorizedError
 from app.integrations.phone_otp.sender import (
     SnsPhoneOtpSender,
     StagingFixedPhoneOtpSender,
     get_phone_otp_sender,
 )
 from app.main import app
-
 
 FIXED_CODE = "246810"
 ALLOWED_PHONE = "+919876543210"
@@ -279,11 +278,26 @@ class _FakeOtpStore:
 
 
 class _FakeSession:
+    def __init__(self) -> None:
+        self.flush_count = 0
+        self.commit_count = 0
+
     async def flush(self) -> None:
-        return None
+        self.flush_count += 1
 
     async def commit(self) -> None:
-        return None
+        self.commit_count += 1
+
+
+class _FakeEmailSender:
+    def __init__(self, *, exc: Exception | None = None) -> None:
+        self.exc = exc
+        self.calls: list[tuple[str, str, int]] = []
+
+    async def send_signup_otp(self, *, to_email: str, code: str, ttl_minutes: int) -> None:
+        self.calls.append((to_email, code, ttl_minutes))
+        if self.exc is not None:
+            raise self.exc
 
 
 def _pending(phone: str = ALLOWED_PHONE) -> SimpleNamespace:
@@ -302,10 +316,11 @@ def _pending(phone: str = ALLOWED_PHONE) -> SimpleNamespace:
     )
 
 
-def _service(*, otp_store: _FakeOtpStore) -> AuthService:
+def _service(*, otp_store: _FakeOtpStore, email_sender: _FakeEmailSender | None = None) -> AuthService:
     service = object.__new__(AuthService)
     service._settings = _settings()  # noqa: SLF001
     service._otp = otp_store  # type: ignore[assignment]  # noqa: SLF001
+    service._email = email_sender or _FakeEmailSender()  # type: ignore[assignment]  # noqa: SLF001
     service._phone = StagingFixedPhoneOtpSender(service._settings)  # noqa: SLF001
     service._session = _FakeSession()  # type: ignore[assignment]  # noqa: SLF001
     return service
@@ -321,6 +336,34 @@ async def test_auth_service_hashes_fixed_challenge_through_existing_store() -> N
     assert otp_store.stored == (pending.id, "phone", FIXED_CODE)
     assert response.phone_verified is False
     assert FIXED_CODE not in response.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_email_signup_channel_routes_through_email_sender_and_updates_counters() -> None:
+    otp_store = _FakeOtpStore()
+    email_sender = _FakeEmailSender()
+    pending = _pending()
+
+    response = await _service(otp_store=otp_store, email_sender=email_sender)._send_channel_otp(pending, "email")
+
+    assert response.channel == "email"
+    assert otp_store.stored is not None
+    assert email_sender.calls == [("tester@example.com", otp_store.stored[2], 10)]
+    assert pending.email_otp_sent_count == 1
+    assert pending.email_last_otp_sent_at is not None
+
+
+@pytest.mark.asyncio
+async def test_email_signup_channel_does_not_increment_counters_when_delivery_fails() -> None:
+    otp_store = _FakeOtpStore()
+    email_sender = _FakeEmailSender(exc=ServiceUnavailableError("Unable to send verification email"))
+    pending = _pending()
+
+    with pytest.raises(ServiceUnavailableError, match="Unable to send verification email"):
+        await _service(otp_store=otp_store, email_sender=email_sender)._send_channel_otp(pending, "email")
+
+    assert pending.email_otp_sent_count == 0
+    assert pending.email_last_otp_sent_at is None
 
 
 @pytest.mark.asyncio

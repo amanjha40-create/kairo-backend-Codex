@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from uuid import uuid4
 
 import pytest
 
 from app.config import Settings
 from app.exceptions import ServiceUnavailableError
 from app.integrations.email.sender import ProviderEmailSender
+from app.models.email_delivery_log import EmailDeliveryLog
 from app.schemas.email_delivery import EmailSendResult, RenderedEmailMessage
 
 
@@ -36,6 +38,29 @@ class FakeProvider:
             status="sent",
             provider_message_id="fake-message-id",
         )
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.committed = False
+        self.flushed = False
+
+    async def flush(self) -> None:
+        self.flushed = True
+
+    async def commit(self) -> None:
+        self.committed = True
+
+
+class FakeEmailDeliveryLogRepository:
+    def __init__(self) -> None:
+        self.created: EmailDeliveryLog | None = None
+
+    async def create(self, log: EmailDeliveryLog) -> EmailDeliveryLog:
+        if log.public_id is None:
+            log.public_id = uuid4()
+        self.created = log
+        return log
 
 
 @pytest.mark.asyncio
@@ -140,3 +165,55 @@ async def test_provider_email_sender_preserves_verification_outreach_failure_mes
             review_url="https://example.com/verify/token",
             ttl_hours=72,
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_email_sender_persists_signup_delivery_log_when_session_available() -> None:
+    provider = FakeProvider()
+    session = FakeSession()
+    logs = FakeEmailDeliveryLogRepository()
+    sender = ProviderEmailSender(
+        _settings(email_backend="brevo"),
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        logs=logs,  # type: ignore[arg-type]
+    )
+
+    await sender.send_signup_otp(
+        to_email="recipient@example.com",
+        code="123456",
+        ttl_minutes=10,
+    )
+
+    assert session.flushed is True
+    assert session.committed is False
+    assert logs.created is not None
+    assert logs.created.status == "sent"
+    assert logs.created.provider == "fake"
+    assert logs.created.provider_message_id == "fake-message-id"
+    assert logs.created.payload == {"ttl_minutes": 10}
+    assert "code" not in logs.created.payload
+
+
+@pytest.mark.asyncio
+async def test_provider_email_sender_commits_failed_signup_delivery_log_when_provider_fails() -> None:
+    session = FakeSession()
+    logs = FakeEmailDeliveryLogRepository()
+    sender = ProviderEmailSender(
+        _settings(email_backend="brevo"),
+        session=session,  # type: ignore[arg-type]
+        provider=FakeProvider(exc=ServiceUnavailableError("Unable to send email")),
+        logs=logs,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ServiceUnavailableError, match="Unable to send verification email"):
+        await sender.send_signup_otp(
+            to_email="recipient@example.com",
+            code="123456",
+            ttl_minutes=10,
+        )
+
+    assert session.committed is True
+    assert logs.created is not None
+    assert logs.created.status == "failed"
+    assert logs.created.error_code == "ServiceUnavailableError"

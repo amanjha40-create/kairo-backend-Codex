@@ -102,7 +102,7 @@ class AuthService:
         self._refresh = RefreshTokenRepository(session)
         self._social = UserSocialAccountRepository(session)
         self._otp = SignupOtpStore(redis, settings)
-        self._email = get_email_sender(settings)
+        self._email = get_email_sender(settings, session=session)
         self._phone = get_phone_otp_sender(settings)
 
     async def start_signup(self, data: RegisterRequest) -> SignupStartResponse:
