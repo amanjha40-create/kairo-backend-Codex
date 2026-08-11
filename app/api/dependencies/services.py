@@ -49,6 +49,7 @@ from app.services import (
     VerificationService,
     WorkspaceService,
 )
+from app.services.account_deletion_service import AccountDeletionService
 from app.services.institution_people_service import InstitutionPeopleService
 from app.services.institution_workspace_service import InstitutionWorkspaceService
 from app.services.resume_review_service import ResumeReviewService
@@ -61,6 +62,14 @@ def get_auth_service(
     redis: Redis = Depends(get_redis),
 ) -> AuthService:
     return AuthService(session, settings, redis)
+
+
+def get_account_deletion_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    redis: Redis = Depends(get_redis),
+) -> AccountDeletionService:
+    return AccountDeletionService(session, settings, redis)
 
 
 def get_user_service(

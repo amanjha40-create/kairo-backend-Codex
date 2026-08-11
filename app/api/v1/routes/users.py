@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
-from app.api.dependencies.services import get_profile_view_service, get_user_service
-from app.schemas.user import AvatarUploadIntentResponse, UserPublic, UserUpdate
+from app.api.dependencies.services import (
+    get_account_deletion_service,
+    get_profile_view_service,
+    get_user_service,
+)
+from app.schemas.account_deletion import AccountDeletionRequest
 from app.schemas.profile import (
     ProfileLanguageCreate,
     ProfileLanguageResponse,
@@ -17,7 +22,9 @@ from app.schemas.profile import (
     ProfileLinkResponse,
     ProfileLinkUpdate,
 )
+from app.schemas.user import AvatarUploadIntentResponse, UserPublic, UserUpdate
 from app.services import UserService
+from app.services.account_deletion_service import AccountDeletionService
 from app.services.profile_view_service import ProfileViewService, ShareAnalyticsResponse
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -42,6 +49,19 @@ async def update_me(
     users: UserService = Depends(get_user_service),
 ) -> UserPublic:
     return await users.update_profile(current.id, payload)
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently delete current candidate account",
+)
+async def delete_me(
+    payload: AccountDeletionRequest,
+    current: CurrentUser = Depends(get_current_user),
+    deletions: AccountDeletionService = Depends(get_account_deletion_service),
+) -> None:
+    await deletions.delete_candidate_account(current.id, payload)
 
 
 @router.post("/me/avatar-upload-url", response_model=AvatarUploadIntentResponse, summary="Get presigned URL to upload avatar")
