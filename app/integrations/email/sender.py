@@ -19,7 +19,14 @@ from app.schemas.email_delivery import RenderedEmailMessage
 
 
 class EmailSender(Protocol):
-    async def send_signup_otp(self, *, to_email: str, code: str, ttl_minutes: int) -> None: ...
+    async def send_signup_otp(
+        self,
+        *,
+        to_email: str,
+        code: str,
+        ttl_minutes: int,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None: ...
 
     async def send_password_reset(
         self,
@@ -27,6 +34,7 @@ class EmailSender(Protocol):
         to_email: str,
         reset_token: str,
         ttl_minutes: int,
+        audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
     async def send_employer_verification(
@@ -40,6 +48,7 @@ class EmailSender(Protocol):
         relationship: str,
         review_url: str,
         ttl_hours: int,
+        audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
 
@@ -66,6 +75,7 @@ class ProviderEmailSender:
         *,
         message: RenderedEmailMessage,
         failure_message: str,
+        audit_metadata: dict[str, object] | None = None,
     ) -> None:
         log: EmailDeliveryLog | None = None
         now = datetime.now(tz=UTC)
@@ -77,7 +87,7 @@ class ProviderEmailSender:
                 provider=getattr(self._provider, "provider_name", self._settings.email_backend),
                 status="pending",
                 subject=message.subject,
-                payload=message.audit_payload,
+                payload={**message.audit_payload, **(audit_metadata or {})},
                 attempt_count=1,
             )
             await self._logs.create(log)
@@ -106,7 +116,14 @@ class ProviderEmailSender:
             if self._session is not None:
                 await self._session.flush()
 
-    async def send_signup_otp(self, *, to_email: str, code: str, ttl_minutes: int) -> None:
+    async def send_signup_otp(
+        self,
+        *,
+        to_email: str,
+        code: str,
+        ttl_minutes: int,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None:
         try:
             await self._send_rendered(
                 message=self._renderer.render(
@@ -115,6 +132,7 @@ class ProviderEmailSender:
                     data={"code": code, "ttl_minutes": ttl_minutes},
                 ),
                 failure_message="Unable to send verification email",
+                audit_metadata=audit_metadata,
             )
         except ServiceUnavailableError:
             raise
@@ -125,6 +143,7 @@ class ProviderEmailSender:
         to_email: str,
         reset_token: str,
         ttl_minutes: int,
+        audit_metadata: dict[str, object] | None = None,
     ) -> None:
         try:
             await self._send_rendered(
@@ -134,6 +153,7 @@ class ProviderEmailSender:
                     data={"reset_token": reset_token, "ttl_minutes": ttl_minutes},
                 ),
                 failure_message="Unable to send password reset email",
+                audit_metadata=audit_metadata,
             )
         except ServiceUnavailableError:
             raise
@@ -149,6 +169,7 @@ class ProviderEmailSender:
         relationship: str,
         review_url: str,
         ttl_hours: int,
+        audit_metadata: dict[str, object] | None = None,
     ) -> None:
         try:
             await self._send_rendered(
@@ -166,6 +187,7 @@ class ProviderEmailSender:
                     },
                 ),
                 failure_message="Unable to send employer verification email",
+                audit_metadata=audit_metadata,
             )
         except ServiceUnavailableError:
             raise

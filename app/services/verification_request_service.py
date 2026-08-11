@@ -61,6 +61,7 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineResponse,
     VerificationReviewerSummary,
 )
+from app.notifications.contracts import NotificationRequest
 from app.services.connector_execution_service import ConnectorExecutionService
 from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
@@ -869,6 +870,7 @@ class VerificationRequestService:
                 "consent_version": request.consent_version,
             },
         )
+        await self._notify_admin_review_needed(request)
         return await self._commit_reload_subject_response(request.public_id)
 
     async def list_corrections(
@@ -1067,6 +1069,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata=final_metadata,
         )
+        await self._notify_admin_quality_review_needed(request)
         return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def reject(
@@ -1094,6 +1097,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata={**self._merge_note_metadata(payload), "verifier_outcome": "discrepancy"},
         )
+        await self._notify_admin_quality_review_needed(request)
         return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def unable_to_verify(
@@ -1121,6 +1125,7 @@ class VerificationRequestService:
             event_source=VerificationRequestEventSource.ORGANIZATION,
             metadata={**self._merge_note_metadata(payload), "verifier_outcome": "unable_to_verify"},
         )
+        await self._notify_admin_quality_review_needed(request)
         return await self._commit_reload_org_response(request.public_id, actor_user_id)
 
     async def cancel(
@@ -1229,6 +1234,78 @@ class VerificationRequestService:
         if is_subject:
             return await self._to_subject_response(refreshed)
         raise NotFoundError("Verification request not found")
+
+    async def _notify_admin_review_needed(self, request: VerificationRequest) -> None:
+        organization_name = (
+            request.organization.name
+            if request.organization is not None
+            else request.target_organization_name or "the verifier organization"
+        )
+        await self._notifications.create_and_dispatch_for_admin_roles(
+            NotificationRequest(
+                event_type="admin_verification_review_required",
+                channel="in_app",
+                template_key="admin_in_app",
+                dedupe_key=f"admin-review-required:{request.public_id}",
+                payload={
+                    "verification_request_public_id": str(request.public_id),
+                    "subject_name": request.subject_name,
+                    "organization_name": organization_name,
+                    "request_type": (
+                        request.request_type.value
+                        if hasattr(request.request_type, "value")
+                        else request.request_type
+                    ),
+                },
+                metadata={
+                    "verification_request_public_id": str(request.public_id),
+                    "linked_record_type": (
+                        "employment"
+                        if request.employment_id is not None
+                        else "education" if request.education_id is not None else None
+                    ),
+                    "linked_record_id": str(request.employment_id or request.education_id)
+                    if (request.employment_id or request.education_id) is not None
+                    else None,
+                },
+            )
+        )
+
+    async def _notify_admin_quality_review_needed(self, request: VerificationRequest) -> None:
+        organization_name = (
+            request.organization.name
+            if request.organization is not None
+            else request.target_organization_name or "the verifier organization"
+        )
+        await self._notifications.create_and_dispatch_for_admin_roles(
+            NotificationRequest(
+                event_type="admin_verification_quality_review_required",
+                channel="in_app",
+                template_key="admin_in_app",
+                dedupe_key=f"admin-quality-review-required:{request.public_id}",
+                payload={
+                    "verification_request_public_id": str(request.public_id),
+                    "subject_name": request.subject_name,
+                    "organization_name": organization_name,
+                    "request_type": (
+                        request.request_type.value
+                        if hasattr(request.request_type, "value")
+                        else request.request_type
+                    ),
+                },
+                metadata={
+                    "verification_request_public_id": str(request.public_id),
+                    "linked_record_type": (
+                        "employment"
+                        if request.employment_id is not None
+                        else "education" if request.education_id is not None else None
+                    ),
+                    "linked_record_id": str(request.employment_id or request.education_id)
+                    if (request.employment_id or request.education_id) is not None
+                    else None,
+                },
+            )
+        )
 
     async def _transition_to_in_progress_if_needed(
         self,

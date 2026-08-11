@@ -1,6 +1,7 @@
 """Application services — use-case orchestration above repositories."""
 
 from app.auth.service import AuthService
+from app.services.admin_communication_service import AdminCommunicationService
 from app.services.admin_directory_service import AdminDirectoryService
 from app.services.admin_overview_service import AdminOverviewService
 from app.services.admin_verification_service import AdminReviewService, AdminVerificationService
@@ -17,6 +18,7 @@ from app.services.employment_service import EmploymentService
 from app.services.notification_channel_registry import NotificationChannelRegistry
 from app.services.notification_dispatcher import NotificationDispatcher
 from app.services.notification_email_channel import NotificationEmailChannel
+from app.services.notification_in_app_channel import NotificationInAppChannel
 from app.services.notification_preference_service import NotificationPreferenceService
 from app.services.notification_service import NotificationService
 from app.services.notification_template_resolver import NotificationTemplateResolver
@@ -43,6 +45,7 @@ from app.services.resume_service import ResumeService
 
 __all__ = [
     "AdminReviewService",
+    "AdminCommunicationService",
     "AdminDirectoryService",
     "AdminOverviewService",
     "AdminVerificationService",
@@ -60,6 +63,7 @@ __all__ = [
     "NotificationChannelRegistry",
     "NotificationDispatcher",
     "NotificationEmailChannel",
+    "NotificationInAppChannel",
     "NotificationPreferenceService",
     "NotificationService",
     "NotificationTemplateResolver",

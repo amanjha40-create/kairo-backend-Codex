@@ -19,6 +19,7 @@ def _settings(**overrides: object) -> Settings:
         "database_url": "postgresql+asyncpg://kairo:kairo@localhost:5432/kairo",
         "jwt_secret_key": "test-jwt-secret-key-32-chars-minimum!!",
         "email_backend": "console",
+        "brevo_api_key": "test-brevo-key",
     }
     base.update(overrides)
     return Settings(**base)
@@ -196,7 +197,8 @@ async def test_provider_email_sender_persists_signup_delivery_log_when_session_a
 
 
 @pytest.mark.asyncio
-async def test_provider_email_sender_commits_failed_signup_delivery_log_when_provider_fails() -> None:
+async def test_provider_email_sender_commits_failed_signup_delivery_log_when_provider_fails(
+) -> None:
     session = FakeSession()
     logs = FakeEmailDeliveryLogRepository()
     sender = ProviderEmailSender(
@@ -217,3 +219,43 @@ async def test_provider_email_sender_commits_failed_signup_delivery_log_when_pro
     assert logs.created is not None
     assert logs.created.status == "failed"
     assert logs.created.error_code == "ServiceUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_provider_email_sender_merges_safe_audit_metadata_into_delivery_log() -> None:
+    provider = FakeProvider()
+    session = FakeSession()
+    logs = FakeEmailDeliveryLogRepository()
+    sender = ProviderEmailSender(
+        _settings(email_backend="brevo"),
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        logs=logs,  # type: ignore[arg-type]
+    )
+
+    await sender.send_employer_verification(
+        to_email="recipient@example.com",
+        contact_name="Reviewer",
+        subject_full_name="Candidate",
+        employer_name="Example Company",
+        job_title="Engineer",
+        relationship="HR",
+        review_url="https://example.com/verify/token",
+        ttl_hours=72,
+        audit_metadata={
+            "verification_request_public_id": "11111111-1111-1111-1111-111111111111",
+            "employer_verification_request_public_id": "22222222-2222-2222-2222-222222222222",
+        },
+    )
+
+    assert logs.created is not None
+    assert logs.created.payload == {
+        "contact_name": "Reviewer",
+        "subject_full_name": "Candidate",
+        "employer_name": "Example Company",
+        "job_title": "Engineer",
+        "relationship": "HR",
+        "ttl_hours": 72,
+        "verification_request_public_id": "11111111-1111-1111-1111-111111111111",
+        "employer_verification_request_public_id": "22222222-2222-2222-2222-222222222222",
+    }

@@ -112,6 +112,12 @@ class UserNotificationResponse(BaseModel):
     created_at: datetime
 
 
+class AdminNotificationInboxResponse(UserNotificationResponse):
+    status: str
+    channel: str
+    updated_at: datetime
+
+
 class NotificationUnreadCountResponse(BaseModel):
     unread_count: int
 

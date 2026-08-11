@@ -83,7 +83,7 @@ class CredentialVerificationService:
         self._requests = CredentialVerificationRepository(session)
         self._internships = InternshipRepository(session)
         self._freelance = FreelanceContractRepository(session)
-        self._email = get_email_sender(self._settings)
+        self._email = get_email_sender(self._settings, session=session)
 
     def _review_link(self, token: str) -> str:
         base = self._settings.app_public_base_url.rstrip("/")
@@ -174,6 +174,7 @@ class CredentialVerificationService:
                 response=EmployerVerificationDecision.PENDING.value,
             )
             await self._requests.create(req)
+            active_request = req
         else:
             existing.contact_name = payload.contact_name
             existing.verifier_email = verifier_email
@@ -185,6 +186,7 @@ class CredentialVerificationService:
             existing.response = EmployerVerificationDecision.PENDING.value
             existing.remarks = None
             await self._requests.update(existing)
+            active_request = existing
 
         await self._email.send_employer_verification(
             to_email=verifier_email,
@@ -195,6 +197,11 @@ class CredentialVerificationService:
             relationship=payload.relationship,
             review_url=self._review_link(raw_token),
             ttl_hours=self._settings.employer_verification_token_ttl_hours,
+            audit_metadata={
+                "credential_verification_request_public_id": str(active_request.public_id),
+                "subject_type": subject_type,
+                "subject_id": str(subject_id),
+            },
         )
 
         await self._session.commit()

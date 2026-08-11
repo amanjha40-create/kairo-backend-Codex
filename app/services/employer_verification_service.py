@@ -101,7 +101,7 @@ class EmployerVerificationService:
         self._docs = EmploymentDocumentRepository(session)
         self._verification_requests = VerificationRequestRepository(session)
         self._workflow = VerificationRequestWorkflowService(self._verification_requests)
-        self._email = get_email_sender(self._settings)
+        self._email = get_email_sender(self._settings, session=session)
 
     def _review_link(self, token: str) -> str:
         base = (self._settings.employer_portal_base_url or self._settings.app_public_base_url).rstrip("/")
@@ -170,6 +170,7 @@ class EmployerVerificationService:
                 response=EmployerVerificationDecision.PENDING.value,
             )
             await self._requests.create(req)
+            active_request = req
         else:
             existing.contact_name = payload.contact_name
             existing.verification_request_id = verification_request_id
@@ -185,6 +186,7 @@ class EmployerVerificationService:
             existing.response_metadata = {}
             existing.response = EmployerVerificationDecision.PENDING.value
             await self._requests.update(existing)
+            active_request = existing
 
         await self._emit_audit(
             employment_id=employment_id,
@@ -198,6 +200,12 @@ class EmployerVerificationService:
             },
         )
 
+        verification_request = None
+        if verification_request_id is not None:
+            verification_request = await self._verification_requests.get_by_id(
+                verification_request_id
+            )
+
         review_url = self._review_link(raw_token)
         await self._email.send_employer_verification(
             to_email=verifier_email,
@@ -208,6 +216,12 @@ class EmployerVerificationService:
             relationship=payload.relationship,
             review_url=review_url,
             ttl_hours=self._settings.employer_verification_token_ttl_hours,
+            audit_metadata={
+                "employer_verification_request_public_id": str(active_request.public_id),
+                "verification_request_public_id": (
+                    str(verification_request.public_id) if verification_request is not None else None
+                ),
+            },
         )
 
         await self._session.commit()
@@ -322,6 +336,7 @@ class EmployerVerificationService:
                     else "discrepancy",
                 },
             )
+            await self._notify_admin_quality_review_needed(request)
 
     async def get_portal_workspace(self, raw_token: str) -> EmployerPortalWorkspace:
         req = await self._load_portal_token(raw_token)
@@ -504,6 +519,7 @@ class EmployerVerificationService:
                     else "discrepancy",
                 },
             )
+            await self._notify_admin_quality_review_needed(request)
         else:
             await self._workflow.transition(
                 request,
@@ -557,6 +573,39 @@ class EmployerVerificationService:
             )
         except Exception:
             logger.warning("employer_verification_notification_failed", exc_info=True)
+
+    async def _notify_admin_quality_review_needed(self, request) -> None:  # noqa: ANN001
+        organization_name = (
+            request.organization.name
+            if request.organization is not None
+            else request.target_organization_name or "the verifier organization"
+        )
+        try:
+            await NotificationService(self._session, self._settings).create_and_dispatch_for_admin_roles(
+                NotificationRequest(
+                    event_type="admin_verification_quality_review_required",
+                    channel="in_app",
+                    template_key="admin_in_app",
+                    dedupe_key=f"admin-quality-review-required:{request.public_id}",
+                    payload={
+                        "verification_request_public_id": str(request.public_id),
+                        "subject_name": request.subject_name,
+                        "organization_name": organization_name,
+                        "request_type": request.request_type.value
+                        if hasattr(request.request_type, "value")
+                        else request.request_type,
+                    },
+                    metadata={
+                        "verification_request_public_id": str(request.public_id),
+                        "linked_record_type": "employment" if request.employment_id is not None else None,
+                        "linked_record_id": str(request.employment_id)
+                        if request.employment_id is not None
+                        else None,
+                    },
+                )
+            )
+        except Exception:
+            logger.warning("employer_verification_admin_quality_notification_failed", exc_info=True)
 
     @staticmethod
     def _portal_action_response(req, employment, request, *, idempotent: bool = False) -> EmployerPortalActionResponse:

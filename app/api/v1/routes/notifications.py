@@ -9,10 +9,15 @@ from fastapi import APIRouter, Depends, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_notification_service
-from app.api.dependencies.verification_admin import require_reviewer, require_view_cases
+from app.api.dependencies.verification_admin import (
+    require_admin_portal,
+    require_reviewer,
+    require_view_cases,
+)
 from app.schemas.notification import (
-    NotificationDetailResponse,
+    AdminNotificationInboxResponse,
     NotificationDeliveryResponse,
+    NotificationDetailResponse,
     NotificationEventResponse,
     NotificationResponse,
     NotificationStatisticsResponse,
@@ -68,6 +73,40 @@ async def get_notification_statistics(
     return await svc.get_statistics()
 
 
+@admin_router.get("/inbox", response_model=Page[AdminNotificationInboxResponse])
+async def list_admin_notification_inbox(
+    params: Annotated[ListQueryParams, Depends()],
+    current: Annotated[CurrentUser, Depends(require_admin_portal)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> Page[AdminNotificationInboxResponse]:
+    return await svc.list_admin_inbox(current.id, params)
+
+
+@admin_router.get("/unread-count", response_model=NotificationUnreadCountResponse)
+async def get_admin_notification_unread_count(
+    current: Annotated[CurrentUser, Depends(require_admin_portal)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> NotificationUnreadCountResponse:
+    return await svc.unread_count(current.id)
+
+
+@admin_router.post("/{notification_public_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_admin_notification_read(
+    notification_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(require_admin_portal)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> None:
+    await svc.mark_user_read(current.id, notification_public_id)
+
+
+@admin_router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_all_admin_notifications_read(
+    current: Annotated[CurrentUser, Depends(require_admin_portal)],
+    svc: Annotated[NotificationService, Depends(get_notification_service)],
+) -> None:
+    await svc.mark_user_read_all(current.id)
+
+
 @admin_router.get("", response_model=Page[NotificationResponse])
 async def list_notifications(
     params: Annotated[ListQueryParams, Depends()],
@@ -95,7 +134,10 @@ async def resend_notification(
     return await svc.resend(notification_public_id, actor_user_id=reviewer.id)
 
 
-@admin_router.get("/{notification_public_id}/history", response_model=Page[NotificationEventResponse])
+@admin_router.get(
+    "/{notification_public_id}/history",
+    response_model=Page[NotificationEventResponse],
+)
 async def get_notification_history(
     notification_public_id: UUID,
     params: Annotated[ListQueryParams, Depends()],
@@ -105,7 +147,10 @@ async def get_notification_history(
     return await svc.list_history(notification_public_id, params)
 
 
-@admin_router.get("/{notification_public_id}/deliveries", response_model=Page[NotificationDeliveryResponse])
+@admin_router.get(
+    "/{notification_public_id}/deliveries",
+    response_model=Page[NotificationDeliveryResponse],
+)
 async def get_notification_deliveries(
     notification_public_id: UUID,
     params: Annotated[ListQueryParams, Depends()],

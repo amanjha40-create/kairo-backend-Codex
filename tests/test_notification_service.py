@@ -54,6 +54,9 @@ class FakeNotificationRepository:
     async def get_by_public_id(self, notification_public_id: UUID):  # noqa: ANN001
         return next((item for item in self.items if item.public_id == notification_public_id), None)
 
+    async def get_by_dedupe_key(self, dedupe_key: str):  # noqa: ANN001
+        return next((item for item in self.items if item.dedupe_key == dedupe_key), None)
+
     async def list_all(self):
         return list(self.items)
 
@@ -126,7 +129,21 @@ class FakeDispatcher:
         return self.outcome
 
 
-def _build_service(*, dispatcher, preference_decision: NotificationPreferenceDecision) -> NotificationService:  # noqa: ANN001
+class FakeUserRepository:
+    def __init__(self, recipients: list[SimpleNamespace]) -> None:
+        self.recipients = recipients
+        self.calls: list[frozenset[str]] = []
+
+    async def list_active_by_roles(self, roles: frozenset[str]) -> list[SimpleNamespace]:
+        self.calls.append(roles)
+        return list(self.recipients)
+
+
+def _build_service(
+    *,
+    dispatcher,
+    preference_decision: NotificationPreferenceDecision,
+) -> NotificationService:  # noqa: ANN001
     session = FakeSession()
     service = NotificationService(session, settings=_settings())  # type: ignore[arg-type]
     service._notifications = FakeNotificationRepository()  # type: ignore[assignment]
@@ -274,3 +291,45 @@ async def test_resend_creates_additional_delivery_history() -> None:
         "notification_dispatch_started",
         "notification_dispatch_completed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_and_dispatch_for_admin_roles_fans_out_per_recipient() -> None:
+    dispatcher = FakeDispatcher(
+        NotificationDispatchOutcome(
+            status=NotificationStatus.SENT.value,
+            provider="kairo_in_app",
+            dispatched_at=datetime.now(tz=UTC),
+            delivered_at=datetime.now(tz=UTC),
+        )
+    )
+    service = _build_service(
+        dispatcher=dispatcher,
+        preference_decision=NotificationPreferenceDecision(enabled=True, selected_channel="in_app"),
+    )
+    reviewer_id = uuid4()
+    excluded_id = uuid4()
+    service._users = FakeUserRepository(  # type: ignore[assignment]
+        recipients=[
+            SimpleNamespace(id=reviewer_id, email="reviewer@example.com"),
+            SimpleNamespace(id=excluded_id, email="excluded@example.com"),
+        ]
+    )
+
+    dispatched = await service.create_and_dispatch_for_admin_roles(
+        NotificationRequest(
+            event_type="admin_verification_review_required",
+            channel="in_app",
+            template_key="admin_in_app",
+            dedupe_key="admin-review-required:case-1",
+            metadata={"verification_request_public_id": "case-1"},
+        ),
+        exclude_user_ids=frozenset({excluded_id}),
+    )
+
+    assert len(dispatched) == 1
+    assert len(dispatcher.calls) == 1
+    created = service._notifications.items[0]  # type: ignore[attr-defined]
+    assert created.recipient_user_id == reviewer_id
+    assert created.recipient_email == "reviewer@example.com"
+    assert created.dedupe_key == f"admin-review-required:case-1:admin:{reviewer_id}"

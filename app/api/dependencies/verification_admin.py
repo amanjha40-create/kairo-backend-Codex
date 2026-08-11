@@ -6,6 +6,9 @@ from app.auth.deps import CurrentUser, require_permission, require_roles
 from app.core.constants import VERIFICATION_REVIEW_ROLES
 from app.core.permissions import Permission
 
+# Any authenticated internal operator allowed into the Admin portal.
+require_admin_portal = require_permission(Permission.ACCESS_ADMIN_PORTAL)
+
 # View-only access — support, moderator, hr, admin, superadmin
 require_view_cases = require_permission(Permission.VIEW_ALL_CASES)
 
@@ -44,6 +47,7 @@ require_verification_staff = require_roles(*VERIFICATION_REVIEW_ROLES)
 
 __all__ = [
     "CurrentUser",
+    "require_admin_portal",
     "require_assign",
     "require_dispatch",
     "require_finalizer",

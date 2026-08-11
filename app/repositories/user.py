@@ -84,3 +84,16 @@ class UserRepository(BaseRepository[User]):
             .limit(limit)
         )
         return list(rows.scalars().all()), int(count or 0)
+
+    async def list_active_by_roles(self, roles: frozenset[str]) -> list[User]:
+        rows = await self._session.execute(
+            select(User)
+            .where(
+                User.deleted_at.is_(None),
+                User.is_active.is_(True),
+                User.email_verified_at.is_not(None),
+                User.role.in_(roles),
+            )
+            .order_by(User.full_name.asc().nulls_last(), User.email.asc(), User.id.asc())
+        )
+        return list(rows.scalars().all())

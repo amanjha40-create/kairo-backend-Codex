@@ -10,6 +10,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.infrastructure.redis.deps import get_redis
 from app.services import (
+    AdminCommunicationService,
     AdminDirectoryService,
     AdminOverviewService,
     AdminVerificationService,
@@ -27,6 +28,7 @@ from app.services import (
     NotificationChannelRegistry,
     NotificationDispatcher,
     NotificationEmailChannel,
+    NotificationInAppChannel,
     NotificationPreferenceService,
     NotificationService,
     NotificationTemplateResolver,
@@ -136,6 +138,12 @@ def get_admin_directory_service(
     return AdminDirectoryService(session)
 
 
+def get_admin_communication_service(
+    session: AsyncSession = Depends(get_session),
+) -> AdminCommunicationService:
+    return AdminCommunicationService(session)
+
+
 def get_admin_overview_service(
     session: AsyncSession = Depends(get_session),
 ) -> AdminOverviewService:
@@ -226,7 +234,10 @@ def get_notification_channel_registry(
     settings: Settings = Depends(get_settings),
 ) -> NotificationChannelRegistry:
     return NotificationChannelRegistry(
-        handlers=(NotificationEmailChannel(EmailDeliveryService(session, settings)),),
+        handlers=(
+            NotificationInAppChannel(),
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
     )
 
 
@@ -235,7 +246,10 @@ def get_notification_dispatcher(
     settings: Settings = Depends(get_settings),
 ) -> NotificationDispatcher:
     registry = NotificationChannelRegistry(
-        handlers=(NotificationEmailChannel(EmailDeliveryService(session, settings)),),
+        handlers=(
+            NotificationInAppChannel(),
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
     )
     return NotificationDispatcher(registry)
 
@@ -247,7 +261,10 @@ def get_notification_service(
     preferences = NotificationPreferenceService(session)
     template_resolver = NotificationTemplateResolver()
     registry = NotificationChannelRegistry(
-        handlers=(NotificationEmailChannel(EmailDeliveryService(session, settings)),),
+        handlers=(
+            NotificationInAppChannel(),
+            NotificationEmailChannel(EmailDeliveryService(session, settings)),
+        ),
     )
     dispatcher = NotificationDispatcher(registry)
     return NotificationService(

@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.core.constants import Role
 from app.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
@@ -19,8 +20,9 @@ from app.repositories.notification import (
     NotificationEventRepository,
     NotificationRepository,
 )
-from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
+from app.repositories.user import UserRepository
 from app.schemas.notification import (
+    AdminNotificationInboxResponse,
     NotificationDeliveryResponse,
     NotificationDetailResponse,
     NotificationEventResponse,
@@ -29,12 +31,14 @@ from app.schemas.notification import (
     NotificationUnreadCountResponse,
     UserNotificationResponse,
 )
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
+from app.services.email_delivery_service import EmailDeliveryService
 from app.services.notification_channel_registry import NotificationChannelRegistry
 from app.services.notification_dispatcher import NotificationDispatcher
 from app.services.notification_email_channel import NotificationEmailChannel
+from app.services.notification_in_app_channel import NotificationInAppChannel
 from app.services.notification_preference_service import NotificationPreferenceService
 from app.services.notification_template_resolver import NotificationTemplateResolver
-from app.services.email_delivery_service import EmailDeliveryService
 
 
 class NotificationService:
@@ -56,6 +60,16 @@ class NotificationService:
             "Password reset requested",
             "A password reset was requested for your Kairo account.",
         ),
+        "admin_verification_review_required": (
+            "verification",
+            "Verification needs admin review",
+            "A verification request is waiting for pre-dispatch admin review.",
+        ),
+        "admin_verification_quality_review_required": (
+            "verification",
+            "Verification needs final quality review",
+            "A verifier response is waiting for final admin quality review.",
+        ),
     }
 
     def __init__(
@@ -73,10 +87,12 @@ class NotificationService:
         self._notifications = NotificationRepository(session)
         self._deliveries = NotificationDeliveryRepository(session)
         self._events = NotificationEventRepository(session)
+        self._users = UserRepository(session)
         self._preferences = preferences or NotificationPreferenceService(session)
         self._template_resolver = template_resolver or NotificationTemplateResolver()
         self._channel_registry = channel_registry or NotificationChannelRegistry(
             handlers=(
+                NotificationInAppChannel(),
                 NotificationEmailChannel(EmailDeliveryService(session, self._settings)),
             ),
         )
@@ -144,7 +160,10 @@ class NotificationService:
             await self._session.commit()
             return await self.get_detail(notification.public_id)
 
-        if notification.scheduled_at is not None and notification.scheduled_at > datetime.now(tz=UTC):
+        if (
+            notification.scheduled_at is not None
+            and notification.scheduled_at > datetime.now(tz=UTC)
+        ):
             await self._session.commit()
             return await self.get_detail(notification.public_id)
 
@@ -160,10 +179,22 @@ class NotificationService:
         category, default_title, default_body = default
         title = request.title.strip()
         body = request.body.strip()
-        return category, default_title if title == "Kairo notification" else title, default_body if body == "You have a new notification." else body
+        return (
+            category,
+            default_title if title == "Kairo notification" else title,
+            default_body if body == "You have a new notification." else body,
+        )
 
-    async def list_user_notifications(self, user_id: UUID, params: ListQueryParams) -> Page[UserNotificationResponse]:
-        items = await self._notifications.list_for_user(user_id, offset=params.slice_start, limit=params.limit or 20)
+    async def list_user_notifications(
+        self,
+        user_id: UUID,
+        params: ListQueryParams,
+    ) -> Page[UserNotificationResponse]:
+        items = await self._notifications.list_for_user(
+            user_id,
+            offset=params.slice_start,
+            limit=params.limit or 20,
+        )
         total = await self._notifications.count_for_user(user_id)
         return Page[UserNotificationResponse].create(
             items=[self._to_user_response(item) for item in items],
@@ -171,8 +202,30 @@ class NotificationService:
             params=params,
         )
 
+    async def list_admin_inbox(
+        self,
+        user_id: UUID,
+        params: ListQueryParams,
+    ) -> Page[AdminNotificationInboxResponse]:
+        items = await self._notifications.list_for_user(
+            user_id,
+            offset=params.slice_start,
+            limit=params.limit or 20,
+        )
+        total = await self._notifications.count_for_user(user_id)
+        return Page[AdminNotificationInboxResponse].create(
+            items=[self._to_admin_inbox_response(item) for item in items],
+            total=total,
+            params=params,
+        )
+
     async def unread_count(self, user_id: UUID) -> NotificationUnreadCountResponse:
-        return NotificationUnreadCountResponse(unread_count=await self._notifications.count_for_user(user_id, unread_only=True))
+        return NotificationUnreadCountResponse(
+            unread_count=await self._notifications.count_for_user(
+                user_id,
+                unread_only=True,
+            )
+        )
 
     async def mark_user_read(self, user_id: UUID, notification_public_id: UUID) -> None:
         if not await self._notifications.mark_read(user_id, notification_public_id):
@@ -183,6 +236,48 @@ class NotificationService:
         count = await self._notifications.mark_all_read(user_id)
         await self._session.commit()
         return count
+
+    async def create_and_dispatch_for_admin_roles(
+        self,
+        request: NotificationRequest,
+        *,
+        actor_user_id: UUID | None = None,
+        roles: frozenset[str] = frozenset({Role.ADMIN.value, Role.SUPERADMIN.value}),
+        exclude_user_ids: frozenset[UUID] = frozenset(),
+    ) -> list[NotificationDetailResponse]:
+        recipients = await self._users.list_active_by_roles(roles)
+        dispatched: list[NotificationDetailResponse] = []
+        for recipient in recipients:
+            if recipient.id in exclude_user_ids:
+                continue
+            dispatched.append(
+                await self.create_and_dispatch(
+                    NotificationRequest(
+                        event_type=request.event_type,
+                        channel=request.channel,
+                        notification_type=request.notification_type,
+                        priority=request.priority,
+                        recipient_user_id=recipient.id,
+                        recipient_email=recipient.email,
+                        recipient_phone=request.recipient_phone,
+                        template_key=request.template_key,
+                        template_version=request.template_version,
+                        category=request.category,
+                        title=request.title,
+                        body=request.body,
+                        dedupe_key=(
+                            f"{request.dedupe_key}:admin:{recipient.id}"
+                            if request.dedupe_key
+                            else None
+                        ),
+                        payload=request.payload,
+                        metadata=request.metadata,
+                        scheduled_at=request.scheduled_at,
+                    ),
+                    actor_user_id=actor_user_id,
+                )
+            )
+        return dispatched
 
     async def get_detail(self, notification_public_id: UUID) -> NotificationDetailResponse:
         notification = await self._require_notification(notification_public_id)
@@ -198,8 +293,22 @@ class NotificationService:
         page = filter_sort_paginate(
             items,
             params=params,
-            search_fields=("event_type", "notification_type", "recipient_email", "channel", "status", "template_key"),
-            allowed_sort_fields=("created_at", "updated_at", "event_type", "channel", "status", "priority"),
+            search_fields=(
+                "event_type",
+                "notification_type",
+                "recipient_email",
+                "channel",
+                "status",
+                "template_key",
+            ),
+            allowed_sort_fields=(
+                "created_at",
+                "updated_at",
+                "event_type",
+                "channel",
+                "status",
+                "priority",
+            ),
             default_sort_by="created_at",
             force_page_envelope=True,
         )
@@ -213,7 +322,10 @@ class NotificationService:
         params: ListQueryParams,
     ) -> Page[NotificationEventResponse]:
         notification = await self._require_notification(notification_public_id)
-        items = [self._to_event_response(item) for item in await self._events.list_for_notification(notification.id)]
+        items = [
+            self._to_event_response(item)
+            for item in await self._events.list_for_notification(notification.id)
+        ]
         page = filter_sort_paginate(
             items,
             params=params,
@@ -232,12 +344,21 @@ class NotificationService:
         params: ListQueryParams,
     ) -> Page[NotificationDeliveryResponse]:
         notification = await self._require_notification(notification_public_id)
-        items = [self._to_delivery_response(item) for item in await self._deliveries.list_for_notification(notification.id)]
+        items = [
+            self._to_delivery_response(item)
+            for item in await self._deliveries.list_for_notification(notification.id)
+        ]
         page = filter_sort_paginate(
             items,
             params=params,
             search_fields=("channel", "status", "provider", "error_code"),
-            allowed_sort_fields=("created_at", "updated_at", "channel", "status", "attempt_count"),
+            allowed_sort_fields=(
+                "created_at",
+                "updated_at",
+                "channel",
+                "status",
+                "attempt_count",
+            ),
             default_sort_by="created_at",
             force_page_envelope=True,
         )
@@ -302,15 +423,24 @@ class NotificationService:
             raise
         await self._record_delivery(notification, outcome)
         self._apply_outcome(notification, outcome)
+        completion_event_type = (
+            "notification_dispatch_completed"
+            if notification.status == NotificationStatus.SENT.value
+            else "notification_dispatch_failed"
+        )
         await self._append_event(
             notification,
             actor_user_id=actor_user_id,
-            event_type="notification_dispatch_completed" if notification.status == NotificationStatus.SENT.value else "notification_dispatch_failed",
+            event_type=completion_event_type,
             status=notification.status,
             metadata={"channel": notification.channel, "provider": outcome.provider},
         )
 
-    async def _record_delivery(self, notification: Notification, outcome: NotificationDispatchOutcome) -> NotificationDelivery:
+    async def _record_delivery(
+        self,
+        notification: Notification,
+        outcome: NotificationDispatchOutcome,
+    ) -> NotificationDelivery:
         delivery = NotificationDelivery(
             notification_id=notification.id,
             channel=notification.channel,
@@ -329,7 +459,11 @@ class NotificationService:
         await self._deliveries.create(delivery)
         return delivery
 
-    def _apply_outcome(self, notification: Notification, outcome: NotificationDispatchOutcome) -> None:
+    def _apply_outcome(
+        self,
+        notification: Notification,
+        outcome: NotificationDispatchOutcome,
+    ) -> None:
         notification.status = outcome.status
         if outcome.status == NotificationStatus.SENT.value:
             notification.sent_at = outcome.delivered_at or outcome.dispatched_at
@@ -401,14 +535,33 @@ class NotificationService:
             created_at=notification.created_at,
         )
 
-    def _to_delivery_response(self, delivery: NotificationDelivery) -> NotificationDeliveryResponse:
+    @classmethod
+    def _to_admin_inbox_response(
+        cls,
+        notification: Notification,
+    ) -> AdminNotificationInboxResponse:
+        return AdminNotificationInboxResponse(
+            **cls._to_user_response(notification).model_dump(),
+            status=notification.status,
+            channel=notification.channel,
+            updated_at=notification.updated_at,
+        )
+
+    def _to_delivery_response(
+        self,
+        delivery: NotificationDelivery,
+    ) -> NotificationDeliveryResponse:
         return NotificationDeliveryResponse(
             public_id=delivery.public_id,
             channel=delivery.channel,
             status=delivery.status,
             provider=delivery.provider,
             provider_message_id=delivery.provider_message_id,
-            email_delivery_log_public_id=delivery.email_delivery_log.public_id if delivery.email_delivery_log is not None else None,
+            email_delivery_log_public_id=(
+                delivery.email_delivery_log.public_id
+                if delivery.email_delivery_log is not None
+                else None
+            ),
             attempt_count=delivery.attempt_count,
             error_code=delivery.error_code,
             error_message=delivery.error_message,
