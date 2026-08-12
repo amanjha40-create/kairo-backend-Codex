@@ -39,6 +39,11 @@ def _record() -> TrustRegistryAdminRecordResponse:
         state="verified",
         active_case_count=1,
         total_verifications=2,
+        aliases_count=1,
+        identifiers_count=2,
+        relationship_count=1,
+        capabilities_count=1,
+        linked_organization_count=1,
     )
 
 
@@ -49,14 +54,30 @@ class FakeTrustRegistryAdminService:
 
     async def get_detail(self, registry_public_id):  # noqa: ANN001
         item = _record()
-        return TrustRegistryAdminDetailResponse(**item.model_dump(), contacts=[], activity=[])
+        return TrustRegistryAdminDetailResponse(
+            **item.model_dump(),
+            domains=[],
+            alias_items=[],
+            identifiers=[],
+            capabilities=[],
+            relationships=[],
+            linked_organizations=[],
+            verification_requests=[],
+            merge_history=[],
+            contacts=[],
+            activity=[],
+        )
 
     async def metrics(self):
         return TrustRegistryAdminMetricsResponse(
             total=1,
+            employers=0,
+            institutions=1,
             verified=1,
             unverified=0,
             duplicates=0,
+            unresolved_organizations=0,
+            linked_organizations=1,
             contacts_approved=0,
             contacts_bounced=0,
         )
@@ -73,8 +94,8 @@ async def _override_admin_user() -> CurrentUser:
 @pytest.mark.asyncio
 async def test_admin_registry_projection_routes_use_canonical_namespace() -> None:
     app.dependency_overrides[get_current_user] = _override_admin_user
-    app.dependency_overrides[get_trust_registry_admin_service] = (
-        lambda: FakeTrustRegistryAdminService()
+    app.dependency_overrides[get_trust_registry_admin_service] = lambda: (
+        FakeTrustRegistryAdminService()
     )
     registry_id = uuid4()
     transport = ASGITransport(app=app)
@@ -88,8 +109,11 @@ async def test_admin_registry_projection_routes_use_canonical_namespace() -> Non
 
     assert list_response.status_code == 200
     assert list_response.json()["items"][0]["aliases"] == ["Kairo Institute"]
+    assert list_response.json()["items"][0]["linked_organization_count"] == 1
     assert metrics_response.status_code == 200
+    assert metrics_response.json()["institutions"] == 1
     assert metrics_response.json()["verified"] == 1
     assert search_response.status_code == 200
     assert detail_response.status_code == 200
+    assert detail_response.json()["verification_requests"] == []
     assert legacy_response.status_code == 404

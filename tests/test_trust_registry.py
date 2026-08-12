@@ -299,31 +299,43 @@ class FakeTrustRegistryResolutionService:
             registry_record_public_id=payload.registry_record_public_id,
             resolution_state=TrustRegistryResolutionState.RESOLVED,
             resolution_method=payload.resolution_method.value,
-            resolution_confidence=float(payload.resolution_confidence) if payload.resolution_confidence is not None else None,
+            resolution_confidence=float(payload.resolution_confidence)
+            if payload.resolution_confidence is not None
+            else None,
             resolution_metadata=payload.resolution_metadata,
         )
 
-    async def resolve_verification_request(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+    async def resolve_verification_request(
+        self, actor_user_id, verification_request_public_id, payload
+    ):  # noqa: ANN001
         return TrustRegistryVerificationRequestResolutionResponse(
             verification_request_public_id=verification_request_public_id,
             registry_record_public_id=payload.registry_record_public_id,
             resolution_state=TrustRegistryResolutionState.RESOLVED,
             resolution_method=payload.resolution_method.value,
-            resolution_confidence=float(payload.resolution_confidence) if payload.resolution_confidence is not None else None,
+            resolution_confidence=float(payload.resolution_confidence)
+            if payload.resolution_confidence is not None
+            else None,
             resolution_metadata=payload.resolution_metadata,
         )
 
-    async def create_record_and_resolve_verification_request(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+    async def create_record_and_resolve_verification_request(
+        self, actor_user_id, verification_request_public_id, payload
+    ):  # noqa: ANN001
         return TrustRegistryVerificationRequestResolutionResponse(
             verification_request_public_id=verification_request_public_id,
             registry_record_public_id=uuid4(),
             resolution_state=TrustRegistryResolutionState.RESOLVED,
             resolution_method=payload.resolution_method.value,
-            resolution_confidence=float(payload.resolution_confidence) if payload.resolution_confidence is not None else None,
+            resolution_confidence=float(payload.resolution_confidence)
+            if payload.resolution_confidence is not None
+            else None,
             resolution_metadata=payload.resolution_metadata,
         )
 
-    async def defer_verification_request_resolution(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+    async def defer_verification_request_resolution(
+        self, actor_user_id, verification_request_public_id, payload
+    ):  # noqa: ANN001
         return TrustRegistryVerificationRequestResolutionResponse(
             verification_request_public_id=verification_request_public_id,
             registry_record_public_id=None,
@@ -349,6 +361,14 @@ async def _override_admin_user() -> CurrentUser:
         id=UUID("00000000-0000-0000-0000-000000000999"),
         email="admin@kairo.test",
         role="admin",
+    )
+
+
+async def _override_hr_user() -> CurrentUser:
+    return CurrentUser(
+        id=UUID("00000000-0000-0000-0000-000000000998"),
+        email="reviewer@kairo.test",
+        role="hr",
     )
 
 
@@ -378,6 +398,46 @@ async def test_create_trust_registry_record_returns_created_payload() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 201
     assert response.json()["registry_code"] == "KR-EMP-ABC12345"
+
+
+@pytest.mark.asyncio
+async def test_registry_manage_routes_require_user_manager_permission() -> None:
+    app.dependency_overrides[get_current_user] = _override_hr_user
+    app.dependency_overrides[get_trust_registry_service] = lambda: FakeTrustRegistryService()
+    app.dependency_overrides[get_trust_registry_resolution_service] = lambda: (
+        FakeTrustRegistryResolutionService()
+    )
+
+    transport = ASGITransport(app=app)
+    registry_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post(
+            "/api/v1/admin/trust-registry",
+            json={
+                "legal_name": "Kairo Labs Pvt Ltd",
+                "display_name": "Kairo Labs",
+                "organization_type": "employer",
+                "country": "IN",
+                "state_province": "DL",
+                "website": "https://kairo.example.com",
+                "lifecycle_status": "active",
+                "trust_status": "trusted",
+                "registry_confidence_score": 91.5,
+                "trust_metadata": {"tier": "gold"},
+            },
+        )
+        merge_response = await client.post(
+            f"/api/v1/admin/trust-registry/{registry_public_id}/merge",
+            json={
+                "target_registry_record_public_id": str(uuid4()),
+                "merge_reason": "duplicate import",
+                "metadata": {},
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert create_response.status_code == 403
+    assert merge_response.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -455,16 +515,22 @@ async def test_add_registry_metadata_endpoints_return_created_resources() -> Non
 @pytest.mark.asyncio
 async def test_search_and_lookup_routes_return_expected_shapes() -> None:
     app.dependency_overrides[get_current_user] = _override_admin_user
-    app.dependency_overrides[get_trust_registry_search_service] = lambda: FakeTrustRegistrySearchService()
+    app.dependency_overrides[get_trust_registry_search_service] = lambda: (
+        FakeTrustRegistrySearchService()
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         search_response = await client.get("/api/v1/internal/trust-registry/search?search=kairo")
-        domain_response = await client.get("/api/v1/internal/trust-registry/lookup-by-domain?domain=kairo.example.com")
+        domain_response = await client.get(
+            "/api/v1/internal/trust-registry/lookup-by-domain?domain=kairo.example.com"
+        )
         identifier_response = await client.get(
             "/api/v1/internal/trust-registry/lookup-by-identifier?identifier_type=gst&identifier_value=29ABCDE1234F2Z5"
         )
-        name_response = await client.get("/api/v1/internal/trust-registry/lookup-by-name?name=Kairo Labs")
+        name_response = await client.get(
+            "/api/v1/internal/trust-registry/lookup-by-name?name=Kairo Labs"
+        )
 
     app.dependency_overrides.clear()
     assert search_response.status_code == 200
@@ -480,7 +546,9 @@ async def test_search_and_lookup_routes_return_expected_shapes() -> None:
 @pytest.mark.asyncio
 async def test_resolution_and_merge_routes_return_expected_payloads() -> None:
     app.dependency_overrides[get_current_user] = _override_admin_user
-    app.dependency_overrides[get_trust_registry_resolution_service] = lambda: FakeTrustRegistryResolutionService()
+    app.dependency_overrides[get_trust_registry_resolution_service] = lambda: (
+        FakeTrustRegistryResolutionService()
+    )
 
     transport = ASGITransport(app=app)
     org_public_id = uuid4()

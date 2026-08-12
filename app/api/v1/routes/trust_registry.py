@@ -13,14 +13,20 @@ from app.api.dependencies.services import (
     get_trust_registry_search_service,
     get_trust_registry_service,
 )
-from app.api.dependencies.verification_admin import CurrentUser, require_reviewer, require_view_cases
+from app.api.dependencies.verification_admin import (
+    CurrentUser,
+    require_reviewer,
+    require_user_manager,
+    require_view_cases,
+)
 from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.trust_registry import (
-    TrustRegistryAliasCreateRequest,
-    TrustRegistryAliasResponse,
+    AdminTrustRegistryListParams,
     TrustRegistryAdminDetailResponse,
     TrustRegistryAdminMetricsResponse,
     TrustRegistryAdminRecordResponse,
+    TrustRegistryAliasCreateRequest,
+    TrustRegistryAliasResponse,
     TrustRegistryCapabilityCreateRequest,
     TrustRegistryCapabilityResponse,
     TrustRegistryCreateAndResolveRequest,
@@ -44,8 +50,8 @@ from app.schemas.trust_registry import (
     TrustRegistryResolutionRequest,
     TrustRegistryVerificationRequestResolutionResponse,
 )
-from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
 from app.services.trust_registry_admin_service import TrustRegistryAdminService
+from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
 from app.services.trust_registry_search_service import TrustRegistrySearchService
 from app.services.trust_registry_service import TrustRegistryService
 
@@ -53,10 +59,12 @@ admin_router = APIRouter(prefix="/admin/trust-registry", tags=["trust-registry"]
 internal_router = APIRouter(prefix="/internal/trust-registry", tags=["trust-registry"])
 
 
-@admin_router.post("", response_model=TrustRegistryDetailResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post(
+    "", response_model=TrustRegistryDetailResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_trust_registry_record(
     payload: TrustRegistryRecordCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryDetailResponse:
     return await svc.create_record(reviewer.id, payload)
@@ -64,7 +72,7 @@ async def create_trust_registry_record(
 
 @admin_router.get("", response_model=Page[TrustRegistryAdminRecordResponse])
 async def list_trust_registry_records(
-    params: Annotated[ListQueryParams, Depends()],
+    params: Annotated[AdminTrustRegistryListParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_view_cases)],
     svc: Annotated[TrustRegistryAdminService, Depends(get_trust_registry_admin_service)],
 ) -> Page[TrustRegistryAdminRecordResponse]:
@@ -81,7 +89,7 @@ async def get_trust_registry_metrics(
 
 @admin_router.get("/search", response_model=Page[TrustRegistryAdminRecordResponse])
 async def search_admin_trust_registry(
-    params: Annotated[ListQueryParams, Depends()],
+    params: Annotated[AdminTrustRegistryListParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_view_cases)],
     svc: Annotated[TrustRegistryAdminService, Depends(get_trust_registry_admin_service)],
 ) -> Page[TrustRegistryAdminRecordResponse]:
@@ -101,16 +109,20 @@ async def get_trust_registry_record(
 async def update_trust_registry_record(
     registry_public_id: UUID,
     payload: TrustRegistryRecordUpdateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryDetailResponse:
     return await svc.update_record(reviewer.id, registry_public_id, payload)
 
 
-@admin_router.post("/capabilities", response_model=TrustRegistryCapabilityResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post(
+    "/capabilities",
+    response_model=TrustRegistryCapabilityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_trust_registry_capability(
     payload: TrustRegistryCapabilityCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryCapabilityResponse:
     _ = reviewer
@@ -125,29 +137,37 @@ async def create_trust_registry_capability(
 async def add_trust_registry_capability(
     registry_public_id: UUID,
     payload: TrustRegistryRecordCapabilityCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryRecordCapabilityResponse:
     _ = reviewer
     return await svc.add_capability_assignment(registry_public_id, payload)
 
 
-@admin_router.post("/{registry_public_id}/domains", response_model=TrustRegistryDomainResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post(
+    "/{registry_public_id}/domains",
+    response_model=TrustRegistryDomainResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def add_trust_registry_domain(
     registry_public_id: UUID,
     payload: TrustRegistryDomainCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryDomainResponse:
     _ = reviewer
     return await svc.add_domain(registry_public_id, payload)
 
 
-@admin_router.post("/{registry_public_id}/aliases", response_model=TrustRegistryAliasResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post(
+    "/{registry_public_id}/aliases",
+    response_model=TrustRegistryAliasResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def add_trust_registry_alias(
     registry_public_id: UUID,
     payload: TrustRegistryAliasCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryAliasResponse:
     _ = reviewer
@@ -162,7 +182,7 @@ async def add_trust_registry_alias(
 async def add_trust_registry_identifier(
     registry_public_id: UUID,
     payload: TrustRegistryIdentifierCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryIdentifierResponse:
     _ = reviewer
@@ -177,7 +197,7 @@ async def add_trust_registry_identifier(
 async def add_trust_registry_relationship(
     registry_public_id: UUID,
     payload: TrustRegistryRelationshipCreateRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryService, Depends(get_trust_registry_service)],
 ) -> TrustRegistryRelationshipResponse:
     _ = reviewer
@@ -188,7 +208,7 @@ async def add_trust_registry_relationship(
 async def merge_trust_registry_record(
     registry_public_id: UUID,
     payload: TrustRegistryMergeRequest,
-    reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
+    reviewer: Annotated[CurrentUser, Depends(require_user_manager)],
     svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
 ) -> TrustRegistryMergeResponse:
     return await svc.merge_records(reviewer.id, registry_public_id, payload)
@@ -257,7 +277,9 @@ async def resolve_verification_request_to_trust_registry(
     reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
     svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
 ) -> TrustRegistryVerificationRequestResolutionResponse:
-    return await svc.resolve_verification_request(reviewer.id, verification_request_public_id, payload)
+    return await svc.resolve_verification_request(
+        reviewer.id, verification_request_public_id, payload
+    )
 
 
 @internal_router.post(
@@ -270,7 +292,9 @@ async def create_trust_registry_record_and_resolve_verification_request(
     reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
     svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
 ) -> TrustRegistryVerificationRequestResolutionResponse:
-    return await svc.create_record_and_resolve_verification_request(reviewer.id, verification_request_public_id, payload)
+    return await svc.create_record_and_resolve_verification_request(
+        reviewer.id, verification_request_public_id, payload
+    )
 
 
 @internal_router.post(
@@ -283,4 +307,6 @@ async def defer_verification_request_registry_resolution(
     reviewer: Annotated[CurrentUser, Depends(require_reviewer)],
     svc: Annotated[TrustRegistryResolutionService, Depends(get_trust_registry_resolution_service)],
 ) -> TrustRegistryVerificationRequestResolutionResponse:
-    return await svc.defer_verification_request_resolution(reviewer.id, verification_request_public_id, payload)
+    return await svc.defer_verification_request_resolution(
+        reviewer.id, verification_request_public_id, payload
+    )

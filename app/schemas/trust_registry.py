@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.pagination import Page
+from app.schemas.pagination import ListQueryParams, Page
 from app.trust_registry.enums import (
     TrustRegistryAliasType,
     TrustRegistryCapabilityStatus,
@@ -72,6 +72,13 @@ class TrustRegistryRecordUpdateRequest(BaseModel):
     trust_status: TrustRegistryTrustStatus | None = None
     registry_confidence_score: Decimal | None = Field(default=None, ge=0, le=100)
     trust_metadata: dict[str, Any] | None = None
+
+
+class AdminTrustRegistryListParams(ListQueryParams):
+    organization_type: str | None = Field(default=None, max_length=64)
+    lifecycle_status: str | None = Field(default=None, max_length=32)
+    trust_status: str | None = Field(default=None, max_length=32)
+    verification_state: str | None = Field(default=None, max_length=32)
 
 
 class TrustRegistryCapabilityCreateRequest(BaseModel):
@@ -319,6 +326,56 @@ class TrustRegistryAdminActivityResponse(BaseModel):
     description: str
 
 
+class TrustRegistryAdminRelationshipResponse(BaseModel):
+    public_id: UUID
+    direction: str
+    relationship_type: str
+    status: str
+    related_registry_record_public_id: UUID
+    related_registry_record_name: str
+    metadata: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrustRegistryAdminVerificationLinkResponse(BaseModel):
+    public_id: UUID
+    request_type: str
+    status: str
+    organization_public_id: UUID | None = None
+    organization_name: str | None = None
+    linked_record_public_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrustRegistryAdminOrganizationLinkResponse(BaseModel):
+    public_id: UUID
+    name: str
+    organization_type: str
+    verification_state: str
+    registry_resolution_status: str
+    verification_capabilities: list[str] = Field(default_factory=list)
+    domain: str | None = None
+    setup_completed_at: datetime | None = None
+    suspended_at: datetime | None = None
+    suspension_reason: str | None = None
+    member_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrustRegistryAdminMergeHistoryResponse(BaseModel):
+    public_id: UUID
+    direction: str
+    other_registry_record_public_id: UUID
+    other_registry_record_name: str
+    merged_by_user_id: UUID | None = None
+    merge_reason: str | None = None
+    metadata: dict[str, Any]
+    created_at: datetime
+
+
 class TrustRegistryAdminRecordResponse(TrustRegistryRecordResponse):
     """Admin-facing registry summary; the canonical record remains the source of truth."""
 
@@ -327,20 +384,41 @@ class TrustRegistryAdminRecordResponse(TrustRegistryRecordResponse):
     state: str
     active_case_count: int
     total_verifications: int
+    aliases_count: int = 0
+    identifiers_count: int = 0
+    relationship_count: int = 0
+    capabilities_count: int = 0
+    linked_organization_count: int = 0
     possible_duplicate_ids: list[UUID] = Field(default_factory=list)
     registry_flags: list[str] = Field(default_factory=list)
 
 
 class TrustRegistryAdminDetailResponse(TrustRegistryAdminRecordResponse):
+    domains: list[TrustRegistryDomainResponse] = Field(default_factory=list)
+    alias_items: list[TrustRegistryAliasResponse] = Field(default_factory=list)
+    identifiers: list[TrustRegistryIdentifierResponse] = Field(default_factory=list)
+    capabilities: list[TrustRegistryRecordCapabilityResponse] = Field(default_factory=list)
+    relationships: list[TrustRegistryAdminRelationshipResponse] = Field(default_factory=list)
+    linked_organizations: list[TrustRegistryAdminOrganizationLinkResponse] = Field(
+        default_factory=list
+    )
+    verification_requests: list[TrustRegistryAdminVerificationLinkResponse] = Field(
+        default_factory=list
+    )
+    merge_history: list[TrustRegistryAdminMergeHistoryResponse] = Field(default_factory=list)
     contacts: list[TrustRegistryAdminContactResponse] = Field(default_factory=list)
     activity: list[TrustRegistryAdminActivityResponse] = Field(default_factory=list)
 
 
 class TrustRegistryAdminMetricsResponse(BaseModel):
     total: int
+    employers: int = 0
+    institutions: int = 0
     verified: int
     unverified: int
     duplicates: int
+    unresolved_organizations: int = 0
+    linked_organizations: int = 0
     contacts_approved: int
     contacts_bounced: int
 
