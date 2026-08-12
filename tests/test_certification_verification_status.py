@@ -195,7 +195,10 @@ def test_certification_response_preserves_stored_pending_status_for_historical_r
         title="Legacy Pending Certification",
         issuing_organization="Legacy Org",
         issued_date=date(2025, 1, 1),
+        does_not_expire=False,
         verification_status="pending",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
     response = CertificationResponse.model_validate(row)
