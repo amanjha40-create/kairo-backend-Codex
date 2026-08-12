@@ -94,7 +94,11 @@ _DEFAULT_QUEUE_STATUS_VALUES = (
 def normalize_contact_review_status(
     review_status: VerificationContactReviewStatus | str,
 ) -> str:
-    return review_status.value if isinstance(review_status, VerificationContactReviewStatus) else review_status
+    return (
+        review_status.value
+        if isinstance(review_status, VerificationContactReviewStatus)
+        else review_status
+    )
 
 
 def normalize_contact_type(contact_type: VerificationContactType | str) -> str:
@@ -147,7 +151,13 @@ class VerificationRequestAdminReviewService:
                 "target_organization_name",
                 "target_organization_email",
             ),
-            allowed_sort_fields=("created_at", "updated_at", "subject_name", "subject_email", "status"),
+            allowed_sort_fields=(
+                "created_at",
+                "updated_at",
+                "subject_name",
+                "subject_email",
+                "status",
+            ),
             default_sort_by="created_at",
             force_page_envelope=True,
         )
@@ -169,7 +179,9 @@ class VerificationRequestAdminReviewService:
             return list(_DEFAULT_QUEUE_STATUS_VALUES)
         return [value.strip() for value in params.status.split(",") if value.strip()]
 
-    async def _to_queue_item(self, item: VerificationRequestResponse) -> AdminReviewQueueItemResponse:
+    async def _to_queue_item(
+        self, item: VerificationRequestResponse
+    ) -> AdminReviewQueueItemResponse:
         request = await self._get_required_request(item.public_id)
         review = await self._reviews.get_latest_review_for_request(request.id)
         reviewer = None
@@ -187,7 +199,9 @@ class VerificationRequestAdminReviewService:
         payload.update(
             assigned_reviewer=reviewer,
             contact_review_status=(
-                normalize_contact_review_status(contact.review_status) if contact is not None else None
+                normalize_contact_review_status(contact.review_status)
+                if contact is not None
+                else None
             ),
             organization_resolution_status="resolved" if request.organization_id else "unresolved",
             registry_resolution_status=request.registry_resolution_state,
@@ -205,7 +219,9 @@ class VerificationRequestAdminReviewService:
             raise NotFoundError("Verification request evidence not found")
         if evidence.employment_document_id is None:
             raise ConflictError("Evidence is not backed by an employment document")
-        document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
+        document = await self._employment_documents.get_active_by_id(
+            evidence.employment_document_id
+        )
         if document is None or request.employment_id != document.employment_id:
             raise NotFoundError("Employment document not found")
         bucket = self._settings.s3_documents_bucket
@@ -228,7 +244,9 @@ class VerificationRequestAdminReviewService:
         request = await self._get_required_request(verification_request_public_id)
         evidence_items = await self._evidence.list_for_request(request.id)
         reviews = await self._reviews.list_reviews_for_request(request.id)
-        open_corrections = await self._reviews.list_open_corrections_for_request([review.id for review in reviews])
+        open_corrections = await self._reviews.list_open_corrections_for_request(
+            [review.id for review in reviews]
+        )
         review_public_ids = {review.id: review.public_id for review in reviews}
         notes = [
             note
@@ -242,35 +260,58 @@ class VerificationRequestAdminReviewService:
         )
         contacts = await self._contacts.list_versions(request.id)
         current_contact = next((item for item in contacts if item.superseded_at is None), None)
-        organization = await self._organizations.get_by_id(request.organization_id) if request.organization_id else None
-        registry_record = (
-            await self._registry.get_by_id(request.registry_record_id)
-            if request.registry_record_id is not None
+        organization = (
+            await self._organizations.get_by_id(request.organization_id)
+            if request.organization_id
             else None
         )
-        employer_verification = await self._employer_verifications.get_by_verification_request_id(request.id)
+        registry_record_id = request.registry_record_id
+        if registry_record_id is None and organization is not None:
+            registry_record_id = organization.registry_record_id
+        registry_record = (
+            await self._registry.get_by_id(registry_record_id)
+            if registry_record_id is not None
+            else None
+        )
+        employer_verification = await self._employer_verifications.get_by_verification_request_id(
+            request.id
+        )
         return AdminReviewDetailResponse(
             request=await self._to_request_response(request),
             employer_verification_public_id=(
                 employer_verification.public_id if employer_verification is not None else None
             ),
             employment=employment,
-            verification_contact=self._to_admin_contact_response(current_contact) if current_contact else None,
-            verification_contact_history=[self._to_admin_contact_response(item) for item in contacts],
+            verification_contact=self._to_admin_contact_response(current_contact)
+            if current_contact
+            else None,
+            verification_contact_history=[
+                self._to_admin_contact_response(item) for item in contacts
+            ],
             evidence=[await self._to_admin_evidence_response(item) for item in evidence_items],
             reviews=[self._to_review_response(review) for review in reviews],
             open_corrections=[self._to_correction_response(item) for item in open_corrections],
-            internal_notes=[self._to_internal_note_response(item, review_public_ids) for item in notes],
+            internal_notes=[
+                self._to_internal_note_response(item, review_public_ids) for item in notes
+            ],
             organization_resolution=AdminOrganizationResolutionResponse(
                 status="resolved" if organization is not None else "unresolved",
                 organization_public_id=organization.public_id if organization is not None else None,
-                organization_name=organization.name if organization is not None else request.target_organization_name,
+                organization_name=organization.name
+                if organization is not None
+                else request.target_organization_name,
             ),
             registry_resolution=AdminRegistryResolutionResponse(
                 status=request.registry_resolution_state,
-                registry_record_public_id=registry_record.public_id if registry_record is not None else None,
-                registry_code=registry_record.registry_code if registry_record is not None else None,
-                registry_name=registry_record.display_name or registry_record.legal_name if registry_record is not None else None,
+                registry_record_public_id=registry_record.public_id
+                if registry_record is not None
+                else None,
+                registry_code=registry_record.registry_code
+                if registry_record is not None
+                else None,
+                registry_name=registry_record.display_name or registry_record.legal_name
+                if registry_record is not None
+                else None,
                 resolution_method=request.registry_resolution_method,
                 resolution_confidence=request.registry_resolution_confidence,
                 resolution_metadata=dict(request.registry_resolution_metadata or {}),
@@ -328,7 +369,10 @@ class VerificationRequestAdminReviewService:
 
         review = await self._get_or_create_review(request, actor_user_id)
         event_type = "verification_request_review_assigned"
-        if review.assigned_reviewer_user_id is not None and review.assigned_reviewer_user_id != payload.assignee_user_id:
+        if (
+            review.assigned_reviewer_user_id is not None
+            and review.assigned_reviewer_user_id != payload.assignee_user_id
+        ):
             event_type = "verification_request_review_reassigned"
         review.assigned_reviewer_user_id = payload.assignee_user_id
         review.assigned_by_user_id = actor_user_id
@@ -361,7 +405,10 @@ class VerificationRequestAdminReviewService:
     ) -> AdminReviewNoteResponse:
         request = await self._get_required_request(verification_request_public_id)
         review = await self._get_or_create_review(request, actor_user_id)
-        if review.review_status in {VerificationRequestReviewStatus.PENDING, VerificationRequestReviewStatus.ASSIGNED}:
+        if review.review_status in {
+            VerificationRequestReviewStatus.PENDING,
+            VerificationRequestReviewStatus.ASSIGNED,
+        }:
             review.review_status = VerificationRequestReviewStatus.IN_REVIEW
 
         note = VerificationReviewNote(
@@ -463,8 +510,13 @@ class VerificationRequestAdminReviewService:
         contact = await self._contacts.get_current(request.id)
         if request.employment_id is not None and contact is None:
             raise ConflictError("Employment verification requires a verification contact")
-        if contact is not None and contact.review_status != VerificationContactReviewStatus.APPROVED:
-            raise ConflictError("Verification contact must be approved before approving the request")
+        if (
+            contact is not None
+            and contact.review_status != VerificationContactReviewStatus.APPROVED
+        ):
+            raise ConflictError(
+                "Verification contact must be approved before approving the request"
+            )
 
         request.approved_for_organization_verification_at = datetime.now(tz=UTC)
         await self._workflow.transition(
@@ -871,7 +923,9 @@ class VerificationRequestAdminReviewService:
         return await self._to_request_response(refreshed)
 
     async def _require_linked_canonical_claim(self, request) -> None:  # noqa: ANN001
-        linked_count = int(request.employment_id is not None) + int(request.education_id is not None)
+        linked_count = int(request.employment_id is not None) + int(
+            request.education_id is not None
+        )
         if linked_count != 1:
             raise ConflictError("Legacy unlinked verification requests cannot be finalized")
         request_type = getattr(request.request_type, "value", request.request_type)
@@ -909,9 +963,9 @@ class VerificationRequestAdminReviewService:
             raise ConflictError("Linked education is not owned by the verification subject")
         education.verification_status = {
             "verified": EducationVerificationStatus.VERIFIED.value,
-                "rejected": EducationVerificationStatus.REJECTED.value,
-                "unable_to_verify": EducationVerificationStatus.UNABLE_TO_VERIFY.value,
-            }[outcome]
+            "rejected": EducationVerificationStatus.REJECTED.value,
+            "unable_to_verify": EducationVerificationStatus.UNABLE_TO_VERIFY.value,
+        }[outcome]
         education.reviewed_at = finalized_at
         education.verified_at = finalized_at if outcome == "verified" else None
         education.reviewed_by_user_id = actor_user_id
@@ -942,12 +996,16 @@ class VerificationRequestAdminReviewService:
                         "completed_at_iso": datetime.now(tz=UTC).isoformat(),
                         "outcome": outcome,
                         "linked_record_type": linked_record_type,
-                        "linked_record_id": str(linked_record_id) if linked_record_id is not None else None,
+                        "linked_record_id": str(linked_record_id)
+                        if linked_record_id is not None
+                        else None,
                     },
                     metadata={
                         "verification_request_public_id": str(request.public_id),
                         "linked_record_type": linked_record_type,
-                        "linked_record_id": str(linked_record_id) if linked_record_id is not None else None,
+                        "linked_record_id": str(linked_record_id)
+                        if linked_record_id is not None
+                        else None,
                     },
                 ),
                 actor_user_id=actor_user_id,
@@ -955,7 +1013,10 @@ class VerificationRequestAdminReviewService:
         except Exception:
             logger.warning(
                 "verification_finalization_notification_failed",
-                extra={"verification_request_public_id": str(request.public_id), "audience": "candidate"},
+                extra={
+                    "verification_request_public_id": str(request.public_id),
+                    "audience": "candidate",
+                },
             )
 
     async def _require_admin_reviewable_request(self, verification_request_public_id: UUID):
@@ -977,9 +1038,13 @@ class VerificationRequestAdminReviewService:
     @staticmethod
     def _require_authoritative_consent(request) -> None:  # noqa: ANN001
         if request.consented_at is None:
-            raise ConflictError("Verification request is missing authoritative candidate consent metadata")
+            raise ConflictError(
+                "Verification request is missing authoritative candidate consent metadata"
+            )
         if not (request.consented_fields or request.consented_evidence_scope):
-            raise ConflictError("Verification request is missing authoritative candidate consent metadata")
+            raise ConflictError(
+                "Verification request is missing authoritative candidate consent metadata"
+            )
 
     async def _require_admin_quality_review_request(self, verification_request_public_id: UUID):
         request = await self._get_required_request(verification_request_public_id)
@@ -999,7 +1064,9 @@ class VerificationRequestAdminReviewService:
         actor_user_id: UUID,
     ) -> VerificationRequestReview:
         latest = await self._reviews.get_latest_review_for_request(request.id)
-        if latest is None or self._should_start_new_review_round(request.status, latest.review_status):
+        if latest is None or self._should_start_new_review_round(
+            request.status, latest.review_status
+        ):
             review = VerificationRequestReview(
                 verification_request_id=request.id,
                 review_round=await self._reviews.get_next_review_round(request.id),
@@ -1050,14 +1117,19 @@ class VerificationRequestAdminReviewService:
         contact = await self._contacts.get_current(request.id)
         if request.employment_id is not None:
             if contact is None or contact.review_status != VerificationContactReviewStatus.APPROVED:
-                raise ConflictError("An approved verification contact is required for employer outreach")
+                raise ConflictError(
+                    "An approved verification contact is required for employer outreach"
+                )
             await self._employer_outreach.initiate_admin_outreach(
                 actor_user_id=actor_user_id,
                 verification_request=request,
                 payload=EmployerVerificationRequestBody(
-                    contact_name=contact.contact_name or contact.contact_role or normalize_contact_type(contact.contact_type),
+                    contact_name=contact.contact_name
+                    or contact.contact_role
+                    or normalize_contact_type(contact.contact_type),
                     verifier_email=contact.contact_email,
-                    relationship=contact.contact_role or normalize_contact_type(contact.contact_type),
+                    relationship=contact.contact_role
+                    or normalize_contact_type(contact.contact_type),
                 ),
             )
         request.organization_outreach_sent_at = datetime.now(tz=UTC)
