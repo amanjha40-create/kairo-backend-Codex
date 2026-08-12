@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,6 +18,8 @@ from app.schemas.trust_registry import (
     TrustRegistryAdminMetricsResponse,
     TrustRegistryAdminRecordResponse,
 )
+from app.services.trust_registry_admin_service import TrustRegistryAdminService
+from app.verification_requests.enums import VerificationContactReviewStatus
 
 
 def _record() -> TrustRegistryAdminRecordResponse:
@@ -117,3 +120,20 @@ async def test_admin_registry_projection_routes_use_canonical_namespace() -> Non
     assert detail_response.status_code == 200
     assert detail_response.json()["verification_requests"] == []
     assert legacy_response.status_code == 404
+
+
+def test_registry_contact_projection_accepts_string_review_status() -> None:
+    contact = SimpleNamespace(
+        public_id=uuid4(),
+        contact_email="reviewer@example.com",
+        review_status=VerificationContactReviewStatus.APPROVED.value,
+        contact_name="Registry Reviewer",
+        contact_role="hr",
+        submitted_by_user_id=uuid4(),
+        created_at=datetime.now(UTC),
+        last_successful_use_at=None,
+    )
+
+    response = TrustRegistryAdminService._to_contact(contact)
+
+    assert response.state == "approved"

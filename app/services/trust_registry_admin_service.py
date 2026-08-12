@@ -173,7 +173,8 @@ class TrustRegistryAdminService:
             unresolved_organizations=unresolved_organizations,
             linked_organizations=linked_organizations,
             contacts_approved=sum(
-                contact.review_status == VerificationContactReviewStatus.APPROVED
+                self._review_status_value(contact.review_status)
+                == VerificationContactReviewStatus.APPROVED.value
                 for contact in contacts
             ),
             contacts_bounced=0,
@@ -583,7 +584,10 @@ class TrustRegistryAdminService:
             VerificationContactReviewStatus.APPROVED.value: "approved",
             VerificationContactReviewStatus.PENDING.value: "unverified",
             VerificationContactReviewStatus.CHANGES_REQUESTED.value: "needs_review",
-        }.get(contact.review_status.value, "needs_review")
+        }.get(
+            TrustRegistryAdminService._review_status_value(contact.review_status),
+            "needs_review",
+        )
         return TrustRegistryAdminContactResponse(
             public_id=contact.public_id,
             name=contact.contact_name,
@@ -594,6 +598,10 @@ class TrustRegistryAdminService:
             added_at=contact.created_at,
             last_successful_use=getattr(contact, "last_successful_use_at", None),
         )
+
+    @staticmethod
+    def _review_status_value(review_status: object) -> str:
+        return review_status.value if hasattr(review_status, "value") else str(review_status)
 
     @staticmethod
     def _to_activity(event, request_public_id: UUID) -> TrustRegistryAdminActivityResponse:  # noqa: ANN001
