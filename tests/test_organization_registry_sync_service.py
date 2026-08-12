@@ -40,6 +40,10 @@ def _record():
         id=uuid4(),
         public_id=uuid4(),
         deleted_at=None,
+        legal_name="Platform QA Employer 0804",
+        display_name="Platform QA Employer 0804",
+        aliases=[],
+        trust_metadata={},
     )
 
 
@@ -138,4 +142,64 @@ async def test_sync_reuses_existing_org_link_and_repairs_request_registry_links(
 
     assert result.action == "already_linked"
     assert result.request_links_synced == 2
+    service._registry.create_record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_does_not_domain_link_unrelated_organization_sharing_same_domain() -> None:
+    organization = _organization()
+    service = _service()
+    delattr(service, "_find_domain_matches")
+    unrelated = _record()
+    unrelated.legal_name = "Aman"
+    unrelated.display_name = "Aman"
+    unrelated.trust_metadata = {"workspace_organization_public_id": str(uuid4())}
+    matching = _record()
+    matching.legal_name = organization.name
+    matching.display_name = organization.name
+
+    service._domains = SimpleNamespace(
+        get_by_domain=AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    deleted_at=None,
+                    registry_record=unrelated,
+                ),
+                SimpleNamespace(
+                    deleted_at=None,
+                    registry_record=matching,
+                ),
+            ]
+        )
+    )
+
+    matches = await service._find_domain_matches(organization)
+
+    assert matches == [matching]
+
+
+@pytest.mark.asyncio
+async def test_sync_repairs_existing_mislinked_registry_record() -> None:
+    organization = _organization()
+    organization.registry_record_id = uuid4()
+    stale_record = _record()
+    stale_record.id = organization.registry_record_id
+    stale_record.legal_name = "Aman"
+    stale_record.display_name = "Aman"
+    stale_record.trust_metadata = {"workspace_organization_public_id": str(uuid4())}
+    correct_record = _record()
+    correct_record.legal_name = organization.name
+    correct_record.display_name = organization.name
+
+    service = _service()
+    service._records.get_by_id = AsyncMock(return_value=stale_record)
+    service._find_name_matches = AsyncMock(return_value=[correct_record])
+
+    result = await service.sync_organization(
+        organization,
+        actor_user_id=uuid4(),
+    )
+
+    assert result.action == "linked_existing_name"
+    assert organization.registry_record_id == correct_record.id
     service._registry.create_record.assert_not_awaited()

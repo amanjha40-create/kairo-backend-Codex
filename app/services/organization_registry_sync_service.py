@@ -85,6 +85,11 @@ class OrganizationRegistrySyncService:
 
         if organization.registry_record_id is not None:
             record = await self._records.get_by_id(organization.registry_record_id)
+            if record is not None and not self._linked_record_belongs_to_organization(
+                record,
+                organization,
+            ):
+                record = None
 
         if record is None:
             record, method, action = await self._match_or_create_record(
@@ -128,7 +133,10 @@ class OrganizationRegistrySyncService:
 
         if organization.registry_record_id is not None:
             record = await self._records.get_by_id(organization.registry_record_id)
-            if record is not None:
+            if record is not None and self._linked_record_belongs_to_organization(
+                record,
+                organization,
+            ):
                 return OrganizationRegistrySyncPlan(
                     organization_public_id=organization.public_id,
                     action="already_linked",
@@ -240,6 +248,7 @@ class OrganizationRegistrySyncService:
             item.registry_record
             for item in await self._domains.get_by_domain(organization.domain)
             if item.deleted_at is None
+            and self._linked_record_belongs_to_organization(item.registry_record, organization)
         )
 
     async def _find_name_matches(self, organization: Organization) -> list[TrustRegistryRecord]:
@@ -341,6 +350,35 @@ class OrganizationRegistrySyncService:
     def _organization_type_value(organization: Organization) -> str:
         value = organization.organization_type
         return value.value if hasattr(value, "value") else str(value)
+
+    @staticmethod
+    def _record_name_matches_organization(
+        record: TrustRegistryRecord,
+        organization: Organization,
+    ) -> bool:
+        normalized = organization.name.strip().lower()
+        if record.legal_name.strip().lower() == normalized:
+            return True
+        if (record.display_name or "").strip().lower() == normalized:
+            return True
+        return any(
+            alias.deleted_at is None and alias.alias_name.strip().lower() == normalized
+            for alias in getattr(record, "aliases", [])
+        )
+
+    def _linked_record_belongs_to_organization(
+        self,
+        record: TrustRegistryRecord | None,
+        organization: Organization,
+    ) -> bool:
+        if record is None:
+            return False
+        source_public_id = str(
+            dict(record.trust_metadata or {}).get("workspace_organization_public_id") or ""
+        )
+        if source_public_id == str(organization.public_id):
+            return True
+        return self._record_name_matches_organization(record, organization)
 
     @staticmethod
     def _verification_state_value(organization: Organization) -> str:
