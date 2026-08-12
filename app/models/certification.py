@@ -17,6 +17,7 @@ class Certification(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     """A certification or course completion record owned by a user."""
 
     __tablename__ = "certifications"
+    SELF_DECLARED_STATUS = "self_declared"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -42,8 +43,8 @@ class Certification(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     verification_status: Mapped[str] = mapped_column(
         String(48),
         nullable=False,
-        default="pending",
-        server_default="pending",
+        default=SELF_DECLARED_STATUS,
+        server_default=SELF_DECLARED_STATUS,
     )
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

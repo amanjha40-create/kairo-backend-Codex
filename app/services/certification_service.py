@@ -37,6 +37,7 @@ class CertificationService:
             does_not_expire=payload.does_not_expire,
             credential_id=payload.credential_id,
             credential_url=str(payload.credential_url) if payload.credential_url else None,
+            verification_status=Certification.SELF_DECLARED_STATUS,
         )
         result = await self._repo.create(item)
         await self._session.commit()
@@ -71,6 +72,7 @@ class CertificationService:
             content_type=payload.content_type,
             byte_size=payload.byte_size,
             checksum_sha256="",
+            verification_status=Certification.SELF_DECLARED_STATUS,
         )
         await self._repo.create(item)
         await self._session.commit()

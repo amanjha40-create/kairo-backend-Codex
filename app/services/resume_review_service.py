@@ -360,7 +360,7 @@ class ResumeReviewService:
         if claim_type == "gig_platform":
             return GigPlatform(user_id=user_id, platform_name=p.get("platform_name"), partner_role=p.get("partner_role"), partner_id=p.get("partner_id"), started_at=p.get("start_date"), ended_at=p.get("end_date"), is_active=bool(p.get("is_current")), verification_status="pending")
         if claim_type == "certification":
-            return Certification(user_id=user_id, title=p["title"], issuing_organization=p["issuing_organization"], issued_date=p.get("issued_date"), expiry_date=p.get("expiry_date"), does_not_expire=p.get("expiry_date") is None, credential_id=p.get("credential_id"), credential_url=str(p["credential_url"]) if p.get("credential_url") else None, verification_status="pending")
+            return Certification(user_id=user_id, title=p["title"], issuing_organization=p["issuing_organization"], issued_date=p.get("issued_date"), expiry_date=p.get("expiry_date"), does_not_expire=p.get("expiry_date") is None, credential_id=p.get("credential_id"), credential_url=str(p["credential_url"]) if p.get("credential_url") else None, verification_status=Certification.SELF_DECLARED_STATUS)
         if claim_type == "portfolio":
             return PortfolioItem(user_id=user_id, title=p["title"], description=p.get("description"), url=str(p["url"]) if p.get("url") else None, tags=",".join(p.get("tags", [])) or None, verification_status="pending")
         if claim_type == "project":
