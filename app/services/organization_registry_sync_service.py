@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -302,7 +302,10 @@ class OrganizationRegistrySyncService:
                 await self._session.execute(
                     select(VerificationRequest).where(
                         VerificationRequest.organization_id == organization.id,
-                        VerificationRequest.registry_record_id.is_(None),
+                        or_(
+                            VerificationRequest.registry_record_id.is_(None),
+                            VerificationRequest.registry_record_id != record.id,
+                        ),
                     )
                 )
             )

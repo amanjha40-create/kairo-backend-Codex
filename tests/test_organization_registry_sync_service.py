@@ -13,6 +13,7 @@ from app.models.trust_registry_domain import TrustRegistryDomain
 from app.services.organization_registry_sync_service import (
     OrganizationRegistrySyncService,
 )
+from app.trust_registry.enums import TrustRegistryResolutionMethod, TrustRegistryResolutionState
 
 
 def _organization():
@@ -203,3 +204,39 @@ async def test_sync_repairs_existing_mislinked_registry_record() -> None:
     assert result.action == "linked_existing_name"
     assert organization.registry_record_id == correct_record.id
     service._registry.create_record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_updates_existing_request_links_when_registry_identity_changes() -> None:
+    organization = _organization()
+    record = _record()
+    request = SimpleNamespace(
+        registry_record_id=uuid4(),
+        registry_record=None,
+        registry_resolution_state=None,
+        registry_resolution_method=None,
+        registry_resolution_confidence=None,
+        registry_resolution_metadata={},
+        registry_resolved_at=None,
+        registry_resolved_by_user_id=None,
+    )
+    service = _service()
+    delattr(service, "_sync_related_requests")
+    service._session.execute = AsyncMock(
+        return_value=SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [request]),
+        )
+    )
+
+    synced = await service._sync_related_requests(
+        organization,
+        record,
+        actor_user_id=uuid4(),
+        method=TrustRegistryResolutionMethod.EXACT_NAME,
+    )
+
+    assert synced == 1
+    assert request.registry_record_id == record.id
+    assert request.registry_record is record
+    assert request.registry_resolution_state == TrustRegistryResolutionState.RESOLVED.value
+    assert request.registry_resolution_method == TrustRegistryResolutionMethod.EXACT_NAME.value
