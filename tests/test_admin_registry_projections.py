@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -137,3 +138,37 @@ def test_registry_contact_projection_accepts_string_review_status() -> None:
     response = TrustRegistryAdminService._to_contact(contact)
 
     assert response.state == "approved"
+
+
+@pytest.mark.asyncio
+async def test_registry_detail_projection_reuses_summary_aliases_without_duplicate_kwargs() -> None:
+    service = TrustRegistryAdminService.__new__(TrustRegistryAdminService)
+    service._serializer = SimpleNamespace(
+        _to_alias_response=lambda alias: alias,
+        _to_domain_response=lambda domain: domain,
+        _to_identifier_response=lambda identifier: identifier,
+        _to_record_capability_response=lambda capability: capability,
+    )
+    service._load_detail_record = AsyncMock(
+        return_value=SimpleNamespace(
+            aliases=[],
+            domains=[],
+            identifiers=[],
+            capabilities=[],
+            organizations=[],
+            verification_requests=[],
+            source_merge_history=[],
+            target_merge_history=[],
+        )
+    )
+    service._to_summary = lambda record: _record()
+    service._build_contacts = lambda record: {}
+    service._build_activity = lambda record: []
+    service._build_relationships = lambda record: []
+    service._build_merge_history = lambda record: []
+    service._to_linked_organization = lambda organization: organization
+    service._to_verification_link = lambda request: request
+
+    detail = await service.get_detail(uuid4())
+
+    assert detail.aliases == ["Kairo Institute"]

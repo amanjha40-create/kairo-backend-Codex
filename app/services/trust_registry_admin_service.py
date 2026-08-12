@@ -105,7 +105,6 @@ class TrustRegistryAdminService:
 
         return TrustRegistryAdminDetailResponse(
             **summary.model_dump(),
-            aliases=summary.aliases,
             alias_items=[
                 self._serializer._to_alias_response(alias)
                 for alias in record.aliases
