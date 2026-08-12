@@ -8,7 +8,10 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import NO_VALUE
 
 from app.exceptions import ConflictError
 from app.models.organization import Organization
@@ -361,9 +364,15 @@ class OrganizationRegistrySyncService:
             return True
         if (record.display_name or "").strip().lower() == normalized:
             return True
+        try:
+            aliases_state = sa_inspect(record).attrs.aliases.loaded_value
+            if aliases_state is NO_VALUE:
+                return False
+        except NoInspectionAvailable:
+            aliases_state = getattr(record, "aliases", [])
         return any(
             alias.deleted_at is None and alias.alias_name.strip().lower() == normalized
-            for alias in getattr(record, "aliases", [])
+            for alias in aliases_state
         )
 
     def _linked_record_belongs_to_organization(
