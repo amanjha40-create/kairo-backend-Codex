@@ -73,6 +73,7 @@ from app.schemas.verification_request import (
 )
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.notification_service import NotificationService
+from app.services.organization_registry_sync_service import OrganizationRegistrySyncService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
@@ -116,6 +117,7 @@ class VerificationRequestAdminReviewService:
         self._evidence = VerificationRequestEvidenceRepository(session)
         self._reviews = VerificationRequestReviewRepository(session)
         self._contacts = VerificationContactRepository(session)
+        self._registry_sync = OrganizationRegistrySyncService(session)
         self._settings = settings or get_settings()
         self._employer_outreach = EmployerVerificationService(session, self._settings)
         self._workflow = VerificationRequestWorkflowService(self._requests)
@@ -693,11 +695,32 @@ class VerificationRequestAdminReviewService:
 
         if request.organization_id is not None:
             if request.organization_id == organization.id:
+                await self._registry_sync.sync_organization(
+                    organization,
+                    actor_user_id=actor_user_id,
+                )
+                await self._session.commit()
                 return await self._to_request_response(request)
             raise ConflictError("Verification request organization is already resolved")
 
+        sync_result = await self._registry_sync.sync_organization(
+            organization,
+            actor_user_id=actor_user_id,
+        )
         request.organization_id = organization.id
         request.target_organization_name = organization.name
+        request.registry_record_id = organization.registry_record_id
+        request.registry_record = organization.registry_record
+        request.registry_resolution_state = "resolved"
+        request.registry_resolution_method = sync_result.resolution_method
+        request.registry_resolution_confidence = organization.registry_resolution_confidence
+        request.registry_resolution_metadata = {
+            **dict(request.registry_resolution_metadata or {}),
+            "source": "organization_registry_sync",
+            "organization_public_id": str(organization.public_id),
+        }
+        request.registry_resolved_at = organization.registry_resolved_at
+        request.registry_resolved_by_user_id = actor_user_id
         if request.status in pre_dispatch_statuses:
             # Resolution selects the eventual verifier; dispatch stays an explicit
             # admin approval so no outreach or canonical-claim mutation happens here.

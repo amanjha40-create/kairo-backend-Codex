@@ -35,6 +35,7 @@ from app.schemas.organization import (
     OrganizationUpdateRequest,
 )
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
+from app.services.organization_registry_sync_service import OrganizationRegistrySyncService
 
 INVITATION_TTL = timedelta(days=7)
 
@@ -54,6 +55,7 @@ class OrganizationService:
         self._organizations = organizations or OrganizationRepository(session)
         self._invitations = invitations or OrganizationInvitationRepository(session)
         self._users = users or UserRepository(session)
+        self._registry_sync = OrganizationRegistrySyncService(session)
 
     async def create_organization(
         self,
@@ -85,6 +87,10 @@ class OrganizationService:
         )
         await self._organizations.create(organization, membership)
         actor.active_organization_id = organization.id
+        await self._registry_sync.sync_organization(
+            organization,
+            actor_user_id=actor_user_id,
+        )
         await self._session.commit()
         await self._session.refresh(organization)
         await self._session.refresh(membership)
