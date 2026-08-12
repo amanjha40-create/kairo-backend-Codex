@@ -34,14 +34,24 @@ class TrustRegistryRepository:
                 selectinload(TrustRegistryRecord.domains),
                 selectinload(TrustRegistryRecord.aliases),
                 selectinload(TrustRegistryRecord.identifiers),
-                selectinload(TrustRegistryRecord.capabilities).joinedload(TrustRegistryRecordCapability.capability),
+                selectinload(TrustRegistryRecord.capabilities).joinedload(
+                    TrustRegistryRecordCapability.capability
+                ),
+                selectinload(TrustRegistryRecord.parent_relationships),
+                selectinload(TrustRegistryRecord.child_relationships),
             )
-            .where(TrustRegistryRecord.public_id == public_id, TrustRegistryRecord.deleted_at.is_(None))
+            .where(
+                TrustRegistryRecord.public_id == public_id,
+                TrustRegistryRecord.deleted_at.is_(None),
+            )
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id(self, record_id: UUID) -> TrustRegistryRecord | None:
-        stmt = select(TrustRegistryRecord).where(TrustRegistryRecord.id == record_id, TrustRegistryRecord.deleted_at.is_(None))
+        stmt = select(TrustRegistryRecord).where(
+            TrustRegistryRecord.id == record_id,
+            TrustRegistryRecord.deleted_at.is_(None),
+        )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_registry_code(self, registry_code: str) -> TrustRegistryRecord | None:
@@ -52,7 +62,9 @@ class TrustRegistryRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def count(self) -> int:
-        stmt = select(func.count()).select_from(TrustRegistryRecord).where(TrustRegistryRecord.deleted_at.is_(None))
+        stmt = select(func.count()).select_from(TrustRegistryRecord).where(
+            TrustRegistryRecord.deleted_at.is_(None)
+        )
         return int((await self._session.execute(stmt)).scalar_one())
 
     async def list_all(self) -> list[TrustRegistryRecord]:
@@ -101,7 +113,9 @@ class TrustRegistryCapabilityRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_key(self, capability_key: str) -> TrustRegistryCapability | None:
-        stmt = select(TrustRegistryCapability).where(TrustRegistryCapability.capability_key == capability_key)
+        stmt = select(TrustRegistryCapability).where(
+            TrustRegistryCapability.capability_key == capability_key
+        )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
 
@@ -188,7 +202,9 @@ class TrustRegistryRecordCapabilityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, assignment: TrustRegistryRecordCapability) -> TrustRegistryRecordCapability:
+    async def create(
+        self, assignment: TrustRegistryRecordCapability
+    ) -> TrustRegistryRecordCapability:
         self._session.add(assignment)
         await self._session.flush()
         return assignment
