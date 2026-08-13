@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.exceptions import ServiceUnavailableError
 from app.integrations.email.providers import get_email_provider
 from app.integrations.email.renderer import EmailTemplateRenderer
 from app.models.email_delivery_log import EmailDeliveryLog
@@ -43,6 +44,7 @@ class EmailDeliveryService:
         to_email: str,
         template_data: dict[str, object],
         recipient_user_id: UUID | None = None,
+        raise_on_dispatch_failure: bool = False,
     ) -> EmailDeliveryLog:
         rendered = self._renderer.render(
             template_key=template_key,
@@ -71,6 +73,8 @@ class EmailDeliveryService:
                 )
             )
         except Exception as exc:
+            if raise_on_dispatch_failure:
+                raise
             logger.warning(
                 "email_dispatch_failed",
                 extra={
@@ -82,4 +86,7 @@ class EmailDeliveryService:
             )
 
         await self._session.refresh(log)
+        if raise_on_dispatch_failure and log.status == "failed":
+            msg = log.error_message or "Unable to send email"
+            raise ServiceUnavailableError(msg)
         return log

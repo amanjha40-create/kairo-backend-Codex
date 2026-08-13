@@ -276,3 +276,38 @@ async def test_brevo_provider_normalizes_timeout_failures(caplog: pytest.LogCapt
             await provider.send(_sample_rendered_message())
 
     assert "brevo_send_timeout" in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_brevo_provider_sets_sender_reply_to_and_destination() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://api.brevo.com/v3/smtp/email")
+        payload = request.read().decode("utf-8")
+        assert "\"sender\":{\"email\":\"verify@kairoid.com\",\"name\":\"Kairo\"}" in payload
+        assert "\"replyTo\":{\"email\":\"visitor@example.com\"}" in payload
+        assert "\"to\":[{\"email\":\"contact@kairoid.com\"}]" in payload
+        return httpx.Response(201, json={"messageId": "<brevo-message-id>"})
+
+    provider = BrevoEmailProvider(
+        _brevo_settings(
+            email_from="verify@kairoid.com",
+            email_reply_to="verify@kairoid.com",
+        ),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    result = await provider.send(
+        RenderedEmailMessage(
+            template_key="contact_form_submission",
+            template_version="v1",
+            to_email="contact@kairoid.com",
+            subject="New contact request — Kairo",
+            text_body="Plain text fallback",
+            html_body="<p>HTML body</p>",
+            reply_to="visitor@example.com",
+        )
+    )
+
+    assert result.provider == "brevo"
+    assert result.status == "sent"
+    assert result.provider_message_id == "<brevo-message-id>"

@@ -211,6 +211,12 @@ class Settings(BaseSettings):
     otp_verify_rate_limit_window_seconds: int = Field(
         default=60, ge=1, le=3600, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS")
     )
+    contact_rate_limit_max_requests: int = Field(
+        default=5, ge=1, le=100, validation_alias=AliasChoices("CONTACT_RATE_LIMIT_MAX_REQUESTS")
+    )
+    contact_rate_limit_window_seconds: int = Field(
+        default=300, ge=1, le=3600, validation_alias=AliasChoices("CONTACT_RATE_LIMIT_WINDOW_SECONDS")
+    )
     password_reset_token_ttl_minutes: int = Field(
         default=30,
         ge=5,

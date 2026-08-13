@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class TrustInvitationEmailTemplateData(BaseModel):
@@ -52,6 +52,18 @@ class VerificationCompletedEmailTemplateData(BaseModel):
     completed_at_iso: str = Field(min_length=1, max_length=64)
 
 
+class ContactFormSubmissionEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    full_name: str = Field(min_length=1, max_length=255)
+    work_email: EmailStr
+    company: str = Field(min_length=1, max_length=255)
+    hires_per_month: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=5000)
+    submitted_at_iso: str = Field(min_length=1, max_length=64)
+    request_id: str = Field(min_length=1, max_length=128)
+
+
 class RenderedEmailMessage(BaseModel):
     template_key: str = Field(min_length=1, max_length=100)
     template_version: str = Field(min_length=1, max_length=32)
@@ -60,7 +72,7 @@ class RenderedEmailMessage(BaseModel):
     text_body: str = Field(min_length=1)
     html_body: str | None = None
     from_email: str | None = Field(default=None, min_length=3, max_length=320)
-    reply_to: str | None = Field(default=None, min_length=3, max_length=320)
+    reply_to: str | None = Field(default=None, max_length=320)
     tags: list[str] = Field(default_factory=list)
     correlation_id: str | None = Field(default=None, max_length=255)
     audit_payload: dict[str, Any] = Field(default_factory=dict)

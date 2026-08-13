@@ -9,6 +9,10 @@ from app.integrations.email.templates.base import (
     SUPPORT_EMAIL,
     TransactionalEmailContent,
 )
+from app.integrations.email.templates.contact_form_submission import (
+    ContactFormSubmissionContext,
+    render_contact_form_submission,
+)
 from app.integrations.email.templates.employer_verification import (
     EmployerVerificationContext,
     render_employer_verification,
@@ -59,6 +63,17 @@ from app.integrations.email.templates.verification_completed import (
                 organization_name="Example Company",
                 request_type="employment",
                 completed_at_iso="2026-07-20T10:00:00+00:00",
+            )
+        ),
+        lambda: render_contact_form_submission(
+            ContactFormSubmissionContext(
+                full_name="Candidate Name",
+                work_email="candidate@example.com",
+                company="Example Company",
+                hires_per_month="25",
+                message="Please show us a product demo.",
+                submitted_at_iso="2026-07-20T10:00:00+00:00",
+                request_id="req-123",
             )
         ),
     )
@@ -146,3 +161,22 @@ def test_generic_templates_escape_user_controlled_values() -> None:
     assert "a=1&amp;b=2" in invitation.html_body
     assert "User &lt;unsafe&gt;" in completed.html_body
     assert "Org &amp; Co" in completed.html_body
+
+
+def test_contact_submission_template_escapes_user_content() -> None:
+    content = render_contact_form_submission(
+        ContactFormSubmissionContext(
+            full_name='Aman <unsafe>',
+            work_email="aman@example.com",
+            company="Kairo & Co",
+            hires_per_month="25",
+            message='Hello<script>alert("x")</script>\nSecond line',
+            submitted_at_iso="2026-07-20T10:00:00+00:00",
+            request_id="req-unsafe",
+        )
+    )
+
+    assert "<script>" not in content.html_body
+    assert "&lt;unsafe&gt;" in content.html_body
+    assert "Kairo &amp; Co" in content.html_body
+    assert "Second line" in content.text_body

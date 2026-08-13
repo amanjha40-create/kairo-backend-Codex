@@ -6,6 +6,10 @@ from collections.abc import Callable
 from typing import Any
 
 from app.integrations.email.templates import DEFAULT_TEMPLATE_VERSION, EmailTemplateKey
+from app.integrations.email.templates.contact_form_submission import (
+    ContactFormSubmissionContext,
+    render_contact_form_submission,
+)
 from app.integrations.email.templates.employer_verification import (
     EmployerVerificationContext,
     render_employer_verification,
@@ -24,6 +28,7 @@ from app.integrations.email.templates.verification_completed import (
     render_verification_completed,
 )
 from app.schemas.email_delivery import (
+    ContactFormSubmissionEmailTemplateData,
     EmployerVerificationEmailTemplateData,
     PasswordResetEmailTemplateData,
     RenderedEmailMessage,
@@ -133,6 +138,39 @@ def _render_trust_invitation(to_email: str, data: dict[str, Any]) -> RenderedEma
     )
 
 
+def _render_contact_form_submission(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = ContactFormSubmissionEmailTemplateData.model_validate(data)
+    content = render_contact_form_submission(
+        ContactFormSubmissionContext(
+            full_name=payload.full_name,
+            work_email=payload.work_email,
+            company=payload.company,
+            hires_per_month=payload.hires_per_month,
+            message=payload.message,
+            submitted_at_iso=payload.submitted_at_iso,
+            request_id=payload.request_id,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.CONTACT_FORM_SUBMISSION.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        reply_to=str(payload.work_email),
+        audit_payload={
+            "full_name": payload.full_name,
+            "work_email_domain": payload.work_email.split("@")[-1],
+            "company": payload.company,
+            "hires_per_month": payload.hires_per_month,
+            "submitted_at_iso": payload.submitted_at_iso,
+            "request_id": payload.request_id,
+            "message_length": len(payload.message),
+        },
+    )
+
+
 def _render_verification_completed(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
     payload = VerificationCompletedEmailTemplateData.model_validate(data)
     content = render_verification_completed(
@@ -167,6 +205,7 @@ class EmailTemplateRenderer:
             EmailTemplateKey.SIGNUP_OTP.value: _render_signup_otp,
             EmailTemplateKey.PASSWORD_RESET.value: _render_password_reset,
             EmailTemplateKey.EMPLOYER_VERIFICATION.value: _render_employer_verification,
+            EmailTemplateKey.CONTACT_FORM_SUBMISSION.value: _render_contact_form_submission,
             EmailTemplateKey.TRUST_INVITATION.value: _render_trust_invitation,
             EmailTemplateKey.VERIFICATION_COMPLETED.value: _render_verification_completed,
         }

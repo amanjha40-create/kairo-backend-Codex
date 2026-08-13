@@ -9,6 +9,7 @@ class EmailTemplateKey(StrEnum):
     SIGNUP_OTP = "signup_otp"
     PASSWORD_RESET = "password_reset"
     EMPLOYER_VERIFICATION = "employer_verification"
+    CONTACT_FORM_SUBMISSION = "contact_form_submission"
     TRUST_INVITATION = "trust_invitation"
     VERIFICATION_COMPLETED = "verification_completed"
 
