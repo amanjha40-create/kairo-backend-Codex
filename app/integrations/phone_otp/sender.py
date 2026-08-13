@@ -11,6 +11,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from app.auth.phone_utils import mask_phone
 from app.config import Settings, get_settings
+from app.exceptions import ForbiddenError
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,21 @@ class SnsPhoneOtpSender:
         )
 
 
+class Msg91ClientManagedPhoneOtpSender:
+    """MSG91 Widget-backed verification keeps OTP delivery on the client widget."""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
+    def challenge_code(self, *, to_phone: str, generated_code: str) -> str:
+        del to_phone, generated_code
+        raise ForbiddenError("Client-managed phone verification is required")
+
+    async def send_signup_otp(self, *, to_phone: str, code: str, ttl_minutes: int) -> None:
+        del to_phone, code, ttl_minutes
+        raise ForbiddenError("Client-managed phone verification is required")
+
+
 def get_phone_otp_sender(settings: Settings | None = None) -> PhoneOtpSender:
     s = settings or get_settings()
     backend = s.phone_otp_backend.lower().strip()
@@ -110,4 +126,6 @@ def get_phone_otp_sender(settings: Settings | None = None) -> PhoneOtpSender:
         return StagingFixedPhoneOtpSender(s)
     if backend == "sns":
         return SnsPhoneOtpSender(s)
+    if backend == "msg91":
+        return Msg91ClientManagedPhoneOtpSender(s)
     raise ValueError(f"Unsupported PHONE_OTP_BACKEND: {backend}")

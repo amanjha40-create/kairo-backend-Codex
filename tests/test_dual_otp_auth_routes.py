@@ -112,6 +112,7 @@ class FakeAuthService:
         return await self.send_signup_phone_otp(payload)
 
     async def verify_signup_phone(self, payload) -> SignupChannelVerifyResponse:  # noqa: ANN001
+        assert (payload.code is None) != (payload.access_token is None)
         return SignupChannelVerifyResponse(
             signup_session_id=payload.signup_session_id,
             channel="phone",
@@ -218,6 +219,54 @@ async def test_dual_signup_routes_expose_phase1_contract() -> None:
     assert complete.status_code == 200
     assert complete.json()["access_token"] == "access-token"
     assert complete.json()["refresh_token"] == "refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_signup_phone_verify_accepts_access_token_contract() -> None:
+    fake = FakeAuthService()
+    app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
+    signup_session_id = str(uuid4())
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        phone_verify = await client.post(
+            "/api/v1/auth/signup/phone/verify",
+            json={"signup_session_id": signup_session_id, "access_token": "msg91-jwt-token"},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert phone_verify.status_code == 200
+    assert phone_verify.json()["phone_verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_signup_phone_verify_requires_exactly_one_input() -> None:
+    fake = FakeAuthService()
+    app.dependency_overrides[get_auth_service] = lambda: fake
+    app.dependency_overrides[get_redis] = lambda: FakeRedis()
+    signup_session_id = str(uuid4())
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        neither = await client.post(
+            "/api/v1/auth/signup/phone/verify",
+            json={"signup_session_id": signup_session_id},
+        )
+        both = await client.post(
+            "/api/v1/auth/signup/phone/verify",
+            json={
+                "signup_session_id": signup_session_id,
+                "code": "123456",
+                "access_token": "msg91-jwt-token",
+            },
+        )
+
+    app.dependency_overrides.clear()
+
+    assert neither.status_code == 422
+    assert both.status_code == 422
 
 
 @pytest.mark.asyncio

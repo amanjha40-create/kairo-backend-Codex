@@ -33,6 +33,7 @@ from app.schemas.auth import (
     SignupChannelSendResponse,
     SignupChannelVerifyResponse,
     SignupCompleteRequest,
+    SignupPhoneVerifyRequest,
     SignupResendRequest,
     SignupResendResponse,
     SignupStartResponse,
@@ -204,7 +205,7 @@ async def signup_phone_resend(
     dependencies=[Depends(otp_verify_rate_limit)],
 )
 async def signup_phone_verify(
-    payload: SignupVerifyRequest,
+    payload: SignupPhoneVerifyRequest,
     auth: AuthService = Depends(get_auth_service),
 ) -> SignupChannelVerifyResponse:
     return await auth.verify_signup_phone(payload)

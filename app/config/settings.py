@@ -176,7 +176,7 @@ class Settings(BaseSettings):
     )
     phone_otp_backend: str = Field(
         default="console",
-        description="console | staging_fixed | sns",
+        description="console | staging_fixed | sns | msg91",
         validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
     )
     controlled_testing: bool = Field(
@@ -192,6 +192,16 @@ class Settings(BaseSettings):
     staging_phone_otp_code: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("STAGING_PHONE_OTP_CODE"),
+    )
+    msg91_auth_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MSG91_AUTH_KEY"),
+    )
+    msg91_timeout_seconds: float = Field(
+        default=15.0,
+        ge=5.0,
+        le=120.0,
+        validation_alias=AliasChoices("MSG91_TIMEOUT_SECONDS"),
     )
     auth_rate_limit_max_requests: int = Field(
         default=10, ge=1, le=1000, validation_alias=AliasChoices("AUTH_RATE_LIMIT_MAX_REQUESTS")
@@ -595,12 +605,14 @@ class Settings(BaseSettings):
             msg = "EMAIL_PROVIDER must be one of: console, smtp, ses, brevo."
             raise ValueError(msg)
 
-        if self.phone_otp_backend not in {"console", "staging_fixed", "sns"}:
-            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, sns."
+        if self.phone_otp_backend not in {"console", "staging_fixed", "sns", "msg91"}:
+            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, sns, msg91."
             raise ValueError(msg)
 
         if self.phone_otp_backend == "sns" and not self.aws_region:
             raise ValueError("AWS_REGION is required when PHONE_OTP_BACKEND=sns.")
+        if self.phone_otp_backend == "msg91" and not self.msg91_auth_key:
+            raise ValueError("MSG91_AUTH_KEY is required when PHONE_OTP_BACKEND=msg91.")
 
         if self.resume_processing_enabled:
             if self.resume_parser_provider not in {"nova", "anthropic"}:

@@ -29,6 +29,9 @@ class RedisKeys:
     def otp(self, *, purpose: str, subject: str) -> str:
         return f"{self._prefix}otp:{purpose}:{subject}"
 
+    def phone_otp_replay(self, *, provider: str, token_hash: str) -> str:
+        return f"{self._prefix}otp-replay:{provider}:{token_hash}"
+
     def cache(self, *, domain: str, key: str) -> str:
         return f"{self._prefix}cache:{domain}:{key}"
 

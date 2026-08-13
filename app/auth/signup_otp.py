@@ -24,6 +24,10 @@ def hash_otp_code(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
+def hash_access_token(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def verify_otp_code(code: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_otp_code(code), stored_hash)
 
@@ -46,6 +50,12 @@ class SignupOtpStore:
         return self._keys.rate_limit(
             bucket=f"signup_otp_send:{channel}",
             identifier=str(signup_session_id),
+        )
+
+    def _msg91_replay_key(self, access_token: str) -> str:
+        return self._keys.phone_otp_replay(
+            provider="msg91",
+            token_hash=hash_access_token(access_token),
         )
 
     async def store_otp(self, signup_session_id: UUID, channel: str, code: str) -> None:
@@ -76,6 +86,15 @@ return 1
         # Redis Cluster rejects multi-key commands when keys hash to different slots.
         await self._redis.delete(self._otp_key(signup_session_id, "email"))
         await self._redis.delete(self._otp_key(signup_session_id, "phone"))
+
+    async def consume_msg91_access_token_once(self, access_token: str) -> bool:
+        result = await self._redis.set(
+            self._msg91_replay_key(access_token),
+            "1",
+            ex=max(self._settings.signup_pending_ttl_hours * 3600, 60),
+            nx=True,
+        )
+        return bool(result)
 
     async def enforce_send_rate(self, signup_session_id: UUID, channel: str) -> None:
         """Hourly send cap across start + resend.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -92,6 +92,31 @@ class SignupVerifyRequest(BaseModel):
             msg = "code must be a 6-digit number"
             raise ValueError(msg)
         return v
+
+
+class SignupPhoneVerifyRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    signup_session_id: UUID
+    code: str | None = Field(default=None, min_length=6, max_length=6)
+    access_token: str | None = Field(default=None, min_length=1, max_length=4096)
+
+    @field_validator("code")
+    @classmethod
+    def digits_only(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not v.isdigit():
+            msg = "code must be a 6-digit number"
+            raise ValueError(msg)
+        return v
+
+    @model_validator(mode="after")
+    def require_exactly_one_verification_input(self) -> "SignupPhoneVerifyRequest":
+        provided = [self.code is not None, self.access_token is not None]
+        if sum(provided) != 1:
+            raise ValueError("Provide exactly one of code or access_token")
+        return self
 
 
 class SignupChannelVerifyResponse(BaseModel):
