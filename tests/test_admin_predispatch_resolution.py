@@ -61,6 +61,20 @@ def _service(
     return service
 
 
+class _LazyRegistryOrganization:
+    def __init__(self) -> None:
+        self.id = uuid4()
+        self.public_id = uuid4()
+        self.name = "Verifier Organization"
+        self.registry_record_id = uuid4()
+        self.registry_resolution_confidence = 100.0
+        self.registry_resolved_at = None
+
+    @property
+    def registry_record(self) -> SimpleNamespace:  # pragma: no cover - defensive trap
+        raise AssertionError("resolve_organization should not touch lazy registry_record")
+
+
 @pytest.mark.asyncio
 async def test_admin_resolves_organization_during_pre_dispatch_without_dispatching() -> None:
     request = _request(status=VerificationRequestStatus.PENDING_ADMIN_REVIEW)
@@ -94,6 +108,22 @@ async def test_admin_resolves_organization_during_pre_dispatch_without_dispatchi
     assert call["event_type"] == "verification_request_organization_resolved"
     assert call["event_source"] == VerificationRequestEventSource.ADMIN
     service._advance_to_organization_stage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pre_dispatch_resolution_does_not_touch_lazy_registry_relationship() -> None:
+    request = _request(status=VerificationRequestStatus.PENDING_ADMIN_REVIEW)
+    organization = _LazyRegistryOrganization()
+    service = _service(request, organization)
+
+    await service.resolve_organization(
+        uuid4(),
+        request.public_id,
+        AdminReviewOrganizationResolutionRequest(organization_public_id=organization.public_id),
+    )
+
+    assert request.registry_record_id == organization.registry_record_id
+    assert request.registry_resolution_method == "exact_domain"
 
 
 @pytest.mark.asyncio

@@ -768,7 +768,6 @@ class VerificationRequestAdminReviewService:
         request.organization_id = organization.id
         request.target_organization_name = organization.name
         request.registry_record_id = organization.registry_record_id
-        request.registry_record = organization.registry_record
         request.registry_resolution_state = "resolved"
         request.registry_resolution_method = sync_result.resolution_method
         request.registry_resolution_confidence = organization.registry_resolution_confidence
