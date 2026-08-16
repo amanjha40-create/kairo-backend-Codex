@@ -412,6 +412,7 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
     from sqlalchemy import delete, select
 
     from app.db.session import async_session_factory
+    from app.models.education import Education
     from app.models.employment import Employment
     from app.models.resume_document import ResumeDocument
     from app.models.resume_parsed_result import ResumeParsedResult
@@ -501,16 +502,21 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert len(review.items) == 2
         plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
         assert plan.ready
-        assert [item.claim_type for item in plan.items] == ["employment"]
+        assert [item.claim_type for item in plan.items] == ["employment", "education"]
         request = ReviewImportRequest(expected_version=plan.version, idempotency_key="synthetic-confirmed-import", confirmed=True)
         first = await service.import_review(user.id, review.id, request)
         second = await service.import_review(user.id, review.id, request)
         assert first.id == second.id
         assert first.status == "completed"
-        assert first.imported_count == 1
-        employment_id = first.results[0].record_id
+        assert first.imported_count == 2
+        result_ids = {result.record_type: result.record_id for result in first.results}
+        employment_id = result_ids["employment"]
+        education_id = result_ids["education"]
         employment = await session.get(Employment, employment_id)
+        education = await session.get(Education, education_id)
         assert employment.verification_status == "draft"
+        assert education is not None
+        assert education.verification_status == "draft"
         duplicate = await ResumeDuplicateService(session).assess(user.id, "employment", {
             "claim_type": "employment",
             "company_name": "Synthetic Company",
