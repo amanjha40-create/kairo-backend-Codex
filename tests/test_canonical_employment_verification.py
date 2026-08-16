@@ -13,6 +13,7 @@ from app.api.v1.router import api_router
 from app.education.enums import EducationVerificationStatus
 from app.employment.enums import DocumentVerificationStatus
 from app.exceptions import ConflictError, EmploymentWorkflowError, ForbiddenError, NotFoundError
+from app.notifications.contracts import NotificationRequest
 from app.organization.enums import OrganizationRole
 from app.schemas.verification_request import (
     EducationVerificationDraftRequest,
@@ -215,10 +216,14 @@ async def test_education_draft_links_completed_owned_evidence() -> None:
 async def test_candidate_submission_only_enters_admin_review() -> None:
     service = VerificationRequestService.__new__(VerificationRequestService)
     actor_id = uuid4()
+    admin_role_calls: list[NotificationRequest] = []
     request = SimpleNamespace(
         id=uuid4(),
         public_id=uuid4(),
         employment_id=uuid4(),
+        organization=None,
+        target_organization_name=None,
+        subject_name="Candidate One",
         request_type=VerificationRequestType.EMPLOYMENT,
         status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
         submitted_for_admin_review_at=None,
@@ -250,11 +255,16 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
             transitions.append((target_status, event_type))
             target.status = target_status
 
+    class Notifications:
+        async def create_and_dispatch_for_admin_roles(self, notification: NotificationRequest):
+            admin_role_calls.append(notification)
+
     service._require_subject_request = require_subject
     service._commit_reload_subject_response = commit_reload_subject_response
     service._evidence = EvidenceRepository()
     service._contacts = ContactRepository()
     service._workflow = Workflow()
+    service._notifications = Notifications()
 
     result = await service.submit_for_review(
         actor_id,
@@ -274,16 +284,22 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
     assert request.consented_evidence_scope == ["employment_letter"]
     assert request.consented_at is not None
     assert request.consent_version == "v1"
+    assert [call.event_type for call in admin_role_calls] == ["admin_verification_review_required"]
 
 
 @pytest.mark.asyncio
 async def test_education_candidate_submission_requires_education_evidence() -> None:
     service = VerificationRequestService.__new__(VerificationRequestService)
     actor_id = uuid4()
+    admin_role_calls: list[NotificationRequest] = []
     request = SimpleNamespace(
         id=uuid4(),
         public_id=uuid4(),
+        employment_id=None,
         education_id=uuid4(),
+        organization=None,
+        target_organization_name=None,
+        subject_name="Candidate One",
         request_type=VerificationRequestType.EDUCATION,
         status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
         submitted_for_admin_review_at=None,
@@ -308,6 +324,10 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
         async def transition(self, target, *, target_status, **_kwargs):
             target.status = target_status
 
+    class Notifications:
+        async def create_and_dispatch_for_admin_roles(self, notification: NotificationRequest):
+            admin_role_calls.append(notification)
+
     async def commit_reload_subject_response(_public_id):
         return request
 
@@ -316,10 +336,12 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
     service._contacts = ContactRepository()
     service._workflow = Workflow()
     service._commit_reload_subject_response = commit_reload_subject_response
+    service._notifications = Notifications()
 
     result = await service.submit_for_review(actor_id, "candidate@example.com", request.public_id)
 
     assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+    assert [call.event_type for call in admin_role_calls] == ["admin_verification_review_required"]
 
 
 @pytest.mark.asyncio

@@ -160,11 +160,16 @@ class FakeNotificationService:
     def __init__(self, *, should_raise: bool = False) -> None:
         self.should_raise = should_raise
         self.calls: list[NotificationRequest] = []
+        self.admin_role_calls: list[NotificationRequest] = []
 
     async def create_and_dispatch(self, request: NotificationRequest, *, actor_user_id=None):  # noqa: ANN001
         self.calls.append(request)
         if self.should_raise:
             raise RuntimeError("notification failure")
+
+    async def create_and_dispatch_for_admin_roles(self, request: NotificationRequest, **_kwargs):  # noqa: ANN001
+        self.admin_role_calls.append(request)
+        return []
 
 
 @pytest.mark.asyncio
@@ -213,6 +218,9 @@ async def test_verify_uses_connector_and_routes_result_to_admin_quality_review()
     assert service._connector_executor.called is True  # type: ignore[attr-defined]
     assert response.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW
     assert notifications.calls == []
+    assert [call.event_type for call in notifications.admin_role_calls] == [
+        "admin_verification_quality_review_required"
+    ]
     assert any(event[0] == "verification_connector_selected" for event in service._workflow.events)  # type: ignore[attr-defined]
     assert any(event[0] == "verification_response_received" for event in service._workflow.events)  # type: ignore[attr-defined]
 
@@ -261,6 +269,9 @@ async def test_verify_routes_negative_connector_result_to_admin_quality_review()
 
     assert response.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW
     assert notifications.calls == []
+    assert [call.event_type for call in notifications.admin_role_calls] == [
+        "admin_verification_quality_review_required"
+    ]
     assert any(event[0] == "verification_response_received" for event in service._workflow.events)  # type: ignore[attr-defined]
 
 
@@ -341,3 +352,6 @@ async def test_verify_does_not_notify_before_final_admin_review() -> None:
 
     assert response.status == VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW
     assert notifications.calls == []
+    assert [call.event_type for call in notifications.admin_role_calls] == [
+        "admin_verification_quality_review_required"
+    ]

@@ -82,6 +82,15 @@ async def test_org_projection_exposes_reviewer_and_internal_note() -> None:
     service = _build_service()
     request = _build_request()
     request.employment_id = uuid4()
+    request.consented_fields = [
+        "employment.employer_name",
+        "employment.role",
+        "employment_dates",
+        "employment.employment_type",
+        "employment.work_location_country",
+        "employment.work_location_region",
+    ]
+    request.consented_evidence_scope = ["employment.start_date"]
     viewer_user_id = request.assigned_to_user_id
     service._users.get_by_id = AsyncMock(  # type: ignore[method-assign]
         return_value=SimpleNamespace(
@@ -93,7 +102,12 @@ async def test_org_projection_exposes_reviewer_and_internal_note() -> None:
     )
     service._evidence.list_for_request = AsyncMock(  # type: ignore[method-assign]
         return_value=[
-            SimpleNamespace(field_key="employment.start_date", document_id=None, employment_document_id=uuid4())
+            SimpleNamespace(
+                field_key="employment.start_date",
+                evidence_type="employment_letter",
+                document_id=None,
+                employment_document_id=uuid4(),
+            )
         ]
     )
     service._employments.get_active_by_id = AsyncMock(  # type: ignore[method-assign]
