@@ -289,9 +289,12 @@ async def test_return_to_verifier_moves_case_back_to_in_progress() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     request = _request(VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW)
     request.public_id = uuid4()
+    refreshed_request = _request(VerificationRequestStatus.IN_PROGRESS)
+    refreshed_request.public_id = request.public_id
     service._require_admin_quality_review_request = AsyncMock(return_value=request)
     service._workflow = SimpleNamespace(transition=AsyncMock())
     service._session = SimpleNamespace(commit=AsyncMock())
+    service._requests = SimpleNamespace(get_by_public_id=AsyncMock(return_value=refreshed_request))
     expected_response = SimpleNamespace(status=VerificationRequestStatus.IN_PROGRESS)
     service._to_request_response = AsyncMock(return_value=expected_response)
 
@@ -309,6 +312,38 @@ async def test_return_to_verifier_moves_case_back_to_in_progress() -> None:
         "decision_summary": "Verifier must confirm the end date."
     }
     service._session.commit.assert_awaited_once()
+    service._requests.get_by_public_id.assert_awaited_once_with(request.public_id)
+    service._to_request_response.assert_awaited_once_with(refreshed_request)
+
+
+@pytest.mark.asyncio
+async def test_cancel_reloads_request_after_commit() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = _request(VerificationRequestStatus.IN_PROGRESS)
+    request.public_id = uuid4()
+    refreshed_request = _request(VerificationRequestStatus.CANCELLED)
+    refreshed_request.public_id = request.public_id
+    service._get_required_request = AsyncMock(return_value=request)
+    service._workflow = SimpleNamespace(transition=AsyncMock())
+    service._session = SimpleNamespace(commit=AsyncMock())
+    service._requests = SimpleNamespace(get_by_public_id=AsyncMock(return_value=refreshed_request))
+    expected_response = SimpleNamespace(status=VerificationRequestStatus.CANCELLED)
+    service._to_request_response = AsyncMock(return_value=expected_response)
+
+    result = await service.cancel(
+        uuid4(),
+        request.public_id,
+        AdminReviewDecisionRequest(decision_summary="Subject withdrew consent."),
+    )
+
+    assert result is expected_response
+    service._workflow.transition.assert_awaited_once()
+    transition_call = service._workflow.transition.await_args.kwargs
+    assert transition_call["target_status"] == VerificationRequestStatus.CANCELLED
+    assert transition_call["metadata"] == {"decision_summary": "Subject withdrew consent."}
+    service._session.commit.assert_awaited_once()
+    service._requests.get_by_public_id.assert_awaited_once_with(request.public_id)
+    service._to_request_response.assert_awaited_once_with(refreshed_request)
 
 
 @pytest.mark.asyncio

@@ -647,7 +647,10 @@ class VerificationRequestAdminReviewService:
             metadata={"decision_summary": payload.decision_summary},
         )
         await self._session.commit()
-        return await self._to_request_response(request)
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return await self._to_request_response(refreshed)
 
     async def cancel(
         self,
@@ -673,7 +676,10 @@ class VerificationRequestAdminReviewService:
             metadata={"decision_summary": payload.decision_summary},
         )
         await self._session.commit()
-        return await self._to_request_response(request)
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return await self._to_request_response(refreshed)
 
     async def record_clarification_response(
         self,
