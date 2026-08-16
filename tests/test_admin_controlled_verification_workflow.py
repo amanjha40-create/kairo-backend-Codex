@@ -195,7 +195,8 @@ async def test_admin_finalization_notifies_candidate_once_with_authoritative_pay
 
 
 @pytest.mark.asyncio
-async def test_admin_finalization_notifies_candidate_for_education_when_request_type_is_string() -> None:
+async def test_admin_finalization_notifies_candidate_for_education_when_request_type_is_string(
+) -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     service._notifications = SimpleNamespace(create_and_dispatch=AsyncMock())
     education_id = uuid4()
@@ -281,3 +282,45 @@ def test_admin_dispatch_requires_authoritative_consent() -> None:
 
     with pytest.raises(ConflictError, match="authoritative candidate consent"):
         VerificationRequestAdminReviewService._require_authoritative_consent(request)
+
+
+@pytest.mark.asyncio
+async def test_return_to_verifier_moves_case_back_to_in_progress() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = _request(VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW)
+    request.public_id = uuid4()
+    service._require_admin_quality_review_request = AsyncMock(return_value=request)
+    service._workflow = SimpleNamespace(transition=AsyncMock())
+    service._session = SimpleNamespace(commit=AsyncMock())
+    expected_response = SimpleNamespace(status=VerificationRequestStatus.IN_PROGRESS)
+    service._to_request_response = AsyncMock(return_value=expected_response)
+
+    result = await service.return_to_verifier(
+        uuid4(),
+        request.public_id,
+        AdminReviewDecisionRequest(decision_summary="Verifier must confirm the end date."),
+    )
+
+    assert result is expected_response
+    service._workflow.transition.assert_awaited_once()
+    transition_call = service._workflow.transition.await_args.kwargs
+    assert transition_call["target_status"] == VerificationRequestStatus.IN_PROGRESS
+    assert transition_call["metadata"] == {
+        "decision_summary": "Verifier must confirm the end date."
+    }
+    service._session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_closed_request() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = _request(VerificationRequestStatus.VERIFIED)
+    request.public_id = uuid4()
+    service._get_required_request = AsyncMock(return_value=request)
+
+    with pytest.raises(ConflictError, match="already closed"):
+        await service.cancel(
+            uuid4(),
+            request.public_id,
+            AdminReviewDecisionRequest(decision_summary="Cancel requested after completion."),
+        )

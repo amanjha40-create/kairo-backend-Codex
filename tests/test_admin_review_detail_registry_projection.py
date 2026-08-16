@@ -21,6 +21,7 @@ def _request(*, organization_id, registry_record_id=None) -> SimpleNamespace:  #
         id=uuid4(),
         public_id=uuid4(),
         employment_id=None,
+        education_id=None,
         organization_id=organization_id,
         registry_record_id=registry_record_id,
         registry_resolution_state="resolved",
@@ -93,3 +94,56 @@ async def test_detail_projects_registry_link_from_resolved_org() -> None:
     assert detail.registry_resolution.registry_record_public_id == registry_record.public_id
     assert detail.registry_resolution.registry_name == "KDTU"
     service._registry.get_by_id.assert_awaited_once_with(organization.registry_record_id)
+
+
+@pytest.mark.asyncio
+async def test_detail_includes_canonical_education_projection_when_linked() -> None:
+    education = SimpleNamespace(
+        id=uuid4(),
+        user_id=uuid4(),
+        institution_name="KDTU",
+        degree="MBA",
+        field_of_study="Operations",
+        education_level="masters",
+        grade=None,
+        start_date=None,
+        start_date_precision=None,
+        end_date=None,
+        end_date_precision=None,
+        is_currently_studying=False,
+        verification_status="submitted",
+        submitted_at=None,
+        reviewed_at=None,
+        verified_at=None,
+        reviewed_by_user_id=None,
+        reviewer_note=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    request = _request(organization_id=None, registry_record_id=None)
+    request.education_id = education.id
+
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._get_required_request = AsyncMock(return_value=request)
+    service._evidence = SimpleNamespace(list_for_request=AsyncMock(return_value=[]))
+    service._reviews = SimpleNamespace(
+        list_reviews_for_request=AsyncMock(return_value=[]),
+        list_open_corrections_for_request=AsyncMock(return_value=[]),
+        list_notes_for_request=AsyncMock(return_value=[]),
+    )
+    service._contacts = SimpleNamespace(list_versions=AsyncMock(return_value=[]))
+    service._employments = SimpleNamespace(get_active_by_id=AsyncMock(return_value=None))
+    service._educations = SimpleNamespace(get_active_by_id=AsyncMock(return_value=education))
+    service._organizations = SimpleNamespace(get_by_id=AsyncMock(return_value=None))
+    service._registry = SimpleNamespace(get_by_id=AsyncMock(return_value=None))
+    service._employer_verifications = SimpleNamespace(
+        get_by_verification_request_id=AsyncMock(return_value=None)
+    )
+    service._to_request_response = AsyncMock(return_value=_request_response(request.public_id))
+
+    detail = await service.get_detail(request.public_id)
+
+    assert detail.education is not None
+    assert detail.education.id == education.id
+    assert detail.education.institution_name == "KDTU"
+    service._educations.get_active_by_id.assert_awaited_once_with(education.id)

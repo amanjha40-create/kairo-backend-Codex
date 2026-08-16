@@ -258,6 +258,11 @@ class VerificationRequestAdminReviewService:
             if request.employment_id is not None
             else None
         )
+        education = (
+            await self._educations.get_active_by_id(request.education_id)
+            if request.education_id is not None
+            else None
+        )
         contacts = await self._contacts.list_versions(request.id)
         current_contact = next((item for item in contacts if item.superseded_at is None), None)
         organization = (
@@ -282,6 +287,7 @@ class VerificationRequestAdminReviewService:
                 employer_verification.public_id if employer_verification is not None else None
             ),
             employment=employment,
+            education=education,
             verification_contact=self._to_admin_contact_response(current_contact)
             if current_contact
             else None,

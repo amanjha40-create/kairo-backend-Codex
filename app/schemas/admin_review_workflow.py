@@ -13,6 +13,7 @@ from app.admin_review.enums import (
     VerificationReviewNoteType,
     VerificationReviewNoteVisibility,
 )
+from app.schemas.education import EducationResponse
 from app.schemas.employment.responses import EmploymentResponse
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
@@ -190,8 +191,11 @@ class AdminReviewDetailResponse(BaseModel):
     request: VerificationRequestResponse
     employer_verification_public_id: UUID | None = None
     employment: EmploymentResponse | None = None
+    education: EducationResponse | None = None
     verification_contact: AdminVerificationContactResponse | None = None
-    verification_contact_history: list[AdminVerificationContactResponse] = Field(default_factory=list)
+    verification_contact_history: list[AdminVerificationContactResponse] = Field(
+        default_factory=list
+    )
     evidence: list[AdminReviewEvidenceResponse]
     reviews: list[AdminReviewCycleResponse]
     open_corrections: list[VerificationRequestCorrectionResponse]
