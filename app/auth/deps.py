@@ -16,7 +16,7 @@ from app.core.permissions import Permission, has_permission
 from app.db.session import get_session
 from app.exceptions import ForbiddenError, UnauthorizedError
 from app.logging.context import bind_user_context
-from app.repositories import UserRepository
+from app.repositories import RefreshTokenRepository, UserRepository
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -34,9 +34,9 @@ class CurrentUser:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    settings: Settings = Depends(get_settings),  # noqa: B008
 ) -> CurrentUser:
     """Reject missing/invalid tokens without leaking credential validity details."""
 
@@ -57,12 +57,17 @@ async def get_current_user(
     try:
         session_family_id = UUID(str(payload["sid"])) if payload.get("sid") is not None else None
     except (ValueError, TypeError):
-        session_family_id = None
+        raise UnauthorizedError("Invalid session") from None
+    if session_family_id is None:
+        raise UnauthorizedError("Session not found or inactive")
 
     repo = UserRepository(session)
+    refresh = RefreshTokenRepository(session)
     user = await repo.get_by_id(uid)
     if user is None or not user.is_active or user.email_verified_at is None:
         raise UnauthorizedError("User not found or inactive")
+    if not await refresh.has_active_family(user.id, session_family_id):
+        raise UnauthorizedError("Session not found or inactive")
 
     bind_user_context(str(user.id))
     return CurrentUser(
@@ -76,9 +81,9 @@ async def get_current_user(
 
 
 async def get_optional_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    settings: Settings = Depends(get_settings),  # noqa: B008
 ) -> CurrentUser | None:
     """Return the current user if a valid bearer token is present, else None."""
     if credentials is None:
@@ -93,10 +98,15 @@ async def get_optional_current_user(
     try:
         session_family_id = UUID(str(payload["sid"])) if payload.get("sid") is not None else None
     except (ValueError, TypeError):
-        session_family_id = None
+        return None
+    if session_family_id is None:
+        return None
     repo = UserRepository(session)
+    refresh = RefreshTokenRepository(session)
     user = await repo.get_by_id(uid)
     if user is None or not user.is_active or user.email_verified_at is None:
+        return None
+    if not await refresh.has_active_family(user.id, session_family_id):
         return None
     return CurrentUser(
         id=user.id,
@@ -117,7 +127,7 @@ def require_roles(*roles: str):
 
     allowed = set(roles)
 
-    async def checker(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    async def checker(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:  # noqa: B008
         if user.role not in allowed:
             raise ForbiddenError("Insufficient permissions")
         return user
@@ -136,11 +146,14 @@ def require_permission(permission: Permission):
 
         @router.post("/admin/verifications/{id}/approve")
         async def approve(
-            reviewer: Annotated[CurrentUser, Depends(require_permission(Permission.REVIEW_VERIFICATION))],
+            reviewer: Annotated[
+                CurrentUser,
+                Depends(require_permission(Permission.REVIEW_VERIFICATION)),
+            ],
         ): ...
     """
 
-    async def checker(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    async def checker(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:  # noqa: B008
         if not has_permission(user.role, permission):
             raise ForbiddenError("Insufficient permissions")
         return user

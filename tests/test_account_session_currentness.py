@@ -5,12 +5,13 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.security import HTTPAuthorizationCredentials
 
-from app.auth.deps import CurrentUser
+from app.auth.deps import CurrentUser, get_current_user, get_optional_current_user
 from app.auth.service import AuthService
-from app.auth.tokens import decode_token
+from app.auth.tokens import create_access_token, decode_token
 from app.config import Settings
-from app.exceptions import ConflictError
+from app.exceptions import ConflictError, UnauthorizedError
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.services.account_settings_service import AccountSettingsService
@@ -36,14 +37,24 @@ class FakeUsers:
         self.user = user
 
     async def get_by_id(self, user_id):  # noqa: ANN001
-        if self.user is not None and self.user.id == user_id:
+        if (
+            self.user is not None
+            and self.user.id == user_id
+            and self.user.deleted_at is None
+        ):
             return self.user
         return None
 
 
 class FakeRefreshRepo:
-    def __init__(self, existing: RefreshToken | None = None) -> None:
+    def __init__(
+        self,
+        existing: RefreshToken | None = None,
+        *,
+        active_family_ids: set[UUID] | None = None,
+    ) -> None:
         self.existing = existing
+        self.active_family_ids = active_family_ids or set()
         self.revoked_ids: list[UUID] = []
         self.revoke_all_calls: list[UUID] = []
         self.revoke_all_except_calls: list[tuple[UUID, UUID]] = []
@@ -59,6 +70,9 @@ class FakeRefreshRepo:
 
     async def revoke_all_for_user_except_family(self, user_id: UUID, family_id: UUID) -> None:
         self.revoke_all_except_calls.append((user_id, family_id))
+
+    async def has_active_family(self, _user_id: UUID, family_id: UUID) -> bool:
+        return family_id in self.active_family_ids
 
 
 class FakeResult:
@@ -242,3 +256,244 @@ def test_current_user_carries_optional_session_family_identity() -> None:
     )
 
     assert current.session_family_id == family_id
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_accepts_active_session_family_after_rotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    family_id = uuid4()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(family_id)},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids={family_id}),
+    )
+
+    current = await get_current_user(
+        credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+        session=object(),
+        settings=settings,
+    )
+
+    assert current.id == user.id
+    assert current.session_family_id == family_id
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_revoked_session_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    family_id = uuid4()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(family_id)},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids=set()),
+    )
+
+    with pytest.raises(UnauthorizedError, match="Session not found or inactive"):
+        await get_current_user(
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+            session=object(),
+            settings=settings,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_missing_session_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids=set()),
+    )
+
+    with pytest.raises(UnauthorizedError, match="Session not found or inactive"):
+        await get_current_user(
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+            session=object(),
+            settings=settings,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_invalid_session_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": "not-a-uuid"},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids=set()),
+    )
+
+    with pytest.raises(UnauthorizedError, match="Invalid session"):
+        await get_current_user(
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+            session=object(),
+            settings=settings,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_optional_current_user_returns_none_for_revoked_session_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    family_id = uuid4()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(family_id)},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids=set()),
+    )
+
+    current = await get_optional_current_user(
+        credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+        session=object(),
+        settings=settings,
+    )
+
+    assert current is None
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_one_revoked_session_family_but_accepts_another(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    active_family_id = uuid4()
+    revoked_family_id = uuid4()
+    active_token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(active_family_id)},
+    )
+    revoked_token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(revoked_family_id)},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids={active_family_id}),
+    )
+
+    current = await get_current_user(
+        credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=active_token),
+        session=object(),
+        settings=settings,
+    )
+
+    assert current.session_family_id == active_family_id
+
+    with pytest.raises(UnauthorizedError, match="Session not found or inactive"):
+        await get_current_user(
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=revoked_token),
+            session=object(),
+            settings=settings,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_suspended_user_even_with_active_session_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    user.is_active = False
+    family_id = uuid4()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(family_id)},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids={family_id}),
+    )
+
+    with pytest.raises(UnauthorizedError, match="User not found or inactive"):
+        await get_current_user(
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+            session=object(),
+            settings=settings,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_deleted_user_bearer_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings()
+    user = make_user()
+    user.deleted_at = datetime.now(tz=UTC)
+    family_id = uuid4()
+    token = create_access_token(
+        settings,
+        subject=user.id,
+        role=user.role,
+        extra_claims={"sid": str(family_id)},
+    )
+
+    monkeypatch.setattr("app.auth.deps.UserRepository", lambda _session: FakeUsers(user))
+    monkeypatch.setattr(
+        "app.auth.deps.RefreshTokenRepository",
+        lambda _session: FakeRefreshRepo(active_family_ids={family_id}),
+    )
+
+    with pytest.raises(UnauthorizedError, match="User not found or inactive"):
+        await get_current_user(
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+            session=object(),
+            settings=settings,
+        )

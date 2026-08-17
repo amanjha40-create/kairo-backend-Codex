@@ -34,6 +34,16 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def has_active_family(self, user_id: UUID, family_id: UUID) -> bool:
+        stmt = select(RefreshToken.id).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > datetime.now(tz=UTC),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
     async def revoke(self, token_id: UUID) -> None:
         await self._session.execute(
             update(RefreshToken)
