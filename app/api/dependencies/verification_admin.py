@@ -35,6 +35,10 @@ require_request_more_info = require_permission(Permission.REQUEST_MORE_INFO)
 
 # User management — admin, superadmin
 require_user_manager = require_permission(Permission.MANAGE_USERS)
+require_user_reader = require_permission(Permission.READ_USERS)
+require_user_account_manager = require_permission(Permission.MANAGE_USER_ACCOUNTS)
+require_user_security_manager = require_permission(Permission.MANAGE_USER_SECURITY)
+require_user_note_manager = require_permission(Permission.MANAGE_USER_NOTES)
 
 # Role assignment — superadmin only
 require_role_manager = require_permission(Permission.ASSIGN_ROLES)
@@ -55,6 +59,10 @@ __all__ = [
     "require_request_more_info",
     "require_reviewer",
     "require_priority",
+    "require_user_account_manager",
+    "require_user_note_manager",
+    "require_user_reader",
+    "require_user_security_manager",
     "require_role_manager",
     "require_user_manager",
     "require_verification_staff",  # legacy

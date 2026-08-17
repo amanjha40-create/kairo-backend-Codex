@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.pagination import Page
 
@@ -113,12 +113,84 @@ class AdminUserActivityEvent(BaseModel):
     kind: str
     title: str
     detail: str | None = None
+    actor_display_name: str | None = None
+    actor_role: str | None = None
+
+
+class AdminUserSessionResponse(BaseModel):
+    public_id: UUID
+    created_at: datetime
+    expires_at: datetime
+    last_active_at: datetime
+    revoked_at: datetime | None = None
+    status: str
+
+
+class AdminUserNoteResponse(BaseModel):
+    public_id: UUID
+    created_at: datetime
+    author_display_name: str | None = None
+    author_role: str | None = None
+    body: str
+
+
+class AdminUserActionCapabilities(BaseModel):
+    view_notes: bool = False
+    add_note: bool = False
+    suspend: bool = False
+    restore: bool = False
+    revoke_sessions: bool = False
+    send_password_reset: bool = False
+
+
+class AdminUserNoteCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    body: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("body")
+    @classmethod
+    def normalize_body(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("body is required")
+        return normalized
+
+
+class AdminUserSuspendRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str = Field(min_length=1, max_length=512)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason is required")
+        return normalized
+
+
+class AdminUserRestoreRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str = Field(min_length=1, max_length=512)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason is required")
+        return normalized
 
 
 class AdminUserDetailResponse(BaseModel):
     public_id: UUID
     display_name: str
     account_status: str
+    profile_slug: str | None = None
+    candidate_type: str = "candidate"
     email: str
     masked_email: str
     phone: str | None = None
@@ -128,10 +200,16 @@ class AdminUserDetailResponse(BaseModel):
     location: str | None = None
     created_at: datetime
     updated_at: datetime
+    last_login_at: datetime | None = None
+    last_active_at: datetime | None = None
     deleted_at: datetime | None = None
+    suspended_at: datetime | None = None
+    suspension_reason: str | None = None
+    suspended_by_display_name: str | None = None
     email_verified: bool = False
     phone_verified: bool = False
     onboarding_completed: bool = False
+    onboarding_state: str = "incomplete"
     profile_completion_percentage: int = 0
     trust: AdminUserTrustSummary = Field(default_factory=AdminUserTrustSummary)
     career_summary: AdminUserCareerSummary = Field(default_factory=AdminUserCareerSummary)
@@ -140,6 +218,9 @@ class AdminUserDetailResponse(BaseModel):
     )
     verifications: list[AdminUserVerificationItem] = Field(default_factory=list)
     passport: AdminUserPassportSummary
+    sessions: list[AdminUserSessionResponse] = Field(default_factory=list)
+    notes: list[AdminUserNoteResponse] = Field(default_factory=list)
+    capabilities: AdminUserActionCapabilities = Field(default_factory=AdminUserActionCapabilities)
     activity: list[AdminUserActivityEvent] = Field(default_factory=list)
 
 

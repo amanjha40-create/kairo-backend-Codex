@@ -134,8 +134,9 @@ def get_admin_verification_service(
 
 def get_admin_directory_service(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> AdminDirectoryService:
-    return AdminDirectoryService(session)
+    return AdminDirectoryService(session, settings)
 
 
 def get_admin_communication_service(

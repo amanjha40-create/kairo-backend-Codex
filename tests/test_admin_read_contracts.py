@@ -22,11 +22,14 @@ from app.schemas.admin_directory import (
     AdminOrganizationSearchPage,
     AdminReviewerPage,
     AdminReviewerResponse,
+    AdminUserActionCapabilities,
     AdminUserCareerSummary,
     AdminUserDetailResponse,
     AdminUserDirectoryItem,
+    AdminUserNoteResponse,
     AdminUserPage,
     AdminUserPassportSummary,
+    AdminUserSessionResponse,
     AdminUserTrustSummary,
     AdminUserVerificationBreakdown,
     AdminUserVerificationItem,
@@ -121,13 +124,15 @@ class FakeAdminDirectoryService:
             params=params,
         )
 
-    async def get_user_detail(self, user_public_id):  # noqa: ANN001
+    async def get_user_detail(self, actor, user_public_id):  # noqa: ANN001
+        del actor
         now = datetime.now(tz=UTC)
         if str(user_public_id).endswith("2222"):
             return AdminUserDetailResponse(
                 public_id=user_public_id,
                 display_name="Deleted Candidate",
                 account_status="deleted",
+                candidate_type="candidate",
                 email="Redacted",
                 masked_email="Redacted",
                 phone=None,
@@ -157,12 +162,17 @@ class FakeAdminDirectoryService:
                     )
                 ],
                 passport=AdminUserPassportSummary(ready=False),
+                sessions=[],
+                notes=[],
+                capabilities=AdminUserActionCapabilities(view_notes=True),
                 activity=[],
             )
         return AdminUserDetailResponse(
             public_id=user_public_id,
             display_name="Candidate One",
             account_status="active",
+            profile_slug="candidate-one",
+            candidate_type="candidate",
             email="candidate.one@example.com",
             masked_email="ca***********@example.com",
             phone="+15551234567",
@@ -172,9 +182,12 @@ class FakeAdminDirectoryService:
             location="Bengaluru, IN",
             created_at=now,
             updated_at=now,
+            last_login_at=now,
+            last_active_at=now,
             email_verified=True,
             phone_verified=True,
             onboarding_completed=True,
+            onboarding_state="completed",
             profile_completion_percentage=78,
             trust=AdminUserTrustSummary(
                 overall=82,
@@ -235,8 +248,62 @@ class FakeAdminDirectoryService:
                 latest_share_created_at=now,
                 last_viewed_at=now,
             ),
+            sessions=[
+                AdminUserSessionResponse(
+                    public_id=uuid4(),
+                    created_at=now,
+                    expires_at=now,
+                    last_active_at=now,
+                    status="active",
+                )
+            ],
+            notes=[
+                AdminUserNoteResponse(
+                    public_id=uuid4(),
+                    created_at=now,
+                    author_display_name="Admin Operator",
+                    author_role="admin",
+                    body="Internal admin note",
+                )
+            ],
+            capabilities=AdminUserActionCapabilities(
+                view_notes=True,
+                add_note=True,
+                suspend=True,
+                revoke_sessions=True,
+                send_password_reset=True,
+            ),
             activity=[],
         )
+
+    async def add_note(self, actor, user_public_id, payload):  # noqa: ANN001
+        del actor, user_public_id
+        now = datetime.now(tz=UTC)
+        return AdminUserNoteResponse(
+            public_id=uuid4(),
+            created_at=now,
+            author_display_name="Admin Operator",
+            author_role="admin",
+            body=payload.body,
+        )
+
+    async def suspend_user(self, actor, user_public_id, payload):  # noqa: ANN001
+        del payload
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def restore_user(self, actor, user_public_id, payload):  # noqa: ANN001
+        del payload
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def revoke_session(self, actor, user_public_id, session_public_id):  # noqa: ANN001
+        del session_public_id
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def revoke_all_sessions(self, actor, user_public_id):  # noqa: ANN001
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def initiate_password_reset(self, actor, user_public_id):  # noqa: ANN001
+        return await self.get_user_detail(actor, user_public_id)
 
 
 class FakeAdminReviewReadService:
@@ -291,6 +358,20 @@ async def test_admin_read_contract_routes() -> None:
         )
         user_detail = await client.get(f"/api/v1/admin/users/{user_id}")
         deleted_user_detail = await client.get(f"/api/v1/admin/users/{deleted_user_id}")
+        add_note = await client.post(
+            f"/api/v1/admin/users/{user_id}/notes",
+            json={"body": "Follow-up required"},
+        )
+        suspend = await client.post(
+            f"/api/v1/admin/users/{user_id}/suspend",
+            json={"reason": "Risk review"},
+        )
+        restore = await client.post(
+            f"/api/v1/admin/users/{user_id}/restore",
+            json={"reason": "Reinstated"},
+        )
+        revoke_all = await client.post(f"/api/v1/admin/users/{user_id}/sessions/revoke-all")
+        password_reset = await client.post(f"/api/v1/admin/users/{user_id}/password-reset")
         evidence = await client.get(
             f"/api/v1/admin/verification-requests/{request_id}/evidence/{evidence_id}/download-url"
         )
@@ -307,6 +388,9 @@ async def test_admin_read_contract_routes() -> None:
     assert user_detail.status_code == 200
     assert user_detail.json()["email"] == "candidate.one@example.com"
     assert "password_hash" not in user_detail.text
+    assert user_detail.json()["profile_slug"] == "candidate-one"
+    assert user_detail.json()["sessions"][0]["status"] == "active"
+    assert user_detail.json()["notes"][0]["body"] == "Internal admin note"
     assert user_detail.json()["verifications"][0]["employment_public_id"] is not None
     assert user_detail.json()["verifications"][1]["education_public_id"] is not None
     assert deleted_user_detail.status_code == 200
@@ -316,6 +400,12 @@ async def test_admin_read_contract_routes() -> None:
     assert deleted_user_detail.json()["career_summary"]["total_items"] == 0
     assert deleted_user_detail.json()["verifications"][0]["employment_public_id"] is not None
     assert deleted_user_detail.json()["verifications"][0]["submitted_at"] is not None
+    assert add_note.status_code == 201
+    assert add_note.json()["body"] == "Follow-up required"
+    assert suspend.status_code == 200
+    assert restore.status_code == 200
+    assert revoke_all.status_code == 200
+    assert password_reset.status_code == 200
     assert evidence.status_code == 200
     assert evidence.json()["evidence_public_id"] == str(evidence_id)
     assert outreach.status_code == 200
@@ -328,33 +418,52 @@ async def test_admin_users_routes_require_authentication_and_permission() -> Non
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         unauthenticated_list = await client.get("/api/v1/admin/users")
         unauthenticated_detail = await client.get(f"/api/v1/admin/users/{user_id}")
+        unauthenticated_note = await client.post(
+            f"/api/v1/admin/users/{user_id}/notes",
+            json={"body": "blocked"},
+        )
 
     app.dependency_overrides[get_current_user] = _candidate_user
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         candidate_list = await client.get("/api/v1/admin/users")
         candidate_detail = await client.get(f"/api/v1/admin/users/{user_id}")
+        candidate_suspend = await client.post(
+            f"/api/v1/admin/users/{user_id}/suspend",
+            json={"reason": "blocked"},
+        )
     app.dependency_overrides.clear()
 
     app.dependency_overrides[get_current_user] = _hr_user
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         hr_list = await client.get("/api/v1/admin/users")
         hr_detail = await client.get(f"/api/v1/admin/users/{user_id}")
+        hr_note = await client.post(
+            f"/api/v1/admin/users/{user_id}/notes",
+            json={"body": "blocked"},
+        )
     app.dependency_overrides.clear()
 
     app.dependency_overrides[get_current_user] = _support_user
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         support_list = await client.get("/api/v1/admin/users")
         support_detail = await client.get(f"/api/v1/admin/users/{user_id}")
+        support_password_reset = await client.post(
+            f"/api/v1/admin/users/{user_id}/password-reset"
+        )
     app.dependency_overrides.clear()
 
     assert unauthenticated_list.status_code == 401
     assert unauthenticated_detail.status_code == 401
+    assert unauthenticated_note.status_code == 401
     assert candidate_list.status_code == 403
     assert candidate_detail.status_code == 403
+    assert candidate_suspend.status_code == 403
     assert hr_list.status_code == 403
     assert hr_detail.status_code == 403
+    assert hr_note.status_code == 403
     assert support_list.status_code == 403
     assert support_detail.status_code == 403
+    assert support_password_reset.status_code == 403
 
 
 @pytest.mark.asyncio

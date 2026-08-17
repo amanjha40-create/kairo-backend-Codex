@@ -62,6 +62,8 @@ from app.models.trust_registry_record_capability import TrustRegistryRecordCapab
 from app.models.trust_registry_relationship import TrustRegistryRelationship
 from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.user import User
+from app.models.user_account_event import UserAccountEvent
+from app.models.user_admin_note import UserAdminNote
 from app.models.user_document import UserDocument
 from app.models.user_social_account import UserSocialAccount
 from app.models.verification_audit import VerificationAuditEvent
@@ -136,6 +138,8 @@ __all__ = [
     "TrustRegistryRecordCapability",
     "TrustRegistryRelationship",
     "User",
+    "UserAccountEvent",
+    "UserAdminNote",
     "UserDocument",
     "UserSocialAccount",
     "VerificationConnector",

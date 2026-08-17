@@ -16,7 +16,10 @@ Usage in routes::
 
     @router.post("/admin/verifications/{id}/approve")
     async def approve(
-        reviewer: Annotated[CurrentUser, Depends(require_permission(Permission.REVIEW_VERIFICATION))],
+        reviewer: Annotated[
+            CurrentUser,
+            Depends(require_permission(Permission.REVIEW_VERIFICATION)),
+        ],
         ...
     ): ...
 """
@@ -52,6 +55,10 @@ class Permission(StrEnum):
     FINALIZE_VERIFICATION = "finalize_verification"
 
     # --- User-management operations ---
+    READ_USERS = "read_users"
+    MANAGE_USER_ACCOUNTS = "manage_user_accounts"
+    MANAGE_USER_SECURITY = "manage_user_security"
+    MANAGE_USER_NOTES = "manage_user_notes"
     MANAGE_USERS = "manage_users"    # create / update / deactivate users
     ASSIGN_ROLES = "assign_roles"    # change a user's role
 
@@ -115,6 +122,10 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.REQUEST_MORE_INFO,
         Permission.DISPATCH_VERIFICATION,
         Permission.FINALIZE_VERIFICATION,
+        Permission.READ_USERS,
+        Permission.MANAGE_USER_ACCOUNTS,
+        Permission.MANAGE_USER_SECURITY,
+        Permission.MANAGE_USER_NOTES,
         Permission.MANAGE_USERS,
     }
 )

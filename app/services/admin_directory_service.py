@@ -2,22 +2,30 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.auth.deps import CurrentUser
+from app.auth.tokens import generate_opaque_refresh_raw, hash_refresh_token
+from app.config import Settings
 from app.core.constants import Role
-from app.core.permissions import Permission, get_roles_with_permission
-from app.exceptions import NotFoundError
+from app.core.permissions import Permission, get_roles_with_permission, has_permission
+from app.exceptions import ConflictError, NotFoundError
+from app.integrations.email import get_email_sender
 from app.models import (
     PassportShareLink,
     PassportShareView,
+    PasswordResetToken,
     ProfileLanguage,
     ProfileLink,
+    RefreshToken,
     User,
+    UserAccountEvent,
+    UserAdminNote,
     UserDocument,
 )
 from app.models.certification import Certification
@@ -34,18 +42,26 @@ from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
 from app.organization.enums import OrganizationType
 from app.repositories.organization import OrganizationRepository
+from app.repositories.password_reset_token import PasswordResetTokenRepository
+from app.repositories.refresh_token import RefreshTokenRepository
 from app.repositories.user import UserRepository
 from app.schemas.admin_directory import (
     AdminOrganizationSearchItem,
     AdminOrganizationSearchPage,
     AdminReviewerPage,
     AdminReviewerResponse,
+    AdminUserActionCapabilities,
     AdminUserActivityEvent,
     AdminUserCareerSummary,
     AdminUserDetailResponse,
     AdminUserDirectoryItem,
+    AdminUserNoteCreateRequest,
+    AdminUserNoteResponse,
     AdminUserPage,
     AdminUserPassportSummary,
+    AdminUserRestoreRequest,
+    AdminUserSessionResponse,
+    AdminUserSuspendRequest,
     AdminUserTrustSummary,
     AdminUserVerificationBreakdown,
     AdminUserVerificationItem,
@@ -101,8 +117,8 @@ def mask_phone(value: str | None) -> str | None:
 def admin_account_status(user: User) -> str:
     if user.deleted_at is not None:
         return "deleted"
-    if not user.is_active:
-        return "inactive"
+    if user.suspended_at is not None or not user.is_active:
+        return "suspended"
     return "active"
 
 
@@ -188,11 +204,124 @@ def safe_detail_masked_email(user: User) -> str:
     return "Redacted" if user.deleted_at is not None else mask_email(user.email)
 
 
+def onboarding_state(user: User) -> str:
+    return "completed" if user.employment_onboarding_completed_at is not None else "incomplete"
+
+
+def account_event_title(event_type: str) -> str:
+    return event_type.replace("_", " ").strip().title()
+
+
+def actor_display_name(actor: CurrentUser) -> str:
+    if actor.full_name and actor.full_name.strip():
+        return actor.full_name.strip()
+    return actor.email
+
+
+def session_status(row: RefreshToken, now: datetime) -> str:
+    if row.revoked_at is not None:
+        return "revoked"
+    if row.expires_at <= now:
+        return "expired"
+    return "active"
+
+
+def normalize_list_boundary(value: datetime | date | None, *, end_of_day: bool) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.combine(
+        value,
+        datetime.max.time() if end_of_day else datetime.min.time(),
+        tzinfo=UTC,
+    )
+
+
 class AdminDirectoryService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self._session = session
+        self._settings = settings
         self._users = UserRepository(session)
         self._organizations = OrganizationRepository(session)
+        self._refresh = RefreshTokenRepository(session)
+        self._password_resets = PasswordResetTokenRepository(session)
+        self._email = get_email_sender(settings, session=session)
+
+    async def _require_candidate(self, user_public_id: UUID) -> User:
+        user = (
+            await self._session.execute(
+                select(User).where(
+                    User.id == user_public_id,
+                    User.role == Role.USER.value,
+                )
+            )
+        ).scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Candidate not found")
+        return user
+
+    def _build_capabilities(
+        self,
+        actor: CurrentUser,
+        user: User,
+    ) -> AdminUserActionCapabilities:
+        deleted = user.deleted_at is not None
+        suspended = admin_account_status(user) == "suspended"
+        can_manage_notes = has_permission(actor.role, Permission.MANAGE_USER_NOTES)
+        can_manage_accounts = has_permission(actor.role, Permission.MANAGE_USER_ACCOUNTS)
+        can_manage_security = has_permission(actor.role, Permission.MANAGE_USER_SECURITY)
+        return AdminUserActionCapabilities(
+            view_notes=can_manage_notes,
+            add_note=can_manage_notes and not deleted,
+            suspend=can_manage_accounts and not deleted and not suspended,
+            restore=can_manage_accounts and not deleted and suspended,
+            revoke_sessions=can_manage_security and not deleted,
+            send_password_reset=can_manage_security and not deleted and user.is_active,
+        )
+
+    async def _record_account_event(
+        self,
+        *,
+        user_id: UUID,
+        actor: CurrentUser,
+        event_type: str,
+        title: str,
+        detail: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> UserAccountEvent:
+        event = UserAccountEvent(
+            user_id=user_id,
+            actor_user_id=actor.id,
+            actor_role=actor.role,
+            actor_display_name=actor_display_name(actor),
+            event_type=event_type,
+            title=title,
+            detail=detail,
+            metadata_payload=metadata,
+        )
+        self._session.add(event)
+        await self._session.flush()
+        return event
+
+    async def _session_activity(self, user_id: UUID) -> tuple[datetime | None, datetime | None]:
+        row = (
+            await self._session.execute(
+                select(
+                    func.max(RefreshToken.created_at),
+                    func.max(RefreshToken.updated_at),
+                ).where(RefreshToken.user_id == user_id)
+            )
+        ).one()
+        return row[0], row[1]
+
+    async def _suspended_by_display_name(self, user: User) -> str | None:
+        if user.suspended_by_user_id is None:
+            return None
+        actor = await self._session.scalar(select(User).where(User.id == user.suspended_by_user_id))
+        if actor is None:
+            return None
+        return build_display_name(actor)
 
     async def list_reviewers(self, params: ListQueryParams) -> AdminReviewerPage:
         users, total = await self._users.list_by_roles(
@@ -250,9 +379,18 @@ class AdminDirectoryService:
                 or_(
                     User.full_name.ilike(pattern),
                     User.email.ilike(pattern),
+                    User.phone.ilike(pattern),
+                    User.profile_slug.ilike(pattern),
                     cast(User.id, String).ilike(pattern),
                 )
             )
+
+        created_after = normalize_list_boundary(params.created_after, end_of_day=False)
+        if created_after is not None:
+            filters.append(User.created_at >= created_after)
+        created_before = normalize_list_boundary(params.created_before, end_of_day=True)
+        if created_before is not None:
+            filters.append(User.created_at <= created_before)
 
         requested_statuses = {
             item.strip().lower()
@@ -263,7 +401,7 @@ class AdminDirectoryService:
             status_filters = []
             if "active" in requested_statuses:
                 status_filters.append(User.deleted_at.is_(None) & User.is_active.is_(True))
-            if "inactive" in requested_statuses:
+            if "suspended" in requested_statuses or "inactive" in requested_statuses:
                 status_filters.append(User.deleted_at.is_(None) & User.is_active.is_(False))
             if "deleted" in requested_statuses:
                 status_filters.append(User.deleted_at.is_not(None))
@@ -344,18 +482,12 @@ class AdminDirectoryService:
             )
         return AdminUserPage.create(items=items, total=total, params=params)
 
-    async def get_user_detail(self, user_public_id: UUID) -> AdminUserDetailResponse:
-        user = (
-            await self._session.execute(
-                select(User).where(
-                    User.id == user_public_id,
-                    User.role == Role.USER.value,
-                )
-            )
-        ).scalar_one_or_none()
-        if user is None:
-            raise NotFoundError("Candidate not found")
-
+    async def get_user_detail(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id)
         deleted = user.deleted_at is not None
         language_counts = (
             {}
@@ -387,12 +519,17 @@ class AdminDirectoryService:
             if deleted
             else await self._build_passport_summary(user)
         )
+        sessions = [] if deleted else await self._session_items(user.id)
+        notes = await self._note_items(user.id)
         activity = await self._activity_events(user.id)
+        last_login_at, last_active_at = await self._session_activity(user.id)
 
         return AdminUserDetailResponse(
             public_id=user.id,
             display_name=build_display_name(user),
             account_status=admin_account_status(user),
+            profile_slug=None if deleted else user.profile_slug,
+            candidate_type="candidate",
             email=safe_detail_email(user),
             masked_email=safe_detail_masked_email(user),
             phone=None if deleted else user.phone,
@@ -402,12 +539,18 @@ class AdminDirectoryService:
             location=None if deleted else user.location,
             created_at=user.created_at,
             updated_at=user.updated_at,
+            last_login_at=last_login_at,
+            last_active_at=last_active_at,
             deleted_at=user.deleted_at,
+            suspended_at=user.suspended_at,
+            suspension_reason=user.suspension_reason,
+            suspended_by_display_name=await self._suspended_by_display_name(user),
             email_verified=False if deleted else user.email_verified_at is not None,
             phone_verified=False if deleted else user.phone_verified_at is not None,
             onboarding_completed=(
                 False if deleted else user.employment_onboarding_completed_at is not None
             ),
+            onboarding_state=onboarding_state(user),
             profile_completion_percentage=0
             if deleted
             else profile_completion_percentage(
@@ -420,8 +563,274 @@ class AdminDirectoryService:
             verification_summary=verification_summary,
             verifications=verifications,
             passport=passport,
+            sessions=sessions,
+            notes=notes,
+            capabilities=self._build_capabilities(actor, user),
             activity=activity,
         )
+
+    async def _session_items(self, user_id: UUID) -> list[AdminUserSessionResponse]:
+        now = datetime.now(tz=UTC)
+        rows = await self._session.execute(
+            select(RefreshToken)
+            .where(RefreshToken.user_id == user_id)
+            .order_by(RefreshToken.created_at.desc(), RefreshToken.id.desc())
+            .limit(20)
+        )
+        return [
+            AdminUserSessionResponse(
+                public_id=row.id,
+                created_at=row.created_at,
+                expires_at=row.expires_at,
+                last_active_at=row.updated_at,
+                revoked_at=row.revoked_at,
+                status=session_status(row, now),
+            )
+            for row in rows.scalars().all()
+        ]
+
+    async def _note_items(self, user_id: UUID) -> list[AdminUserNoteResponse]:
+        rows = await self._session.execute(
+            select(UserAdminNote)
+            .where(UserAdminNote.user_id == user_id)
+            .order_by(UserAdminNote.created_at.desc(), UserAdminNote.id.desc())
+            .limit(50)
+        )
+        return [
+            AdminUserNoteResponse(
+                public_id=note.public_id,
+                created_at=note.created_at,
+                author_display_name=note.author_display_name,
+                author_role=note.author_role,
+                body=note.body,
+            )
+            for note in rows.scalars().all()
+        ]
+
+    async def add_note(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+        payload: AdminUserNoteCreateRequest,
+    ) -> AdminUserNoteResponse:
+        user = await self._require_candidate(user_public_id)
+        if user.deleted_at is not None:
+            raise ConflictError("Cannot add notes to a deleted candidate account")
+
+        note = UserAdminNote(
+            user_id=user.id,
+            author_user_id=actor.id,
+            author_role=actor.role,
+            author_display_name=actor_display_name(actor),
+            body=payload.body,
+        )
+        self._session.add(note)
+        await self._session.flush()
+        await self._record_account_event(
+            user_id=user.id,
+            actor=actor,
+            event_type="admin_note_added",
+            title="Internal admin note added",
+            detail=payload.body[:200],
+            metadata={"note_public_id": str(note.public_id)},
+        )
+        await self._session.commit()
+        return AdminUserNoteResponse(
+            public_id=note.public_id,
+            created_at=note.created_at,
+            author_display_name=note.author_display_name,
+            author_role=note.author_role,
+            body=note.body,
+        )
+
+    async def suspend_user(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+        payload: AdminUserSuspendRequest,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id)
+        if user.deleted_at is not None:
+            raise ConflictError("Deleted candidate accounts cannot be suspended")
+        if admin_account_status(user) == "suspended":
+            raise ConflictError("Candidate account is already suspended")
+
+        now = datetime.now(tz=UTC)
+        user.is_active = False
+        user.suspended_at = now
+        user.suspension_reason = payload.reason
+        user.suspended_by_user_id = actor.id
+
+        shares = list(
+            (
+                await self._session.execute(
+                    select(PassportShareLink).where(
+                        PassportShareLink.owner_user_id == user.id,
+                        PassportShareLink.revoked_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for share in shares:
+            share.revoked_at = now
+
+        await self._refresh.revoke_all_for_user(user.id)
+        await self._record_account_event(
+            user_id=user.id,
+            actor=actor,
+            event_type="account_suspended",
+            title="Candidate account suspended",
+            detail=payload.reason,
+            metadata={"revoked_passport_links": len(shares)},
+        )
+        await self._session.commit()
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def restore_user(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+        payload: AdminUserRestoreRequest,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id)
+        if user.deleted_at is not None:
+            raise ConflictError("Deleted candidate accounts cannot be restored")
+        if admin_account_status(user) != "suspended":
+            raise ConflictError("Candidate account is not suspended")
+
+        user.is_active = True
+        user.suspended_at = None
+        user.suspension_reason = None
+        user.suspended_by_user_id = None
+        await self._record_account_event(
+            user_id=user.id,
+            actor=actor,
+            event_type="account_restored",
+            title="Candidate account restored",
+            detail=payload.reason,
+        )
+        await self._session.commit()
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def revoke_session(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+        session_public_id: UUID,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id)
+        if user.deleted_at is not None:
+            raise ConflictError("Deleted candidate accounts do not have revocable sessions")
+
+        row = await self._session.scalar(
+            select(RefreshToken).where(
+                RefreshToken.user_id == user.id,
+                RefreshToken.id == session_public_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError("Session not found")
+        if session_status(row, datetime.now(tz=UTC)) != "active":
+            raise ConflictError("Session is already inactive")
+
+        await self._refresh.revoke(row.id)
+        await self._record_account_event(
+            user_id=user.id,
+            actor=actor,
+            event_type="session_revoked",
+            title="Candidate session revoked",
+            detail=str(row.family_id),
+            metadata={"session_public_id": str(row.id)},
+        )
+        await self._session.commit()
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def revoke_all_sessions(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id)
+        if user.deleted_at is not None:
+            raise ConflictError("Deleted candidate accounts do not have revocable sessions")
+
+        active_count = int(
+            (
+                await self._session.scalar(
+                    select(func.count())
+                    .select_from(RefreshToken)
+                    .where(
+                        RefreshToken.user_id == user.id,
+                        RefreshToken.revoked_at.is_(None),
+                        RefreshToken.expires_at > datetime.now(tz=UTC),
+                    )
+                )
+            )
+            or 0
+        )
+        await self._refresh.revoke_all_for_user(user.id)
+        await self._record_account_event(
+            user_id=user.id,
+            actor=actor,
+            event_type="all_sessions_revoked",
+            title="All candidate sessions revoked",
+            detail=f"{active_count} active session(s) revoked",
+            metadata={"revoked_sessions": active_count},
+        )
+        await self._session.commit()
+        return await self.get_user_detail(actor, user_public_id)
+
+    async def initiate_password_reset(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id)
+        if user.deleted_at is not None:
+            raise ConflictError("Deleted candidate accounts cannot receive password reset emails")
+        if user.email_verified_at is None:
+            raise ConflictError("Password reset requires a verified candidate email address")
+        if not user.is_active:
+            raise ConflictError("Password reset is unavailable for suspended candidate accounts")
+
+        now = datetime.now(tz=UTC)
+        raw_token = generate_opaque_refresh_raw()
+        token_hash = hash_refresh_token(raw_token)
+        expires_at = now + timedelta(minutes=self._settings.password_reset_token_ttl_minutes)
+
+        await self._password_resets.mark_all_active_for_user_used(user.id, used_at=now)
+        await self._password_resets.create(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                used_at=None,
+            )
+        )
+
+        try:
+            await self._email.send_password_reset(
+                to_email=user.email,
+                reset_token=raw_token,
+                ttl_minutes=self._settings.password_reset_token_ttl_minutes,
+            )
+        except Exception as exc:
+            await self._session.rollback()
+            raise ConflictError(
+                f"Password reset email could not be sent ({type(exc).__name__})"
+            ) from exc
+
+        await self._record_account_event(
+            user_id=user.id,
+            actor=actor,
+            event_type="password_reset_initiated",
+            title="Password reset email sent",
+            detail="Admin initiated secure password reset flow",
+        )
+        await self._session.commit()
+        return await self.get_user_detail(actor, user_public_id)
 
     async def _count_by_owner(self, owner_field, model, user_ids: list[UUID]) -> dict[UUID, int]:  # noqa: ANN001
         if not user_ids:
@@ -738,7 +1147,7 @@ class AdminDirectoryService:
         )
 
     async def _activity_events(self, user_id: UUID) -> list[AdminUserActivityEvent]:
-        rows = await self._session.execute(
+        verification_rows = await self._session.execute(
             select(VerificationRequestEvent)
             .join(
                 VerificationRequest,
@@ -748,8 +1157,15 @@ class AdminDirectoryService:
             .order_by(VerificationRequestEvent.created_at.desc())
             .limit(50)
         )
-        events = []
-        for event in rows.scalars().all():
+        account_rows = await self._session.execute(
+            select(UserAccountEvent)
+            .where(UserAccountEvent.user_id == user_id)
+            .order_by(UserAccountEvent.created_at.desc(), UserAccountEvent.id.desc())
+            .limit(50)
+        )
+
+        events: list[AdminUserActivityEvent] = []
+        for event in verification_rows.scalars().all():
             detail = None
             previous_status = _enum_value(event.previous_status)
             new_status = _enum_value(event.new_status)
@@ -769,4 +1185,17 @@ class AdminDirectoryService:
                     detail=detail,
                 )
             )
-        return events
+        for event in account_rows.scalars().all():
+            events.append(
+                AdminUserActivityEvent(
+                    public_id=event.public_id,
+                    occurred_at=event.created_at,
+                    kind=event.event_type,
+                    title=event.title,
+                    detail=event.detail,
+                    actor_display_name=event.actor_display_name,
+                    actor_role=event.actor_role,
+                )
+            )
+        events.sort(key=lambda item: (item.occurred_at, str(item.public_id)), reverse=True)
+        return events[:100]

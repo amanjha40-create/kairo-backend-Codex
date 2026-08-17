@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -15,6 +16,8 @@ from app.db.mixins import SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.refresh_token import RefreshToken
+    from app.models.user_account_event import UserAccountEvent
+    from app.models.user_admin_note import UserAdminNote
     from app.models.user_social_account import UserSocialAccount
 
 
@@ -26,7 +29,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    profile_slug: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True)
+    profile_slug: Mapped[str | None] = mapped_column(
+        String(100),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
     phone: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
     current_role: Mapped[str | None] = mapped_column(String(255), nullable=True)
     industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -41,14 +49,35 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     avatar_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default=Role.USER.value)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    phone_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     employment_onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
-    trust_score_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trust_score_consent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     trust_score_consent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    suspended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+    suspension_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    suspended_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     active_organization_id: Mapped[str | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="SET NULL"),
@@ -63,6 +92,18 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     social_accounts: Mapped[list["UserSocialAccount"]] = relationship(
         "UserSocialAccount",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    admin_notes: Mapped[list["UserAdminNote"]] = relationship(
+        "UserAdminNote",
+        foreign_keys="UserAdminNote.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    account_events: Mapped[list["UserAccountEvent"]] = relationship(
+        "UserAccountEvent",
+        foreign_keys="UserAccountEvent.user_id",
         back_populates="user",
         cascade="all, delete-orphan",
     )
