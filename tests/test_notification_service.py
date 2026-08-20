@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.config import Settings
-from app.exceptions import ServiceUnavailableError
+from app.exceptions import ConflictError, ServiceUnavailableError
 from app.models.notification_delivery import NotificationDelivery
 from app.models.notification_event import NotificationEvent
 from app.notifications.contracts import (
@@ -58,6 +58,9 @@ class FakeNotificationRepository:
         return next((item for item in self.items if item.dedupe_key == dedupe_key), None)
 
     async def list_all(self):
+        return list(self.items)
+
+    async def list_all_for_user(self, user_id: UUID):  # noqa: ARG002
         return list(self.items)
 
     async def count_by_status(self):
@@ -291,6 +294,28 @@ async def test_resend_creates_additional_delivery_history() -> None:
         "notification_dispatch_started",
         "notification_dispatch_completed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_resend_conflicts_when_requested_too_quickly() -> None:
+    dispatcher = FakeDispatcher(
+        NotificationDispatchOutcome(
+            status=NotificationStatus.SENT.value,
+            provider="console",
+            dispatched_at=datetime.now(tz=UTC),
+            delivered_at=datetime.now(tz=UTC),
+        )
+    )
+    service = _build_service(
+        dispatcher=dispatcher,
+        preference_decision=NotificationPreferenceDecision(enabled=True, selected_channel="email"),
+    )
+
+    created = await service.create_and_dispatch(_trust_invitation_request())
+    await service.resend(created.public_id, actor_user_id=uuid4())
+
+    with pytest.raises(ConflictError, match="resent recently"):
+        await service.resend(created.public_id, actor_user_id=uuid4())
 
 
 @pytest.mark.asyncio

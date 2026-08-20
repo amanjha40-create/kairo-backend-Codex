@@ -10,13 +10,15 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies.services import get_admin_communication_service
-from app.api.dependencies.verification_admin import require_view_cases
+from app.api.dependencies.verification_admin import require_reviewer, require_view_cases
 from app.main import app
 from app.schemas.admin_communication import (
-    AdminCommunicationDetailResponse,
+    AdminCommunicationFullDetailResponse,
     AdminCommunicationListItemResponse,
     AdminCommunicationNotificationSummaryResponse,
     AdminCommunicationRelatedObjectResponse,
+    AdminCommunicationResendResponse,
+    AdminCommunicationSummaryResponse,
     AdminCommunicationTimelineEventResponse,
 )
 from app.schemas.pagination import Page, PageParams
@@ -72,8 +74,11 @@ class FakeAdminCommunicationService:
             params=PageParams(page=params.page, page_size=params.page_size),
         )
 
-    async def get_detail(self, communication_public_id: UUID) -> AdminCommunicationDetailResponse:  # noqa: ARG002
-        return AdminCommunicationDetailResponse(
+    async def get_detail(
+        self,
+        communication_public_id: UUID,  # noqa: ARG002
+    ) -> AdminCommunicationFullDetailResponse:
+        return AdminCommunicationFullDetailResponse(
             **self._item().model_dump(),
             payload_summary={
                 "ttl_minutes": 15,
@@ -93,6 +98,29 @@ class FakeAdminCommunicationService:
                     status="failed",
                 ),
             ],
+            notification_public_id=UUID("00000000-0000-0000-0000-000000009902"),
+            delivery_attempts=[],
+            audit_history=[],
+        )
+
+    async def get_summary(self) -> AdminCommunicationSummaryResponse:
+        return AdminCommunicationSummaryResponse(
+            total=5,
+            queued=1,
+            sent=3,
+            failed=1,
+            recent_failures_24h=1,
+            resendable_failed=1,
+        )
+
+    async def resend(
+        self,
+        communication_public_id: UUID,  # noqa: ARG002
+        *,
+        actor_user_id: UUID,  # noqa: ARG002
+    ) -> AdminCommunicationResendResponse:
+        return AdminCommunicationResendResponse(
+            communication=await self.get_detail(self.communication_public_id)
         )
 
 
@@ -142,6 +170,47 @@ async def test_admin_communications_detail_route_returns_safe_payload_summary() 
         "verification_request_public_id": "11111111-1111-1111-1111-111111111111",
     }
     assert len(body["delivery_timeline"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_communications_summary_route_returns_operational_counts() -> None:
+    app.dependency_overrides[get_admin_communication_service] = (
+        lambda: FakeAdminCommunicationService()
+    )
+    app.dependency_overrides[require_view_cases] = _allow_admin
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/admin/communications/statistics/summary")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 5,
+        "queued": 1,
+        "sent": 3,
+        "failed": 1,
+        "recent_failures_24h": 1,
+        "resendable_failed": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_communications_resend_route_uses_reviewer_permission() -> None:
+    app.dependency_overrides[get_admin_communication_service] = (
+        lambda: FakeAdminCommunicationService()
+    )
+    app.dependency_overrides[require_reviewer] = _allow_admin
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/admin/communications/00000000-0000-0000-0000-000000009901/resend"
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["communication"]["public_id"] == "00000000-0000-0000-0000-000000009901"
 
 
 def test_admin_communication_service_payload_summary_excludes_sensitive_fields() -> None:

@@ -161,6 +161,7 @@ class FakeNotificationService:
                     created_at=self.now,
                     status="sent",
                     channel="in_app",
+                    priority="normal",
                     updated_at=self.now,
                 )
             ],
@@ -285,6 +286,7 @@ async def test_admin_notification_inbox_returns_current_user_items() -> None:
     assert body["total"] == 1
     assert body["items"][0]["event_type"] == "admin_verification_review_required"
     assert body["items"][0]["channel"] == "in_app"
+    assert body["items"][0]["priority"] == "normal"
 
 
 @pytest.mark.asyncio

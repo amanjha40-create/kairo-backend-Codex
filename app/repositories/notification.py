@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +36,8 @@ class NotificationRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_dedupe_key(self, dedupe_key: str) -> Notification | None:
-        return (await self._session.execute(select(Notification).where(Notification.dedupe_key == dedupe_key))).scalar_one_or_none()
+        stmt = select(Notification).where(Notification.dedupe_key == dedupe_key)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_user(self, user_id: UUID, *, offset: int, limit: int) -> list[Notification]:
         stmt = (
@@ -49,16 +49,28 @@ class NotificationRepository:
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
+    async def list_all_for_user(self, user_id: UUID) -> list[Notification]:
+        stmt = (
+            select(Notification)
+            .where(Notification.recipient_user_id == user_id)
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def count_for_user(self, user_id: UUID, *, unread_only: bool = False) -> int:
         conditions = [Notification.recipient_user_id == user_id]
         if unread_only:
             conditions.append(Notification.read_at.is_(None))
-        return int((await self._session.execute(select(func.count(Notification.id)).where(*conditions))).scalar_one())
+        stmt = select(func.count(Notification.id)).where(*conditions)
+        return int((await self._session.execute(stmt)).scalar_one())
 
     async def mark_read(self, user_id: UUID, notification_public_id: UUID) -> bool:
         result = await self._session.execute(
             update(Notification)
-            .where(Notification.recipient_user_id == user_id, Notification.public_id == notification_public_id)
+            .where(
+                Notification.recipient_user_id == user_id,
+                Notification.public_id == notification_public_id,
+            )
             .values(read_at=datetime.now(UTC))
         )
         return bool(result.rowcount)
@@ -111,7 +123,11 @@ class NotificationPreferenceRepository:
         await self._session.flush()
         return preference
 
-    async def get_for_user_event(self, user_id: UUID, event_type: str) -> NotificationPreference | None:
+    async def get_for_user_event(
+        self,
+        user_id: UUID,
+        event_type: str,
+    ) -> NotificationPreference | None:
         stmt = select(NotificationPreference).where(
             NotificationPreference.user_id == user_id,
             NotificationPreference.event_type == event_type,

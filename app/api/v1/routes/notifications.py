@@ -15,6 +15,7 @@ from app.api.dependencies.verification_admin import (
     require_view_cases,
 )
 from app.schemas.notification import (
+    AdminNotificationInboxParams,
     AdminNotificationInboxResponse,
     NotificationDeliveryResponse,
     NotificationDetailResponse,
@@ -75,7 +76,7 @@ async def get_notification_statistics(
 
 @admin_router.get("/inbox", response_model=Page[AdminNotificationInboxResponse])
 async def list_admin_notification_inbox(
-    params: Annotated[ListQueryParams, Depends()],
+    params: Annotated[AdminNotificationInboxParams, Depends()],
     current: Annotated[CurrentUser, Depends(require_admin_portal)],
     svc: Annotated[NotificationService, Depends(get_notification_service)],
 ) -> Page[AdminNotificationInboxResponse]:

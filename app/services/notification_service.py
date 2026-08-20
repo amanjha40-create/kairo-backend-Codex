@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.core.constants import Role
-from app.exceptions import NotFoundError, ServiceUnavailableError
+from app.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
 from app.models.notification_event import NotificationEvent
@@ -22,6 +22,7 @@ from app.repositories.notification import (
 )
 from app.repositories.user import UserRepository
 from app.schemas.notification import (
+    AdminNotificationInboxParams,
     AdminNotificationInboxResponse,
     NotificationDeliveryResponse,
     NotificationDetailResponse,
@@ -43,6 +44,8 @@ from app.services.notification_template_resolver import NotificationTemplateReso
 
 class NotificationService:
     """Creates, dispatches, tracks, and reports platform notifications."""
+
+    _RESEND_COOLDOWN = timedelta(seconds=30)
 
     _PRESENTATION_BY_EVENT: dict[str, tuple[str, str, str]] = {
         "verification_completed": (
@@ -205,19 +208,39 @@ class NotificationService:
     async def list_admin_inbox(
         self,
         user_id: UUID,
-        params: ListQueryParams,
+        params: AdminNotificationInboxParams,
     ) -> Page[AdminNotificationInboxResponse]:
-        items = await self._notifications.list_for_user(
-            user_id,
-            offset=params.slice_start,
-            limit=params.limit or 20,
-        )
-        total = await self._notifications.count_for_user(user_id)
-        return Page[AdminNotificationInboxResponse].create(
-            items=[self._to_admin_inbox_response(item) for item in items],
-            total=total,
+        items = [
+            self._to_admin_inbox_response(item)
+            for item in await self._notifications.list_all_for_user(user_id)
+        ]
+        filtered = self._filter_admin_inbox(items, params)
+        page = filter_sort_paginate(
+            filtered,
             params=params,
+            search_fields=(
+                "title",
+                "body",
+                "event_type",
+                "category",
+                "channel",
+                "status",
+                "priority",
+            ),
+            allowed_sort_fields=(
+                "created_at",
+                "updated_at",
+                "event_type",
+                "status",
+                "channel",
+                "priority",
+            ),
+            default_sort_by="created_at",
+            force_page_envelope=True,
         )
+        if not isinstance(page, Page):
+            raise RuntimeError("Admin notification inbox must return a page envelope")
+        return page
 
     async def unread_count(self, user_id: UUID) -> NotificationUnreadCountResponse:
         return NotificationUnreadCountResponse(
@@ -373,12 +396,27 @@ class NotificationService:
         actor_user_id: UUID | None = None,
     ) -> NotificationDetailResponse:
         notification = await self._require_notification(notification_public_id)
+        history = await self._events.list_for_notification(notification.id)
+        recent_resend = next(
+            (
+                item
+                for item in reversed(history)
+                if item.event_type == "notification_resend_requested"
+            ),
+            None,
+        )
+        if (
+            recent_resend is not None
+            and recent_resend.created_at is not None
+            and datetime.now(tz=UTC) - recent_resend.created_at < self._RESEND_COOLDOWN
+        ):
+            raise ConflictError("Notification was resent recently. Wait before sending it again.")
         await self._append_event(
             notification,
             actor_user_id=actor_user_id,
             event_type="notification_resend_requested",
             status=notification.status,
-            metadata={},
+            metadata={"reason": "manual_resend"},
         )
         await self._dispatch_notification(notification, actor_user_id=actor_user_id)
         await self._session.commit()
@@ -544,8 +582,41 @@ class NotificationService:
             **cls._to_user_response(notification).model_dump(),
             status=notification.status,
             channel=notification.channel,
+            priority=notification.priority,
             updated_at=notification.updated_at,
         )
+
+    @staticmethod
+    def _filter_admin_inbox(
+        items: list[AdminNotificationInboxResponse],
+        params: AdminNotificationInboxParams,
+    ) -> list[AdminNotificationInboxResponse]:
+        filtered = list(items)
+        if params.unread is not None:
+            filtered = [
+                item for item in filtered
+                if (item.read_at is None) is params.unread
+            ]
+        for field_name in ("event_type", "category", "channel", "priority"):
+            raw_value = getattr(params, field_name)
+            if not raw_value:
+                continue
+            accepted = {part.strip().lower() for part in raw_value.split(",") if part.strip()}
+            filtered = [
+                item for item in filtered
+                if getattr(item, field_name, "").strip().lower() in accepted
+            ]
+        if params.related_public_id:
+            target = params.related_public_id
+            filtered = [
+                item for item in filtered
+                if any(
+                    str(value).strip().lower() == target
+                    for key, value in item.metadata.items()
+                    if key.endswith("_public_id") or key in {"linked_record_id", "subject_id"}
+                )
+            ]
+        return filtered
 
     def _to_delivery_response(
         self,

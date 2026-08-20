@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.pagination import ListQueryParams
+
 
 def _normalize_key(value: str) -> str:
     normalized = value.strip().lower()
@@ -115,7 +117,45 @@ class UserNotificationResponse(BaseModel):
 class AdminNotificationInboxResponse(UserNotificationResponse):
     status: str
     channel: str
+    priority: str
     updated_at: datetime
+
+
+class AdminNotificationInboxParams(ListQueryParams):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_type: str | None = Field(
+        default=None,
+        description="Optional event-type filter. Comma-separated values are supported.",
+    )
+    category: str | None = Field(
+        default=None,
+        description="Optional category filter. Comma-separated values are supported.",
+    )
+    channel: str | None = Field(
+        default=None,
+        description="Optional notification channel filter. Comma-separated values are supported.",
+    )
+    priority: str | None = Field(
+        default=None,
+        description="Optional notification priority filter. Comma-separated values are supported.",
+    )
+    unread: bool | None = Field(
+        default=None,
+        description="When provided, filter by read/unread state using backend truth.",
+    )
+    related_public_id: str | None = Field(
+        default=None,
+        description="Optional canonical public ID filter against linked notification metadata.",
+    )
+
+    @field_validator("event_type", "category", "channel", "priority", "related_public_id")
+    @classmethod
+    def normalize_optional_filter(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
 
 
 class NotificationUnreadCountResponse(BaseModel):
