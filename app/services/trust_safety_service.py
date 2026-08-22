@@ -122,7 +122,15 @@ class TrustSafetyService:
             self._settings,
         ).list_trust_safety_assignees(params)
         return Page[TrustSafetyInvestigationAssigneeResponse].create(
-            items=list(page.items),
+            items=[
+                TrustSafetyInvestigationAssigneeResponse(
+                    user_id=item.user_id,
+                    full_name=item.full_name,
+                    email=item.email,
+                    role=item.role,
+                )
+                for item in page.items
+            ],
             total=page.total,
             params=params,
         )
@@ -137,7 +145,7 @@ class TrustSafetyService:
             investigation.subject_type,
             investigation.subject_public_id,
         )
-        await self._session.refresh(investigation)
+        investigation = await self._get_required_investigation(investigation_public_id)
         subject_label = await self._subject_label(
             investigation.subject_type,
             investigation.subject_public_id,
