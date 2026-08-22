@@ -47,6 +47,14 @@ require_trust_safety_update_severity = require_permission(
     Permission.TRUST_SAFETY_UPDATE_SEVERITY
 )
 require_trust_safety_resolve = require_permission(Permission.TRUST_SAFETY_RESOLVE)
+require_system_operations_read = require_permission(Permission.SYSTEM_OPERATIONS_READ)
+require_system_operations_incident_create = require_permission(
+    Permission.SYSTEM_OPERATIONS_INCIDENT_CREATE
+)
+require_system_operations_incident_update = require_permission(
+    Permission.SYSTEM_OPERATIONS_INCIDENT_UPDATE
+)
+require_system_operations_retry = require_permission(Permission.SYSTEM_OPERATIONS_RETRY)
 
 # Role assignment — superadmin only
 require_role_manager = require_permission(Permission.ASSIGN_ROLES)
@@ -77,6 +85,10 @@ __all__ = [
     "require_trust_safety_read",
     "require_trust_safety_resolve",
     "require_trust_safety_update_severity",
+    "require_system_operations_incident_create",
+    "require_system_operations_incident_update",
+    "require_system_operations_read",
+    "require_system_operations_retry",
     "require_role_manager",
     "require_user_manager",
     "require_verification_staff",  # legacy

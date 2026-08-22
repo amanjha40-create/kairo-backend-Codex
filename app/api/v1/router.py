@@ -13,6 +13,7 @@ from app.api.v1.routes import (
     admin_review,
     admin_review_workflow,
     admin_session,
+    admin_system,
     admin_verification,
     auth,
     certifications,
@@ -91,6 +92,7 @@ api_router.include_router(admin_employer_verifications.router)
 api_router.include_router(admin_directory.router)
 api_router.include_router(admin_communications.router)
 api_router.include_router(admin_overview.router)
+api_router.include_router(admin_system.router)
 api_router.include_router(admin_verification.router)
 api_router.include_router(notifications.admin_router)
 api_router.include_router(notifications.user_router)

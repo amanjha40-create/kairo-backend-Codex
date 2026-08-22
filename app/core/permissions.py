@@ -70,6 +70,12 @@ class Permission(StrEnum):
     TRUST_SAFETY_UPDATE_SEVERITY = "trust_safety_update_severity"
     TRUST_SAFETY_RESOLVE = "trust_safety_resolve"
 
+    # --- System Operations ---
+    SYSTEM_OPERATIONS_READ = "system_operations_read"
+    SYSTEM_OPERATIONS_INCIDENT_CREATE = "system_operations_incident_create"
+    SYSTEM_OPERATIONS_INCIDENT_UPDATE = "system_operations_incident_update"
+    SYSTEM_OPERATIONS_RETRY = "system_operations_retry"
+
 
 # ---------------------------------------------------------------------------
 # Role → permission mapping
@@ -95,6 +101,7 @@ _SUPPORT: frozenset[Permission] = frozenset(
         Permission.ACCESS_ADMIN_PORTAL,
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
+        Permission.SYSTEM_OPERATIONS_READ,
     }
 )
 
@@ -106,6 +113,7 @@ _MODERATOR: frozenset[Permission] = frozenset(
         Permission.ADD_REMARK,
         Permission.TRUST_SAFETY_READ,
         Permission.TRUST_SAFETY_NOTE,
+        Permission.SYSTEM_OPERATIONS_READ,
     }
 )
 
@@ -117,6 +125,7 @@ _HR: frozenset[Permission] = frozenset(
         Permission.ADD_REMARK,
         Permission.REVIEW_VERIFICATION,
         Permission.REQUEST_MORE_INFO,
+        Permission.SYSTEM_OPERATIONS_READ,
     }
 )
 
@@ -143,6 +152,10 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.TRUST_SAFETY_NOTE,
         Permission.TRUST_SAFETY_UPDATE_SEVERITY,
         Permission.TRUST_SAFETY_RESOLVE,
+        Permission.SYSTEM_OPERATIONS_READ,
+        Permission.SYSTEM_OPERATIONS_INCIDENT_CREATE,
+        Permission.SYSTEM_OPERATIONS_INCIDENT_UPDATE,
+        Permission.SYSTEM_OPERATIONS_RETRY,
     }
 )
 

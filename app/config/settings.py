@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     app_name: str = Field(default="kairo-backend", validation_alias=AliasChoices("APP_NAME"))
     app_env: AppEnvironment = Field(default=AppEnvironment.DEVELOPMENT, validation_alias=AliasChoices("APP_ENV"))
     app_version: str = Field(default="0.1.0", validation_alias=AliasChoices("APP_VERSION"))
+    app_git_sha: str | None = Field(default=None, validation_alias=AliasChoices("APP_GIT_SHA"))
+    app_build_id: str | None = Field(default=None, validation_alias=AliasChoices("APP_BUILD_ID"))
+    app_deployed_at: str | None = Field(default=None, validation_alias=AliasChoices("APP_DEPLOYED_AT"))
     api_v1_prefix: str = Field(default="/api/v1", validation_alias=AliasChoices("API_V1_PREFIX"))
 
     host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("HOST"))

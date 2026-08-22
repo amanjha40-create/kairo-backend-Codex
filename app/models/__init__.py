@@ -51,6 +51,8 @@ from app.models.resume_review_item import ResumeReviewItem
 from app.models.resume_review_session import ResumeReviewSession
 from app.models.risk_signal import RiskSignal
 from app.models.skill import Skill
+from app.models.system_incident import SystemIncident
+from app.models.system_incident_event import SystemIncidentEvent
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
 from app.models.trust_registry_alias import TrustRegistryAlias
@@ -120,6 +122,8 @@ __all__ = [
     "ProfileLink",
     "Project",
     "Skill",
+    "SystemIncident",
+    "SystemIncidentEvent",
     "PortfolioItem",
     "RefreshToken",
     "RiskSignal",
