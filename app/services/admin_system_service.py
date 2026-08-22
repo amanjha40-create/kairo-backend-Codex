@@ -290,9 +290,7 @@ class AdminSystemService:
         return AdminSystemRetryResponse(
             operation="retry_failed_communication",
             reference_public_id=communication_public_id,
-            subject_public_id=(
-                UUID(communication.notificationId) if communication.notificationId else None
-            ),
+            subject_public_id=communication.communication.notification_public_id,
             message="Communication retry requested successfully.",
         )
 

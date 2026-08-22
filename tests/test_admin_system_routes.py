@@ -12,6 +12,10 @@ from httpx import ASGITransport, AsyncClient
 from app.api.dependencies.services import get_admin_system_service
 from app.auth.deps import CurrentUser, get_current_user
 from app.main import app
+from app.schemas.admin_communication import (
+    AdminCommunicationFullDetailResponse,
+    AdminCommunicationResendResponse,
+)
 from app.schemas.admin_system import (
     AdminSystemActivityItemResponse,
     AdminSystemCreateIncidentRequest,
@@ -33,6 +37,7 @@ from app.schemas.admin_system import (
     AdminSystemWorkloadSummaryResponse,
 )
 from app.schemas.pagination import Page, PageParams
+from app.services.admin_system_service import AdminSystemService
 
 
 def _status() -> AdminSystemStatusResponse:
@@ -342,3 +347,42 @@ async def test_admin_system_routes_require_authentication_and_permission() -> No
     assert unauthenticated.status_code == 401
     assert forbidden_read.status_code == 403
     assert forbidden_retry.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_communication_uses_resend_notification_public_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notification_public_id = UUID("00000000-0000-0000-0000-000000000501")
+
+    class FakeAdminCommunicationService:
+        def __init__(self, session):  # noqa: ANN001
+            self.session = session
+
+        async def resend(
+            self,
+            communication_public_id: UUID,  # noqa: ARG002
+            *,
+            actor_user_id: UUID,  # noqa: ARG002
+        ) -> AdminCommunicationResendResponse:
+            return AdminCommunicationResendResponse(
+                communication=AdminCommunicationFullDetailResponse.model_construct(
+                    notification_public_id=notification_public_id
+                )
+            )
+
+    monkeypatch.setattr(
+        "app.services.admin_system_service.AdminCommunicationService",
+        FakeAdminCommunicationService,
+    )
+
+    service = object.__new__(AdminSystemService)
+    service._session = object()  # noqa: SLF001
+    service._settings = None  # noqa: SLF001
+
+    response = await service.retry_failed_communication(
+        UUID("00000000-0000-0000-0000-000000000101"),
+        actor_user_id=UUID("00000000-0000-0000-0000-000000000999"),
+    )
+
+    assert response.subject_public_id == notification_public_id
