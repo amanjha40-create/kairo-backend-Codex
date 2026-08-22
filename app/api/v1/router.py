@@ -47,6 +47,7 @@ from app.api.v1.routes import (
     skills,
     trust_invitations,
     trust_registry,
+    trust_safety,
     trust_score,
     user_documents,
     users,
@@ -96,6 +97,7 @@ api_router.include_router(notifications.user_router)
 api_router.include_router(verification_connectors.admin_router)
 api_router.include_router(trust_registry.admin_router)
 api_router.include_router(trust_registry.internal_router)
+api_router.include_router(trust_safety.router)
 api_router.include_router(user_documents.router)
 api_router.include_router(educations.router)
 api_router.include_router(freelance_contracts.router)

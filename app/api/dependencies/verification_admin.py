@@ -39,6 +39,14 @@ require_user_reader = require_permission(Permission.READ_USERS)
 require_user_account_manager = require_permission(Permission.MANAGE_USER_ACCOUNTS)
 require_user_security_manager = require_permission(Permission.MANAGE_USER_SECURITY)
 require_user_note_manager = require_permission(Permission.MANAGE_USER_NOTES)
+require_trust_safety_read = require_permission(Permission.TRUST_SAFETY_READ)
+require_trust_safety_create = require_permission(Permission.TRUST_SAFETY_CREATE)
+require_trust_safety_assign = require_permission(Permission.TRUST_SAFETY_ASSIGN)
+require_trust_safety_note = require_permission(Permission.TRUST_SAFETY_NOTE)
+require_trust_safety_update_severity = require_permission(
+    Permission.TRUST_SAFETY_UPDATE_SEVERITY
+)
+require_trust_safety_resolve = require_permission(Permission.TRUST_SAFETY_RESOLVE)
 
 # Role assignment — superadmin only
 require_role_manager = require_permission(Permission.ASSIGN_ROLES)
@@ -63,6 +71,12 @@ __all__ = [
     "require_user_note_manager",
     "require_user_reader",
     "require_user_security_manager",
+    "require_trust_safety_assign",
+    "require_trust_safety_create",
+    "require_trust_safety_note",
+    "require_trust_safety_read",
+    "require_trust_safety_resolve",
+    "require_trust_safety_update_severity",
     "require_role_manager",
     "require_user_manager",
     "require_verification_staff",  # legacy

@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.trust_safety import TrustSafetyOverviewSummaryResponse
+
 
 class AdminOverviewCase(BaseModel):
     public_id: UUID
@@ -38,3 +40,6 @@ class AdminOverviewResponse(BaseModel):
     organization_total: int = Field(ge=0)
     registry_total: int = Field(ge=0)
     user_total: int | None = Field(default=None, ge=0)
+    trust_safety: TrustSafetyOverviewSummaryResponse = Field(
+        default_factory=TrustSafetyOverviewSummaryResponse
+    )

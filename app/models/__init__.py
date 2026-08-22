@@ -49,6 +49,7 @@ from app.models.resume_processing_job import ResumeProcessingJob
 from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.resume_review_item import ResumeReviewItem
 from app.models.resume_review_session import ResumeReviewSession
+from app.models.risk_signal import RiskSignal
 from app.models.skill import Skill
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
@@ -60,6 +61,9 @@ from app.models.trust_registry_merge_history import TrustRegistryMergeHistory
 from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.trust_registry_record_capability import TrustRegistryRecordCapability
 from app.models.trust_registry_relationship import TrustRegistryRelationship
+from app.models.trust_safety_investigation import TrustSafetyInvestigation
+from app.models.trust_safety_investigation_event import TrustSafetyInvestigationEvent
+from app.models.trust_safety_investigation_note import TrustSafetyInvestigationNote
 from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.user import User
 from app.models.user_account_event import UserAccountEvent
@@ -118,6 +122,7 @@ __all__ = [
     "Skill",
     "PortfolioItem",
     "RefreshToken",
+    "RiskSignal",
     "ResumeDocument",
     "ResumeProcessingJob",
     "ResumeParsedResult",
@@ -137,6 +142,9 @@ __all__ = [
     "TrustRegistryRecord",
     "TrustRegistryRecordCapability",
     "TrustRegistryRelationship",
+    "TrustSafetyInvestigation",
+    "TrustSafetyInvestigationEvent",
+    "TrustSafetyInvestigationNote",
     "User",
     "UserAccountEvent",
     "UserAdminNote",

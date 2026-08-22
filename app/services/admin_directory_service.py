@@ -344,6 +344,30 @@ class AdminDirectoryService:
             params=params,
         )
 
+    async def list_trust_safety_assignees(
+        self,
+        params: ListQueryParams,
+    ) -> AdminReviewerPage:
+        users, total = await self._users.list_by_roles(
+            get_roles_with_permission(Permission.TRUST_SAFETY_READ),
+            search=params.search,
+            offset=params.offset or 0,
+            limit=params.limit or 20,
+        )
+        return AdminReviewerPage.create(
+            items=[
+                AdminReviewerResponse(
+                    user_id=user.id,
+                    full_name=user.full_name,
+                    email=user.email,
+                    role=user.role,
+                )
+                for user in users
+            ],
+            total=total,
+            params=params,
+        )
+
     async def search_organizations(self, params: ListQueryParams) -> AdminOrganizationSearchPage:
         organizations, total = await self._organizations.search_all(
             search=params.search,

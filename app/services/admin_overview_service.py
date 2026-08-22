@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.config import get_settings
 from app.models.organization import Organization
 from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.user import User
@@ -18,6 +19,7 @@ from app.schemas.admin_overview import (
     AdminOverviewCase,
     AdminOverviewResponse,
 )
+from app.services.trust_safety_service import TrustSafetyService
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestStatus,
@@ -53,6 +55,7 @@ class AdminOverviewService:
             TrustRegistryRecord.deleted_at.is_(None),
         )
         user_total = await self._count(User, User.deleted_at.is_(None))
+        trust_safety = await TrustSafetyService(self._session, get_settings()).summary()
 
         return AdminOverviewResponse(
             generated_at=now,
@@ -66,6 +69,7 @@ class AdminOverviewService:
             organization_total=organization_total,
             registry_total=registry_total,
             user_total=user_total,
+            trust_safety=trust_safety,
         )
 
     async def _request_counts(self) -> tuple[int, dict[str, int]]:

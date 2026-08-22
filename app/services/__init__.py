@@ -5,11 +5,11 @@ from app.services.admin_communication_service import AdminCommunicationService
 from app.services.admin_directory_service import AdminDirectoryService
 from app.services.admin_overview_service import AdminOverviewService
 from app.services.admin_verification_service import AdminReviewService, AdminVerificationService
-from app.services.credential_verification_service import CredentialVerificationService
 from app.services.connector_execution_service import ConnectorExecutionService
 from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
 from app.services.connector_selection_service import ConnectorSelectionService
+from app.services.credential_verification_service import CredentialVerificationService
 from app.services.document_upload_service import DocumentUploadService
 from app.services.email_delivery_service import EmailDeliveryService
 from app.services.employer_verification_service import EmployerVerificationService
@@ -28,20 +28,23 @@ from app.services.passport_engine_service import PassportEngineService
 from app.services.passport_share_service import PassportShareService
 from app.services.passport_share_view_service import PassportShareViewService
 from app.services.public_passport_service import PublicPassportService
-from app.services.trust_score_service import TrustScoreService
+from app.services.resume_service import ResumeService
 from app.services.trust_invitation_service import TrustInvitationService
-from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
 from app.services.trust_registry_admin_service import TrustRegistryAdminService
+from app.services.trust_registry_resolution_service import TrustRegistryResolutionService
 from app.services.trust_registry_search_service import TrustRegistrySearchService
 from app.services.trust_registry_service import TrustRegistryService
+from app.services.trust_safety_service import TrustSafetyService
+from app.services.trust_score_service import TrustScoreService
 from app.services.user_service import UserService
-from app.services.verification_request_admin_review_service import VerificationRequestAdminReviewService
+from app.services.verification_queue_service import VerificationQueueService
+from app.services.verification_request_admin_review_service import (
+    VerificationRequestAdminReviewService,
+)
 from app.services.verification_request_service import VerificationRequestService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
-from app.services.verification_queue_service import VerificationQueueService
 from app.services.verification_service import VerificationService
 from app.services.workspace_service import WorkspaceService
-from app.services.resume_service import ResumeService
 
 __all__ = [
     "AdminReviewService",
@@ -79,6 +82,7 @@ __all__ = [
     "TrustRegistryAdminService",
     "TrustRegistrySearchService",
     "TrustRegistryService",
+    "TrustSafetyService",
     "UserService",
     "VerificationRequestAdminReviewService",
     "VerificationRequestService",

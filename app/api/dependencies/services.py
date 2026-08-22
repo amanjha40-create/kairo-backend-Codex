@@ -43,6 +43,7 @@ from app.services import (
     TrustRegistryResolutionService,
     TrustRegistrySearchService,
     TrustRegistryService,
+    TrustSafetyService,
     TrustScoreService,
     UserService,
     VerificationQueueService,
@@ -149,6 +150,13 @@ def get_admin_overview_service(
     session: AsyncSession = Depends(get_session),
 ) -> AdminOverviewService:
     return AdminOverviewService(session)
+
+
+def get_trust_safety_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TrustSafetyService:
+    return TrustSafetyService(session, settings)
 
 
 def get_verification_service(session: AsyncSession = Depends(get_session)) -> VerificationService:

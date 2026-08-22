@@ -62,6 +62,14 @@ class Permission(StrEnum):
     MANAGE_USERS = "manage_users"    # create / update / deactivate users
     ASSIGN_ROLES = "assign_roles"    # change a user's role
 
+    # --- Trust & Safety operations ---
+    TRUST_SAFETY_READ = "trust_safety_read"
+    TRUST_SAFETY_CREATE = "trust_safety_create"
+    TRUST_SAFETY_ASSIGN = "trust_safety_assign"
+    TRUST_SAFETY_NOTE = "trust_safety_note"
+    TRUST_SAFETY_UPDATE_SEVERITY = "trust_safety_update_severity"
+    TRUST_SAFETY_RESOLVE = "trust_safety_resolve"
+
 
 # ---------------------------------------------------------------------------
 # Role → permission mapping
@@ -96,6 +104,8 @@ _MODERATOR: frozenset[Permission] = frozenset(
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
         Permission.ADD_REMARK,
+        Permission.TRUST_SAFETY_READ,
+        Permission.TRUST_SAFETY_NOTE,
     }
 )
 
@@ -127,6 +137,12 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.MANAGE_USER_SECURITY,
         Permission.MANAGE_USER_NOTES,
         Permission.MANAGE_USERS,
+        Permission.TRUST_SAFETY_READ,
+        Permission.TRUST_SAFETY_CREATE,
+        Permission.TRUST_SAFETY_ASSIGN,
+        Permission.TRUST_SAFETY_NOTE,
+        Permission.TRUST_SAFETY_UPDATE_SEVERITY,
+        Permission.TRUST_SAFETY_RESOLVE,
     }
 )
 

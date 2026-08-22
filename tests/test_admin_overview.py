@@ -12,6 +12,7 @@ from app.api.dependencies.services import get_admin_overview_service
 from app.auth.deps import CurrentUser, get_current_user
 from app.main import app
 from app.schemas.admin_overview import AdminOverviewResponse
+from app.schemas.trust_safety import TrustSafetyOverviewSummaryResponse
 
 
 def _overview(*, populated: bool) -> AdminOverviewResponse:
@@ -28,6 +29,12 @@ def _overview(*, populated: bool) -> AdminOverviewResponse:
         organization_total=1 if populated else 0,
         registry_total=1 if populated else 0,
         user_total=2 if populated else 0,
+        trust_safety=TrustSafetyOverviewSummaryResponse(
+            open_investigations=1 if populated else 0,
+            high_or_critical_investigations=1 if populated else 0,
+            unassigned_investigations=0,
+            active_signals=2 if populated else 0,
+        ),
     )
 
 
@@ -86,6 +93,7 @@ async def test_admin_overview_aggregates_populated_data_and_window() -> None:
     assert body["priority_case_count"] == 1
     assert body["organization_total"] == 1
     assert body["registry_total"] == 1
+    assert body["trust_safety"]["open_investigations"] == 1
 
 
 @pytest.mark.asyncio
