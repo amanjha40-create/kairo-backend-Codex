@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Iterable
+from urllib.parse import urlencode
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -542,7 +543,7 @@ class AdminSettingsService:
         await self._email.send_admin_invitation(
             to_email=email,
             invited_role_label=self._role_label(payload.role_key),
-            invitation_token=raw_token,
+            invitation_url=self._admin_invitation_url(raw_token),
             expires_at=invitation.expires_at,
             audit_metadata={"admin_access_invitation_public_id": str(invitation.public_id)},
         )
@@ -595,7 +596,7 @@ class AdminSettingsService:
         await self._email.send_admin_invitation(
             to_email=invitation.invitee_email,
             invited_role_label=self._role_label(invitation.role),
-            invitation_token=raw_token,
+            invitation_url=self._admin_invitation_url(raw_token),
             expires_at=invitation.expires_at,
             audit_metadata={"admin_access_invitation_public_id": str(invitation.public_id)},
         )
@@ -708,6 +709,10 @@ class AdminSettingsService:
         if invitation.status != "pending":
             raise ConflictError("Admin invitation is no longer actionable")
         return invitation
+
+    def _admin_invitation_url(self, raw_token: str) -> str:
+        base_url = self._settings.admin_portal_base_url.rstrip("/")
+        return f"{base_url}/admin/accept-invitation#{urlencode({'token': raw_token})}"
 
     async def _expire_invitations(self) -> None:
         rows = (

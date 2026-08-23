@@ -31,6 +31,27 @@ def test_render_trust_invitation_template() -> None:
     assert message.audit_payload["organization_name"] == "Kairo Labs"
 
 
+def test_render_admin_invitation_keeps_tokenized_url_out_of_audit_payload() -> None:
+    renderer = EmailTemplateRenderer()
+    raw_token = "single-use-admin-token-1234567890"
+    invitation_url = f"https://admin.example.com/admin/accept-invitation#token={raw_token}"
+
+    message = renderer.render(
+        template_key=EmailTemplateKey.ADMIN_INVITATION.value,
+        to_email="invited-admin@example.com",
+        data={
+            "invited_role_label": "Support",
+            "invitation_url": invitation_url,
+            "expires_at_iso": "2026-08-30T10:00:00+00:00",
+        },
+    )
+
+    assert "Accept admin invitation" in message.text_body
+    assert invitation_url in message.text_body
+    assert "invitation_url" not in message.audit_payload
+    assert raw_token not in str(message.audit_payload)
+
+
 @pytest.mark.parametrize(
     ("template_key", "data", "expected_phrase"),
     [

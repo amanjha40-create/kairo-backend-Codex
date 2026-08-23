@@ -35,7 +35,7 @@ class AdminInvitationEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     invited_role_label: str = Field(min_length=1, max_length=255)
-    invitation_token: str = Field(min_length=1, max_length=2048)
+    invitation_url: str = Field(min_length=1, max_length=4096)
     expires_at_iso: str = Field(min_length=1, max_length=64)
 
 

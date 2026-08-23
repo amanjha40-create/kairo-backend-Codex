@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -85,6 +86,16 @@ class FakeEmailDeliveryLogRepository:
             ),
             "password_reset",
             "password reset token",
+        ),
+        (
+            lambda sender: sender.send_admin_invitation(
+                to_email="recipient@example.com",
+                invited_role_label="Support",
+                invitation_url="https://admin.example.com/admin/accept-invitation#token=single-use-token",
+                expires_at=datetime(2026, 8, 30, tzinfo=UTC),
+            ),
+            "admin_invitation",
+            "accept admin invitation",
         ),
         (
             lambda sender: sender.send_employer_verification(
@@ -197,8 +208,9 @@ async def test_provider_email_sender_persists_signup_delivery_log_when_session_a
 
 
 @pytest.mark.asyncio
-async def test_provider_email_sender_commits_failed_signup_delivery_log_when_provider_fails(
-) -> None:
+async def test_provider_email_sender_commits_failed_signup_delivery_log_when_provider_fails() -> (
+    None
+):
     session = FakeSession()
     logs = FakeEmailDeliveryLogRepository()
     sender = ProviderEmailSender(

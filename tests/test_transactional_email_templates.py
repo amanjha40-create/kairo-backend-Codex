@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from app.integrations.email.templates.admin_invitation import (
+    AdminInvitationContext,
+    render_admin_invitation,
+)
 from app.integrations.email.templates.base import (
     FOOTER_TEXT,
     SUPPORT_EMAIL,
@@ -33,6 +37,13 @@ from app.integrations.email.templates.verification_completed import (
         lambda: render_signup_otp(SignupOtpContext(code="123456", ttl_minutes=10)),
         lambda: render_password_reset(
             PasswordResetContext(reset_token="reset-token", ttl_minutes=30)
+        ),
+        lambda: render_admin_invitation(
+            AdminInvitationContext(
+                invited_role_label="Support",
+                invitation_url="https://admin.example.com/admin/accept-invitation#token=single-use-token",
+                expires_at_iso="2026-08-30T10:00:00+00:00",
+            )
         ),
         lambda: render_employer_verification(
             EmployerVerificationContext(
@@ -100,6 +111,26 @@ def test_password_reset_contains_token_expiry_and_security_notice() -> None:
     assert "30 minutes" in content.html_body
     assert "30 minutes" in content.text_body
     assert "Never share this token" in content.text_body
+
+
+def test_admin_invitation_uses_acceptance_cta_without_standalone_token() -> None:
+    raw_token = "single-use-admin-token-1234567890"
+    invitation_url = f"https://admin.example.com/admin/accept-invitation#token={raw_token}"
+    content = render_admin_invitation(
+        AdminInvitationContext(
+            invited_role_label="Support",
+            invitation_url=invitation_url,
+            expires_at_iso="2026-08-30T10:00:00+00:00",
+        )
+    )
+
+    assert "Accept admin invitation" in content.html_body
+    assert invitation_url in content.text_body
+    assert "Sanctioned role: Support" in content.text_body
+    assert "2026-08-30T10:00:00+00:00" in content.text_body
+    assert "Admin invitation token:" not in content.text_body
+    assert "Use this token" not in content.html_body
+    assert content.text_body.count(raw_token) == 1
 
 
 def test_action_template_escapes_user_controlled_html_and_url() -> None:

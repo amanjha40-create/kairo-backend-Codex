@@ -42,7 +42,7 @@ class EmailSender(Protocol):
         *,
         to_email: str,
         invited_role_label: str,
-        invitation_token: str,
+        invitation_url: str,
         expires_at: datetime,
         audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
@@ -173,7 +173,7 @@ class ProviderEmailSender:
         *,
         to_email: str,
         invited_role_label: str,
-        invitation_token: str,
+        invitation_url: str,
         expires_at: datetime,
         audit_metadata: dict[str, object] | None = None,
     ) -> None:
@@ -184,7 +184,7 @@ class ProviderEmailSender:
                     to_email=to_email,
                     data={
                         "invited_role_label": invited_role_label,
-                        "invitation_token": invitation_token,
+                        "invitation_url": invitation_url,
                         "expires_at_iso": expires_at.isoformat(),
                     },
                 ),

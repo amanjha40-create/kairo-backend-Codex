@@ -45,7 +45,7 @@ def _render_admin_invitation(to_email: str, data: dict[str, Any]) -> RenderedEma
     content = render_admin_invitation(
         AdminInvitationContext(
             invited_role_label=payload.invited_role_label,
-            invitation_token=payload.invitation_token,
+            invitation_url=payload.invitation_url,
             expires_at_iso=payload.expires_at_iso,
         )
     )
