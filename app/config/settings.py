@@ -10,6 +10,7 @@ from enum import StrEnum
 from functools import lru_cache
 from math import isclose
 from typing import Self
+from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,6 +23,19 @@ class AppEnvironment(StrEnum):
     STAGING = "staging"
     PRODUCTION = "production"
     TEST = "test"
+
+
+def _is_loopback_url(value: str) -> bool:
+    hostname = (urlparse(value).hostname or "").lower()
+    return (
+        hostname == "localhost"
+        or hostname.endswith(".localhost")
+        or hostname
+        in {
+            "127.0.0.1",
+            "::1",
+        }
+    )
 
 
 class Settings(BaseSettings):
@@ -569,6 +583,29 @@ class Settings(BaseSettings):
             if self.phone_otp_backend == "staging_fixed" and not self.controlled_testing:
                 msg = "PHONE_OTP_BACKEND=staging_fixed is forbidden in APP_ENV=production."
                 raise ValueError(msg)
+            if not self.controlled_testing:
+                if _is_loopback_url(self.database_url):
+                    raise ValueError(
+                        "DATABASE_URL must not use a loopback host in APP_ENV=production."
+                    )
+                if _is_loopback_url(self.redis_url):
+                    raise ValueError(
+                        "REDIS_URL must not use a loopback host in APP_ENV=production."
+                    )
+                if not self.app_public_base_url.startswith("https://"):
+                    raise ValueError("APP_PUBLIC_BASE_URL must use HTTPS in APP_ENV=production.")
+                if not self.admin_portal_base_url.startswith("https://"):
+                    raise ValueError("ADMIN_PORTAL_BASE_URL must use HTTPS in APP_ENV=production.")
+                admin_origin = self.admin_portal_base_url.rstrip("/")
+                allowed_origins = {origin.rstrip("/") for origin in self.cors_origins}
+                if not allowed_origins or "*" in allowed_origins:
+                    raise ValueError("CORS_ORIGINS must be explicit in APP_ENV=production.")
+                if admin_origin not in allowed_origins:
+                    raise ValueError(
+                        "CORS_ORIGINS must include ADMIN_PORTAL_BASE_URL in APP_ENV=production."
+                    )
+                if self.aws_endpoint_url:
+                    raise ValueError("AWS_ENDPOINT_URL must be unset in APP_ENV=production.")
 
         if self.phone_otp_backend == "staging_fixed":
             if self.app_env != AppEnvironment.STAGING and not (
