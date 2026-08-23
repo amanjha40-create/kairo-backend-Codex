@@ -10,12 +10,10 @@ from app.api.v1.routes import (
     admin_directory,
     admin_employer_verifications,
     admin_overview,
-    admin_review,
     admin_review_workflow,
-    admin_settings,
     admin_session,
+    admin_settings,
     admin_system,
-    admin_verification,
     auth,
     certifications,
     credential_verification,
@@ -88,14 +86,12 @@ api_router.include_router(credential_verification.router)
 api_router.include_router(public_credential_verification.router)
 api_router.include_router(documents.router)
 api_router.include_router(employment_documents.router)
-api_router.include_router(admin_review.router)
 api_router.include_router(admin_review_workflow.router)
 api_router.include_router(admin_employer_verifications.router)
 api_router.include_router(admin_directory.router)
 api_router.include_router(admin_communications.router)
 api_router.include_router(admin_overview.router)
 api_router.include_router(admin_system.router)
-api_router.include_router(admin_verification.router)
 api_router.include_router(notifications.admin_router)
 api_router.include_router(notifications.user_router)
 api_router.include_router(verification_connectors.admin_router)
