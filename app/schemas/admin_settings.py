@@ -7,6 +7,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.core.permissions import ADMIN_PORTAL_ROLES
+from app.schemas.pagination import ListQueryParams
+
 
 def _normalize_role(value: str) -> str:
     normalized = value.strip().lower()
@@ -76,6 +79,30 @@ class AdminAdministratorActionCapabilities(BaseModel):
     can_change_role: bool
     can_deactivate: bool
     can_restore: bool
+
+
+class AdminAdministratorListParams(ListQueryParams):
+    role: str | None = Field(default=None, description="Sanctioned Admin role filter.")
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = _normalize_role(value)
+        if normalized not in ADMIN_PORTAL_ROLES:
+            raise ValueError("role must be a sanctioned Admin role")
+        return normalized
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = _normalize_role(value)
+        if normalized not in {"active", "suspended"}:
+            raise ValueError("status must be 'active' or 'suspended'")
+        return normalized
 
 
 class AdminAccessAuditEventResponse(BaseModel):
@@ -175,4 +202,3 @@ class AdminInvitationAcceptRequest(BaseModel):
     token: str = Field(min_length=32)
     full_name: str | None = Field(default=None, min_length=1, max_length=255)
     password: str | None = Field(default=None, min_length=8, max_length=255)
-

@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 
 from app.api.dependencies.services import get_admin_settings_service
 from app.api.dependencies.verification_admin import (
@@ -26,6 +28,7 @@ from app.schemas.admin_settings import (
     AdminAdministratorDeactivateRequest,
     AdminAdministratorDetailResponse,
     AdminAdministratorListItemResponse,
+    AdminAdministratorListParams,
     AdminAdministratorRestoreRequest,
     AdminAdministratorRoleUpdateRequest,
     AdminInvitationAcceptRequest,
@@ -41,6 +44,16 @@ from app.schemas.pagination import ListQueryParams, Page
 from app.services.admin_settings_service import AdminSettingsService
 
 router = APIRouter(tags=["admin-settings"])
+
+
+def administrator_list_params(
+    params: Annotated[ListQueryParams, Depends()],
+    role: Annotated[str | None, Query()] = None,
+) -> AdminAdministratorListParams:
+    try:
+        return AdminAdministratorListParams(**params.model_dump(), role=role)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
 
 
 @router.get("/admin/settings/me", response_model=AdminSettingsMeResponse)
@@ -116,7 +129,7 @@ async def patch_admin_settings_notifications(
 
 @router.get("/admin/administrators", response_model=Page[AdminAdministratorListItemResponse])
 async def list_administrators(
-    params: Annotated[ListQueryParams, Depends()],
+    params: Annotated[AdminAdministratorListParams, Depends(administrator_list_params)],
     _: Annotated[CurrentUser, Depends(require_admin_access_read)],
     svc: Annotated[AdminSettingsService, Depends(get_admin_settings_service)],
 ) -> Page[AdminAdministratorListItemResponse]:

@@ -408,6 +408,7 @@ async def test_admin_access_routes_return_directory_roles_audit_and_invitations(
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             directory = await client.get(
                 "/api/v1/admin/administrators?page=2&page_size=5&search=other"
+                "&role=support&status=active"
             )
             detail = await client.get(f"/api/v1/admin/administrators/{OTHER_ADMIN_ID}")
             change_role = await client.patch(
@@ -443,6 +444,8 @@ async def test_admin_access_routes_return_directory_roles_audit_and_invitations(
     assert directory.status_code == 200
     assert directory.json()["page"] == 2
     assert directory.json()["items"][0]["email"] == "other-admin@example.com"
+    assert fake.list_params[0].role == "support"
+    assert fake.list_params[0].status == "active"
     assert detail.status_code == 200
     assert detail.json()["capabilities"]["can_change_role"] is True
     assert change_role.status_code == 200
@@ -466,6 +469,21 @@ async def test_admin_access_routes_return_directory_roles_audit_and_invitations(
     assert fake.invitation_payloads[0].email == "invitee@example.com"
     assert fake.revoked_invitation_ids == [INVITATION_ID]
     assert fake.resent_invitation_ids == [INVITATION_ID]
+
+
+@pytest.mark.asyncio
+async def test_administrator_directory_rejects_invalid_role_filter() -> None:
+    fake = FakeAdminSettingsService()
+    app.dependency_overrides[get_admin_settings_service] = lambda: fake
+    app.dependency_overrides[get_current_user] = _admin_user
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/v1/admin/administrators?role=user")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert fake.list_params == []
 
 
 @pytest.mark.asyncio

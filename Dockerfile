@@ -5,6 +5,13 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
 
 ARG INSTALL_DEV=false
+ARG APP_GIT_SHA=unknown
+ARG APP_BUILD_ID=unknown
+
+LABEL org.opencontainers.image.revision="${APP_GIT_SHA}"
+
+ENV APP_GIT_SHA="${APP_GIT_SHA}"
+ENV APP_BUILD_ID="${APP_BUILD_ID}"
 
 WORKDIR /app
 

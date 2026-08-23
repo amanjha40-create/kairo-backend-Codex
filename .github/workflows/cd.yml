@@ -36,7 +36,10 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build -t "${IMAGE_URI}" .
+          docker build \
+            --build-arg APP_GIT_SHA="${GITHUB_SHA}" \
+            --build-arg APP_BUILD_ID="${GITHUB_SHA}" \
+            -t "${IMAGE_URI}" .
           docker push "${IMAGE_URI}"
 
       - name: Deploy on EC2 with SSM

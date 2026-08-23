@@ -18,7 +18,7 @@ from app.auth.passwords import hash_password
 from app.auth.tokens import create_access_token, generate_opaque_refresh_raw, hash_refresh_token
 from app.config import Settings
 from app.core.constants import Role
-from app.core.permissions import ROLE_PERMISSIONS, Permission, get_roles_with_permission
+from app.core.permissions import ADMIN_PORTAL_ROLES, ROLE_PERMISSIONS
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.integrations.email import get_email_sender
 from app.models import (
@@ -38,6 +38,7 @@ from app.schemas.admin_settings import (
     AdminAdministratorDeactivateRequest,
     AdminAdministratorDetailResponse,
     AdminAdministratorListItemResponse,
+    AdminAdministratorListParams,
     AdminAdministratorRestoreRequest,
     AdminAdministratorRoleUpdateRequest,
     AdminInvitationAcceptRequest,
@@ -54,7 +55,7 @@ from app.schemas.auth import TokenResponse
 from app.schemas.pagination import ListQueryParams, Page, PageParams
 from app.services.notification_preference_service import NotificationPreferenceService
 
-STAFF_ROLES = tuple(sorted(get_roles_with_permission(Permission.ACCESS_ADMIN_PORTAL)))
+STAFF_ROLES = ADMIN_PORTAL_ROLES
 ROLE_LABELS: dict[str, str] = {
     Role.SUPPORT.value: "Support",
     Role.MODERATOR.value: "Moderator",
@@ -272,17 +273,17 @@ class AdminSettingsService:
 
     async def list_administrators(
         self,
-        params: ListQueryParams,
+        params: AdminAdministratorListParams,
     ) -> Page[AdminAdministratorListItemResponse]:
         filters = [User.deleted_at.is_(None), User.role.in_(STAFF_ROLES)]
         if params.search:
             pattern = f"%{params.search.strip()}%"
             filters.append(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
+        if params.role:
+            filters.append(User.role == params.role)
         if params.status and params.status != "all":
             normalized_statuses = {
-                item.strip().lower()
-                for item in params.status.split(",")
-                if item.strip()
+                item.strip().lower() for item in params.status.split(",") if item.strip()
             }
             filters.append(self._status_filter(normalized_statuses))
 

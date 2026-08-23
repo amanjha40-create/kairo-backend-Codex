@@ -49,8 +49,8 @@ class Permission(StrEnum):
     ADD_REMARK = "add_remark"
     ASSIGN_REVIEWER = "assign_reviewer"
     CHANGE_VERIFICATION_PRIORITY = "change_verification_priority"
-    REVIEW_VERIFICATION = "review_verification"   # approve / reject
-    REQUEST_MORE_INFO = "request_more_info"        # → additional_info_requested
+    REVIEW_VERIFICATION = "review_verification"  # approve / reject
+    REQUEST_MORE_INFO = "request_more_info"  # → additional_info_requested
     DISPATCH_VERIFICATION = "dispatch_verification"
     FINALIZE_VERIFICATION = "finalize_verification"
 
@@ -59,8 +59,8 @@ class Permission(StrEnum):
     MANAGE_USER_ACCOUNTS = "manage_user_accounts"
     MANAGE_USER_SECURITY = "manage_user_security"
     MANAGE_USER_NOTES = "manage_user_notes"
-    MANAGE_USERS = "manage_users"    # create / update / deactivate users
-    ASSIGN_ROLES = "assign_roles"    # change a user's role
+    MANAGE_USERS = "manage_users"  # create / update / deactivate users
+    ASSIGN_ROLES = "assign_roles"  # change a user's role
 
     # --- Trust & Safety operations ---
     TRUST_SAFETY_READ = "trust_safety_read"
@@ -211,3 +211,8 @@ def get_roles_with_permission(permission: Permission) -> frozenset[str]:
     hard-coding role lists.
     """
     return frozenset(role for role, perms in ROLE_PERMISSIONS.items() if permission in perms)
+
+
+ADMIN_PORTAL_ROLES: tuple[str, ...] = tuple(
+    sorted(get_roles_with_permission(Permission.ACCESS_ADMIN_PORTAL))
+)
