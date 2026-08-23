@@ -4,6 +4,7 @@ from app.auth.service import AuthService
 from app.services.admin_communication_service import AdminCommunicationService
 from app.services.admin_directory_service import AdminDirectoryService
 from app.services.admin_overview_service import AdminOverviewService
+from app.services.admin_settings_service import AdminSettingsService
 from app.services.admin_system_service import AdminSystemService
 from app.services.admin_verification_service import AdminReviewService, AdminVerificationService
 from app.services.connector_execution_service import ConnectorExecutionService
@@ -52,6 +53,7 @@ __all__ = [
     "AdminCommunicationService",
     "AdminDirectoryService",
     "AdminOverviewService",
+    "AdminSettingsService",
     "AdminSystemService",
     "AdminVerificationService",
     "AuthService",

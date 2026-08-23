@@ -13,6 +13,7 @@ from app.services import (
     AdminCommunicationService,
     AdminDirectoryService,
     AdminOverviewService,
+    AdminSettingsService,
     AdminSystemService,
     AdminVerificationService,
     AuthService,
@@ -158,6 +159,13 @@ def get_admin_system_service(
     settings: Settings = Depends(get_settings),
 ) -> AdminSystemService:
     return AdminSystemService(session, settings)
+
+
+def get_admin_settings_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AdminSettingsService:
+    return AdminSettingsService(session, settings)
 
 
 def get_trust_safety_service(

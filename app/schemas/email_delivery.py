@@ -31,6 +31,14 @@ class PasswordResetEmailTemplateData(BaseModel):
     ttl_minutes: int = Field(ge=1, le=1440)
 
 
+class AdminInvitationEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    invited_role_label: str = Field(min_length=1, max_length=255)
+    invitation_token: str = Field(min_length=1, max_length=2048)
+    expires_at_iso: str = Field(min_length=1, max_length=64)
+
+
 class EmployerVerificationEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

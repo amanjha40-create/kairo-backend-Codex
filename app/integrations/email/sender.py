@@ -37,6 +37,16 @@ class EmailSender(Protocol):
         audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
+    async def send_admin_invitation(
+        self,
+        *,
+        to_email: str,
+        invited_role_label: str,
+        invitation_token: str,
+        expires_at: datetime,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None: ...
+
     async def send_employer_verification(
         self,
         *,
@@ -153,6 +163,32 @@ class ProviderEmailSender:
                     data={"reset_token": reset_token, "ttl_minutes": ttl_minutes},
                 ),
                 failure_message="Unable to send password reset email",
+                audit_metadata=audit_metadata,
+            )
+        except ServiceUnavailableError:
+            raise
+
+    async def send_admin_invitation(
+        self,
+        *,
+        to_email: str,
+        invited_role_label: str,
+        invitation_token: str,
+        expires_at: datetime,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None:
+        try:
+            await self._send_rendered(
+                message=self._renderer.render(
+                    template_key=EmailTemplateKey.ADMIN_INVITATION.value,
+                    to_email=to_email,
+                    data={
+                        "invited_role_label": invited_role_label,
+                        "invitation_token": invitation_token,
+                        "expires_at_iso": expires_at.isoformat(),
+                    },
+                ),
+                failure_message="Unable to send admin invitation email",
                 audit_metadata=audit_metadata,
             )
         except ServiceUnavailableError:

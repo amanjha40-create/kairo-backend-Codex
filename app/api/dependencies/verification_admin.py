@@ -55,6 +55,14 @@ require_system_operations_incident_update = require_permission(
     Permission.SYSTEM_OPERATIONS_INCIDENT_UPDATE
 )
 require_system_operations_retry = require_permission(Permission.SYSTEM_OPERATIONS_RETRY)
+require_admin_settings_read = require_permission(Permission.ADMIN_SETTINGS_READ)
+require_admin_settings_update_self = require_permission(Permission.ADMIN_SETTINGS_UPDATE_SELF)
+require_admin_access_read = require_permission(Permission.ADMIN_ACCESS_READ)
+require_admin_access_invite = require_permission(Permission.ADMIN_ACCESS_INVITE)
+require_admin_access_change_role = require_permission(Permission.ADMIN_ACCESS_CHANGE_ROLE)
+require_admin_access_deactivate = require_permission(Permission.ADMIN_ACCESS_DEACTIVATE)
+require_admin_access_restore = require_permission(Permission.ADMIN_ACCESS_RESTORE)
+require_admin_access_audit_read = require_permission(Permission.ADMIN_ACCESS_AUDIT_READ)
 
 # Role assignment — superadmin only
 require_role_manager = require_permission(Permission.ASSIGN_ROLES)
@@ -89,6 +97,14 @@ __all__ = [
     "require_system_operations_incident_update",
     "require_system_operations_read",
     "require_system_operations_retry",
+    "require_admin_settings_read",
+    "require_admin_settings_update_self",
+    "require_admin_access_read",
+    "require_admin_access_invite",
+    "require_admin_access_change_role",
+    "require_admin_access_deactivate",
+    "require_admin_access_restore",
+    "require_admin_access_audit_read",
     "require_role_manager",
     "require_user_manager",
     "require_verification_staff",  # legacy

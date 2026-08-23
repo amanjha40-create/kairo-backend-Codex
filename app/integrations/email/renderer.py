@@ -6,6 +6,10 @@ from collections.abc import Callable
 from typing import Any
 
 from app.integrations.email.templates import DEFAULT_TEMPLATE_VERSION, EmailTemplateKey
+from app.integrations.email.templates.admin_invitation import (
+    AdminInvitationContext,
+    render_admin_invitation,
+)
 from app.integrations.email.templates.employer_verification import (
     EmployerVerificationContext,
     render_employer_verification,
@@ -24,6 +28,7 @@ from app.integrations.email.templates.verification_completed import (
     render_verification_completed,
 )
 from app.schemas.email_delivery import (
+    AdminInvitationEmailTemplateData,
     EmployerVerificationEmailTemplateData,
     PasswordResetEmailTemplateData,
     RenderedEmailMessage,
@@ -33,6 +38,29 @@ from app.schemas.email_delivery import (
 )
 
 RendererFn = Callable[[str, dict[str, Any]], RenderedEmailMessage]
+
+
+def _render_admin_invitation(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = AdminInvitationEmailTemplateData.model_validate(data)
+    content = render_admin_invitation(
+        AdminInvitationContext(
+            invited_role_label=payload.invited_role_label,
+            invitation_token=payload.invitation_token,
+            expires_at_iso=payload.expires_at_iso,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.ADMIN_INVITATION.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={
+            "invited_role_label": payload.invited_role_label,
+            "expires_at_iso": payload.expires_at_iso,
+        },
+    )
 
 
 def _render_signup_otp(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
@@ -166,6 +194,7 @@ class EmailTemplateRenderer:
         self._registry: dict[str, RendererFn] = {
             EmailTemplateKey.SIGNUP_OTP.value: _render_signup_otp,
             EmailTemplateKey.PASSWORD_RESET.value: _render_password_reset,
+            EmailTemplateKey.ADMIN_INVITATION.value: _render_admin_invitation,
             EmailTemplateKey.EMPLOYER_VERIFICATION.value: _render_employer_verification,
             EmailTemplateKey.TRUST_INVITATION.value: _render_trust_invitation,
             EmailTemplateKey.VERIFICATION_COMPLETED.value: _render_verification_completed,

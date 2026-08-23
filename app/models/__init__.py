@@ -1,5 +1,7 @@
 """Import models for Alembic metadata discovery."""
 
+from app.models.admin_access_audit_event import AdminAccessAuditEvent
+from app.models.admin_access_invitation import AdminAccessInvitation
 from app.models.certification import Certification
 from app.models.credential_verification_request import CredentialVerificationRequest
 from app.models.education import Education
@@ -84,6 +86,8 @@ from app.models.verification_review_correction import VerificationReviewCorrecti
 from app.models.verification_review_note import VerificationReviewNote
 
 __all__ = [
+    "AdminAccessAuditEvent",
+    "AdminAccessInvitation",
     "Certification",
     "CredentialVerificationRequest",
     "Education",

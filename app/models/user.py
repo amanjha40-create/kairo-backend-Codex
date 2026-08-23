@@ -15,6 +15,8 @@ from app.db.base import Base
 from app.db.mixins import SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.models.admin_access_audit_event import AdminAccessAuditEvent
+    from app.models.admin_access_invitation import AdminAccessInvitation
     from app.models.refresh_token import RefreshToken
     from app.models.user_account_event import UserAccountEvent
     from app.models.user_admin_note import UserAdminNote
@@ -106,6 +108,31 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         foreign_keys="UserAccountEvent.user_id",
         back_populates="user",
         cascade="all, delete-orphan",
+    )
+    sent_admin_access_invitations: Mapped[list["AdminAccessInvitation"]] = relationship(
+        "AdminAccessInvitation",
+        foreign_keys="AdminAccessInvitation.invited_by_user_id",
+        back_populates="invited_by_user",
+    )
+    accepted_admin_access_invitations: Mapped[list["AdminAccessInvitation"]] = relationship(
+        "AdminAccessInvitation",
+        foreign_keys="AdminAccessInvitation.accepted_by_user_id",
+        back_populates="accepted_by_user",
+    )
+    received_admin_access_invitations: Mapped[list["AdminAccessInvitation"]] = relationship(
+        "AdminAccessInvitation",
+        foreign_keys="AdminAccessInvitation.invitee_user_id",
+        back_populates="invitee_user",
+    )
+    admin_access_audit_events_as_actor: Mapped[list["AdminAccessAuditEvent"]] = relationship(
+        "AdminAccessAuditEvent",
+        foreign_keys="AdminAccessAuditEvent.actor_user_id",
+        back_populates="actor_user",
+    )
+    admin_access_audit_events_as_subject: Mapped[list["AdminAccessAuditEvent"]] = relationship(
+        "AdminAccessAuditEvent",
+        foreign_keys="AdminAccessAuditEvent.subject_user_id",
+        back_populates="subject_user",
     )
 
     def __repr__(self) -> str:

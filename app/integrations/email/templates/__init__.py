@@ -8,6 +8,7 @@ from enum import StrEnum
 class EmailTemplateKey(StrEnum):
     SIGNUP_OTP = "signup_otp"
     PASSWORD_RESET = "password_reset"
+    ADMIN_INVITATION = "admin_invitation"
     EMPLOYER_VERIFICATION = "employer_verification"
     TRUST_INVITATION = "trust_invitation"
     VERIFICATION_COMPLETED = "verification_completed"

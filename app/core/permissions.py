@@ -76,6 +76,16 @@ class Permission(StrEnum):
     SYSTEM_OPERATIONS_INCIDENT_UPDATE = "system_operations_incident_update"
     SYSTEM_OPERATIONS_RETRY = "system_operations_retry"
 
+    # --- Admin settings & administration ---
+    ADMIN_SETTINGS_READ = "admin_settings_read"
+    ADMIN_SETTINGS_UPDATE_SELF = "admin_settings_update_self"
+    ADMIN_ACCESS_READ = "admin_access_read"
+    ADMIN_ACCESS_INVITE = "admin_access_invite"
+    ADMIN_ACCESS_CHANGE_ROLE = "admin_access_change_role"
+    ADMIN_ACCESS_DEACTIVATE = "admin_access_deactivate"
+    ADMIN_ACCESS_RESTORE = "admin_access_restore"
+    ADMIN_ACCESS_AUDIT_READ = "admin_access_audit_read"
+
 
 # ---------------------------------------------------------------------------
 # Role → permission mapping
@@ -102,6 +112,8 @@ _SUPPORT: frozenset[Permission] = frozenset(
         Permission.VIEW_ALL_CASES,
         Permission.VIEW_AUDIT_LOG,
         Permission.SYSTEM_OPERATIONS_READ,
+        Permission.ADMIN_SETTINGS_READ,
+        Permission.ADMIN_SETTINGS_UPDATE_SELF,
     }
 )
 
@@ -114,6 +126,8 @@ _MODERATOR: frozenset[Permission] = frozenset(
         Permission.TRUST_SAFETY_READ,
         Permission.TRUST_SAFETY_NOTE,
         Permission.SYSTEM_OPERATIONS_READ,
+        Permission.ADMIN_SETTINGS_READ,
+        Permission.ADMIN_SETTINGS_UPDATE_SELF,
     }
 )
 
@@ -126,6 +140,8 @@ _HR: frozenset[Permission] = frozenset(
         Permission.REVIEW_VERIFICATION,
         Permission.REQUEST_MORE_INFO,
         Permission.SYSTEM_OPERATIONS_READ,
+        Permission.ADMIN_SETTINGS_READ,
+        Permission.ADMIN_SETTINGS_UPDATE_SELF,
     }
 )
 
@@ -156,6 +172,14 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.SYSTEM_OPERATIONS_INCIDENT_CREATE,
         Permission.SYSTEM_OPERATIONS_INCIDENT_UPDATE,
         Permission.SYSTEM_OPERATIONS_RETRY,
+        Permission.ADMIN_SETTINGS_READ,
+        Permission.ADMIN_SETTINGS_UPDATE_SELF,
+        Permission.ADMIN_ACCESS_READ,
+        Permission.ADMIN_ACCESS_INVITE,
+        Permission.ADMIN_ACCESS_CHANGE_ROLE,
+        Permission.ADMIN_ACCESS_DEACTIVATE,
+        Permission.ADMIN_ACCESS_RESTORE,
+        Permission.ADMIN_ACCESS_AUDIT_READ,
     }
 )
 
