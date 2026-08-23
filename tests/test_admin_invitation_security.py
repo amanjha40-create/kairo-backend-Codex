@@ -25,11 +25,13 @@ class FakeSession:
         return self.invitation
 
 
-def make_settings() -> Settings:
+def make_settings(
+    admin_portal_base_url: str = "https://admin-staging.example.com/",
+) -> Settings:
     return Settings(
         database_url="postgresql+asyncpg://kairo:kairo@localhost:5432/kairo",
         jwt_secret_key="test-jwt-secret-key-32-chars-minimum!!",
-        admin_portal_base_url="https://admin-staging.example.com/",
+        admin_portal_base_url=admin_portal_base_url,
     )
 
 
@@ -49,12 +51,16 @@ def make_invitation(*, status: str = "pending", expired: bool = False) -> AdminA
 def make_service(
     monkeypatch: pytest.MonkeyPatch,
     invitation: AdminAccessInvitation | None,
+    admin_portal_base_url: str = "https://admin-staging.example.com/",
 ) -> AdminSettingsService:
     monkeypatch.setattr(
         "app.services.admin_settings_service.get_email_sender",
         lambda *_args, **_kwargs: SimpleNamespace(),
     )
-    return AdminSettingsService(FakeSession(invitation), make_settings())  # type: ignore[arg-type]
+    return AdminSettingsService(
+        FakeSession(invitation),  # type: ignore[arg-type]
+        make_settings(admin_portal_base_url),
+    )
 
 
 def test_admin_invitation_url_uses_configured_frontend_and_fragment(
@@ -69,6 +75,21 @@ def test_admin_invitation_url_uses_configured_frontend_and_fragment(
         "token=single-use-admin-invitation-token-1234567890"
     )
     assert "?token=" not in invitation_url
+
+
+def test_admin_invitation_production_url_targets_canonical_admin_domain_without_sending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = make_service(monkeypatch, None, "https://admin.kairoid.com")
+
+    invitation_url = service._admin_invitation_url(RAW_TOKEN)  # noqa: SLF001
+
+    assert invitation_url == (
+        "https://admin.kairoid.com/admin/accept-invitation#"
+        "token=single-use-admin-invitation-token-1234567890"
+    )
+    assert "staging" not in invitation_url
+    assert "amplifyapp.com" not in invitation_url
 
 
 def test_admin_invitation_persists_only_token_hash() -> None:

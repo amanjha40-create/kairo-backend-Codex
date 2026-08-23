@@ -6,11 +6,12 @@ Environment variables use SCREAMING_SNAKE_CASE. Values are documented in `.env.e
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
 from math import isclose
 from typing import Self
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,27 @@ def _is_loopback_url(value: str) -> bool:
     )
 
 
+def _database_uses_tls(value: str) -> bool:
+    query = parse_qs(urlparse(value).query)
+    tls_value = (query.get("ssl") or query.get("sslmode") or [""])[-1].lower()
+    return tls_value in {"require", "verify-ca", "verify-full", "true"}
+
+
+def _is_https_origin(value: str) -> bool:
+    parsed = urlparse(value)
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+        and not _is_loopback_url(value)
+    )
+
+
 class Settings(BaseSettings):
     """Load-time validated settings — immutable after first access via `get_settings()`."""
 
@@ -51,11 +73,15 @@ class Settings(BaseSettings):
 
     # --- Application ---
     app_name: str = Field(default="kairo-backend", validation_alias=AliasChoices("APP_NAME"))
-    app_env: AppEnvironment = Field(default=AppEnvironment.DEVELOPMENT, validation_alias=AliasChoices("APP_ENV"))
+    app_env: AppEnvironment = Field(
+        default=AppEnvironment.DEVELOPMENT, validation_alias=AliasChoices("APP_ENV")
+    )
     app_version: str = Field(default="0.1.0", validation_alias=AliasChoices("APP_VERSION"))
     app_git_sha: str | None = Field(default=None, validation_alias=AliasChoices("APP_GIT_SHA"))
     app_build_id: str | None = Field(default=None, validation_alias=AliasChoices("APP_BUILD_ID"))
-    app_deployed_at: str | None = Field(default=None, validation_alias=AliasChoices("APP_DEPLOYED_AT"))
+    app_deployed_at: str | None = Field(
+        default=None, validation_alias=AliasChoices("APP_DEPLOYED_AT")
+    )
     api_v1_prefix: str = Field(default="/api/v1", validation_alias=AliasChoices("API_V1_PREFIX"))
 
     host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("HOST"))
@@ -125,7 +151,10 @@ class Settings(BaseSettings):
     redis_health_check_interval: int = Field(
         default=30,
         ge=0,
-        description="Seconds between connection health checks in the pool; 0 may disable depending on client",
+        description=(
+            "Seconds between connection health checks in the pool; "
+            "0 may disable depending on client"
+        ),
         validation_alias=AliasChoices("REDIS_HEALTH_CHECK_INTERVAL"),
     )
     redis_key_prefix: str = Field(
@@ -153,7 +182,9 @@ class Settings(BaseSettings):
         le=24 * 60,
         validation_alias=AliasChoices("JWT_ACCESS_TTL_MINUTES"),
     )
-    jwt_refresh_ttl_days: int = Field(default=7, ge=1, le=365, validation_alias=AliasChoices("JWT_REFRESH_TTL_DAYS"))
+    jwt_refresh_ttl_days: int = Field(
+        default=7, ge=1, le=365, validation_alias=AliasChoices("JWT_REFRESH_TTL_DAYS")
+    )
 
     # --- Signup email OTP ---
     signup_otp_ttl_seconds: int = Field(
@@ -217,16 +248,29 @@ class Settings(BaseSettings):
         default=60, ge=1, le=3600, validation_alias=AliasChoices("AUTH_RATE_LIMIT_WINDOW_SECONDS")
     )
     # --- Versioned Trust Score configuration ---
-    trust_score_version: str = Field(default="v1", validation_alias=AliasChoices("TRUST_SCORE_VERSION"))
-    trust_score_identity_weight: float = Field(default=0.25, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_IDENTITY_WEIGHT"))
-    trust_score_employment_weight: float = Field(default=0.45, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EMPLOYMENT_WEIGHT"))
-    trust_score_education_weight: float = Field(default=0.30, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EDUCATION_WEIGHT"))
-    trust_score_require_consent: bool = Field(default=True, validation_alias=AliasChoices("TRUST_SCORE_REQUIRE_CONSENT"))
+    trust_score_version: str = Field(
+        default="v1", validation_alias=AliasChoices("TRUST_SCORE_VERSION")
+    )
+    trust_score_identity_weight: float = Field(
+        default=0.25, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_IDENTITY_WEIGHT")
+    )
+    trust_score_employment_weight: float = Field(
+        default=0.45, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EMPLOYMENT_WEIGHT")
+    )
+    trust_score_education_weight: float = Field(
+        default=0.30, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_EDUCATION_WEIGHT")
+    )
+    trust_score_require_consent: bool = Field(
+        default=True, validation_alias=AliasChoices("TRUST_SCORE_REQUIRE_CONSENT")
+    )
     otp_verify_rate_limit_max_requests: int = Field(
         default=5, ge=1, le=100, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_MAX_REQUESTS")
     )
     otp_verify_rate_limit_window_seconds: int = Field(
-        default=60, ge=1, le=3600, validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS")
+        default=60,
+        ge=1,
+        le=3600,
+        validation_alias=AliasChoices("OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS"),
     )
     password_reset_token_ttl_minutes: int = Field(
         default=30,
@@ -248,7 +292,9 @@ class Settings(BaseSettings):
     )
     email_backend: str = Field(
         default="console",
-        description="console | smtp | ses | brevo — external delivery requires EMAIL_SEND_ENABLED=true",
+        description=(
+            "console | smtp | ses | brevo — external delivery requires EMAIL_SEND_ENABLED=true"
+        ),
         validation_alias=AliasChoices("EMAIL_PROVIDER", "EMAIL_BACKEND"),
     )
     email_send_enabled: bool = Field(
@@ -258,7 +304,10 @@ class Settings(BaseSettings):
     )
     email_dev_log_secrets: bool = Field(
         default=False,
-        description="Local debugging only — allows console provider to include secrets in logs outside production.",
+        description=(
+            "Local debugging only — allows console provider to include secrets "
+            "in logs outside production."
+        ),
         validation_alias=AliasChoices("EMAIL_DEV_LOG_SECRETS"),
     )
     smtp_host: str | None = Field(default=None, validation_alias=AliasChoices("SMTP_HOST"))
@@ -330,7 +379,9 @@ class Settings(BaseSettings):
         description="LocalStack / custom endpoint override for AWS SDK clients",
         validation_alias=AliasChoices("AWS_ENDPOINT_URL"),
     )
-    sqs_main_queue_url: str | None = Field(default=None, validation_alias=AliasChoices("SQS_MAIN_QUEUE_URL"))
+    sqs_main_queue_url: str | None = Field(
+        default=None, validation_alias=AliasChoices("SQS_MAIN_QUEUE_URL")
+    )
     sqs_dlq_url: str | None = Field(default=None, validation_alias=AliasChoices("SQS_DLQ_URL"))
     sqs_receive_wait_seconds: int = Field(
         default=20,
@@ -396,46 +447,77 @@ class Settings(BaseSettings):
         default=False, validation_alias=AliasChoices("RESUME_PROCESSING_ENABLED")
     )
     resume_max_upload_bytes: int = Field(
-        default=10_000_000, ge=1024, le=50_000_000, validation_alias=AliasChoices("RESUME_MAX_UPLOAD_BYTES")
+        default=10_000_000,
+        ge=1024,
+        le=50_000_000,
+        validation_alias=AliasChoices("RESUME_MAX_UPLOAD_BYTES"),
     )
-    resume_max_retries: int = Field(default=3, ge=0, le=5, validation_alias=AliasChoices("RESUME_MAX_RETRIES"))
-    resume_retention_days: int = Field(default=30, ge=1, le=365, validation_alias=AliasChoices("RESUME_RETENTION_DAYS"))
-    bedrock_model_id: str | None = Field(default=None, validation_alias=AliasChoices("BEDROCK_MODEL_ID"))
-    resume_parser_provider: str = Field(default="nova", validation_alias=AliasChoices("RESUME_PARSER_PROVIDER"))
-    bedrock_timeout_seconds: int = Field(default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS"))
-    textract_timeout_seconds: int = Field(default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS"))
+    resume_max_retries: int = Field(
+        default=3, ge=0, le=5, validation_alias=AliasChoices("RESUME_MAX_RETRIES")
+    )
+    resume_retention_days: int = Field(
+        default=30, ge=1, le=365, validation_alias=AliasChoices("RESUME_RETENTION_DAYS")
+    )
+    bedrock_model_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("BEDROCK_MODEL_ID")
+    )
+    resume_parser_provider: str = Field(
+        default="nova", validation_alias=AliasChoices("RESUME_PARSER_PROVIDER")
+    )
+    bedrock_timeout_seconds: int = Field(
+        default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS")
+    )
+    textract_timeout_seconds: int = Field(
+        default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS")
+    )
     resume_parser_schema_version: str = Field(
         default="1",
         validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION", "BEDROCK_SCHEMA_VERSION"),
     )
 
     # --- Google OAuth ---
-    google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID"))
-    google_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET"))
+    google_client_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID")
+    )
+    google_client_secret: str | None = Field(
+        default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET")
+    )
     google_redirect_uri: str = Field(
         default="http://localhost:8000/api/v1/auth/google/callback",
         validation_alias=AliasChoices("GOOGLE_REDIRECT_URI"),
     )
 
     # --- LinkedIn OAuth ---
-    linkedin_client_id: str | None = Field(default=None, validation_alias=AliasChoices("LINKEDIN_CLIENT_ID"))
-    linkedin_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("LINKEDIN_CLIENT_SECRET"))
+    linkedin_client_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("LINKEDIN_CLIENT_ID")
+    )
+    linkedin_client_secret: str | None = Field(
+        default=None, validation_alias=AliasChoices("LINKEDIN_CLIENT_SECRET")
+    )
     linkedin_redirect_uri: str = Field(
         default="http://localhost:8000/api/v1/auth/linkedin/callback",
         validation_alias=AliasChoices("LINKEDIN_REDIRECT_URI"),
     )
 
     # --- GitHub OAuth ---
-    github_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GITHUB_CLIENT_ID"))
-    github_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GITHUB_CLIENT_SECRET"))
+    github_client_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("GITHUB_CLIENT_ID")
+    )
+    github_client_secret: str | None = Field(
+        default=None, validation_alias=AliasChoices("GITHUB_CLIENT_SECRET")
+    )
     github_redirect_uri: str = Field(
         default="http://localhost:8000/api/v1/auth/github/callback",
         validation_alias=AliasChoices("GITHUB_REDIRECT_URI"),
     )
 
     # --- HTTP / CORS ---
-    cors_origins: list[str] = Field(default_factory=list, validation_alias=AliasChoices("CORS_ORIGINS"))
-    cors_allow_credentials: bool = Field(default=False, validation_alias=AliasChoices("CORS_ALLOW_CREDENTIALS"))
+    cors_origins: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("CORS_ORIGINS")
+    )
+    cors_allow_credentials: bool = Field(
+        default=False, validation_alias=AliasChoices("CORS_ALLOW_CREDENTIALS")
+    )
 
     # --- Security surface ---
     docs_enabled: bool = Field(default=True, validation_alias=AliasChoices("DOCS_ENABLED"))
@@ -575,45 +657,95 @@ class Settings(BaseSettings):
                 msg = "EMAIL_PROVIDER must not be console in APP_ENV=production."
                 raise ValueError(msg)
             if self.phone_otp_enabled and self.phone_otp_backend == "console":
-                msg = "PHONE_OTP_BACKEND must not be console in APP_ENV=production when PHONE_OTP_ENABLED=true."
+                msg = (
+                    "PHONE_OTP_BACKEND must not be console in APP_ENV=production "
+                    "when PHONE_OTP_ENABLED=true."
+                )
                 raise ValueError(msg)
-            if self.controlled_testing and self.phone_otp_backend != "staging_fixed":
-                msg = "CONTROLLED_TESTING=true requires PHONE_OTP_BACKEND=staging_fixed in APP_ENV=production."
-                raise ValueError(msg)
-            if self.phone_otp_backend == "staging_fixed" and not self.controlled_testing:
-                msg = "PHONE_OTP_BACKEND=staging_fixed is forbidden in APP_ENV=production."
-                raise ValueError(msg)
-            if not self.controlled_testing:
-                if _is_loopback_url(self.database_url):
-                    raise ValueError(
-                        "DATABASE_URL must not use a loopback host in APP_ENV=production."
-                    )
-                if _is_loopback_url(self.redis_url):
-                    raise ValueError(
-                        "REDIS_URL must not use a loopback host in APP_ENV=production."
-                    )
-                if not self.app_public_base_url.startswith("https://"):
-                    raise ValueError("APP_PUBLIC_BASE_URL must use HTTPS in APP_ENV=production.")
-                if not self.admin_portal_base_url.startswith("https://"):
-                    raise ValueError("ADMIN_PORTAL_BASE_URL must use HTTPS in APP_ENV=production.")
-                admin_origin = self.admin_portal_base_url.rstrip("/")
-                allowed_origins = {origin.rstrip("/") for origin in self.cors_origins}
-                if not allowed_origins or "*" in allowed_origins:
-                    raise ValueError("CORS_ORIGINS must be explicit in APP_ENV=production.")
-                if admin_origin not in allowed_origins:
-                    raise ValueError(
-                        "CORS_ORIGINS must include ADMIN_PORTAL_BASE_URL in APP_ENV=production."
-                    )
-                if self.aws_endpoint_url:
-                    raise ValueError("AWS_ENDPOINT_URL must be unset in APP_ENV=production.")
+            if self.controlled_testing:
+                raise ValueError("CONTROLLED_TESTING must be false in APP_ENV=production.")
+            if self.phone_otp_backend == "staging_fixed" or self.staging_phone_otp_code is not None:
+                raise ValueError(
+                    "Staging fixed OTP configuration is forbidden in APP_ENV=production."
+                )
+            if self.phone_otp_enabled and self.phone_otp_backend != "sns":
+                raise ValueError(
+                    "PHONE_OTP_BACKEND must be sns in APP_ENV=production "
+                    "when PHONE_OTP_ENABLED=true."
+                )
+            if _is_loopback_url(self.database_url):
+                raise ValueError("DATABASE_URL must not use a loopback host in APP_ENV=production.")
+            if not _database_uses_tls(self.database_url):
+                raise ValueError("DATABASE_URL must require TLS in APP_ENV=production.")
+            if _is_loopback_url(self.redis_url):
+                raise ValueError("REDIS_URL must not use a loopback host in APP_ENV=production.")
+            if not self.redis_url.lower().startswith("rediss://"):
+                raise ValueError("REDIS_URL must use TLS in APP_ENV=production.")
+            if not _is_https_origin(self.app_public_base_url):
+                raise ValueError(
+                    "APP_PUBLIC_BASE_URL must be an HTTPS origin in APP_ENV=production."
+                )
+            if not _is_https_origin(self.admin_portal_base_url):
+                raise ValueError(
+                    "ADMIN_PORTAL_BASE_URL must be an HTTPS origin in APP_ENV=production."
+                )
+            admin_origin = self.admin_portal_base_url.rstrip("/")
+            allowed_origins = {origin.rstrip("/") for origin in self.cors_origins}
+            if not allowed_origins or "*" in allowed_origins:
+                raise ValueError("CORS_ORIGINS must be explicit in APP_ENV=production.")
+            if any(not _is_https_origin(origin) for origin in allowed_origins):
+                raise ValueError(
+                    "CORS_ORIGINS entries must be HTTPS origins without paths "
+                    "in APP_ENV=production."
+                )
+            if admin_origin not in allowed_origins:
+                raise ValueError(
+                    "CORS_ORIGINS must include ADMIN_PORTAL_BASE_URL in APP_ENV=production."
+                )
+            if self.aws_endpoint_url:
+                raise ValueError("AWS_ENDPOINT_URL must be unset in APP_ENV=production.")
+            if self.docs_enabled:
+                raise ValueError("DOCS_ENABLED must be false in APP_ENV=production.")
+            if self.database_echo_sql:
+                raise ValueError("DATABASE_ECHO_SQL must be false in APP_ENV=production.")
+            if self.log_level == "DEBUG":
+                raise ValueError("LOG_LEVEL must not be DEBUG in APP_ENV=production.")
+            if self.email_dev_log_secrets:
+                raise ValueError("EMAIL_DEV_LOG_SECRETS must be false in APP_ENV=production.")
+            if self.job_backend != "sqs" or not self.sqs_main_queue_url:
+                raise ValueError(
+                    "JOB_BACKEND=sqs and SQS_MAIN_QUEUE_URL are required in APP_ENV=production."
+                )
+            if not self.app_git_sha or not re.fullmatch(r"[0-9a-f]{40}", self.app_git_sha):
+                raise ValueError(
+                    "APP_GIT_SHA must be a full lowercase Git SHA in APP_ENV=production."
+                )
+            if not self.app_build_id or not self.app_build_id.strip():
+                raise ValueError("APP_BUILD_ID is required in APP_ENV=production.")
+            if not self.app_deployed_at:
+                raise ValueError("APP_DEPLOYED_AT is required in APP_ENV=production.")
+            try:
+                datetime.fromisoformat(self.app_deployed_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    "APP_DEPLOYED_AT must be an ISO-8601 timestamp in APP_ENV=production."
+                ) from exc
+            public_host = urlparse(self.app_public_base_url).hostname
+            trusted_hosts = {host.lower() for host in self.trusted_hosts}
+            if not trusted_hosts or "*" in trusted_hosts or public_host not in trusted_hosts:
+                raise ValueError(
+                    "TRUSTED_HOSTS must explicitly include the production API hostname."
+                )
 
         if self.phone_otp_backend == "staging_fixed":
-            if self.app_env != AppEnvironment.STAGING and not (
-                self.app_env == AppEnvironment.PRODUCTION and self.controlled_testing
-            ):
+            if self.app_env != AppEnvironment.STAGING:
                 msg = "PHONE_OTP_BACKEND=staging_fixed requires APP_ENV=staging."
                 raise ValueError(msg)
-            code = self.staging_phone_otp_code.get_secret_value() if self.staging_phone_otp_code else ""
+            code = (
+                self.staging_phone_otp_code.get_secret_value()
+                if self.staging_phone_otp_code
+                else ""
+            )
             if not re.fullmatch(r"\d{6}", code):
                 msg = "STAGING_PHONE_OTP_CODE must contain exactly six digits."
                 raise ValueError(msg)
@@ -683,7 +815,10 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return cached settings singleton — call `reload_settings()` when env vars change (e.g. tests)."""
+    """Return cached settings singleton.
+
+    Call ``reload_settings()`` after environment changes in tests.
+    """
 
     return Settings()
 

@@ -40,7 +40,7 @@ def _settings(**overrides: object) -> Settings:
     return Settings(**values)
 
 
-def test_staging_fixed_provider_requires_staging_or_explicit_controlled_testing() -> None:
+def test_staging_fixed_provider_requires_staging() -> None:
     with pytest.raises(ValidationError, match="requires APP_ENV=staging"):
         _settings(app_env="development")
 
@@ -55,63 +55,42 @@ def test_staging_fixed_provider_is_forbidden_in_production() -> None:
         )
 
 
-def test_controlled_production_testing_allows_staging_fixed_with_valid_code() -> None:
-    settings = _settings(
-        app_env="production",
-        controlled_testing=True,
-        jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
-        email_backend="smtp",
-        smtp_host="smtp.example.com",
-    )
-    assert settings.controlled_testing is True
-    assert settings.phone_otp_backend == "staging_fixed"
-
-
-def test_controlled_production_testing_does_not_allow_console() -> None:
-    with pytest.raises(ValidationError, match="must not be console"):
+@pytest.mark.parametrize(
+    ("backend", "code"),
+    (
+        ("staging_fixed", FIXED_CODE),
+        ("staging_fixed", None),
+        ("staging_fixed", "12345"),
+        ("staging_fixed", "1234567"),
+        ("staging_fixed", "abcdef"),
+        ("console", FIXED_CODE),
+        ("sns", FIXED_CODE),
+    ),
+)
+def test_production_rejects_controlled_testing_regardless_of_otp_configuration(
+    backend: str,
+    code: str | None,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="CONTROLLED_TESTING must be false|PHONE_OTP_BACKEND must not be console",
+    ):
         _settings(
             app_env="production",
             controlled_testing=True,
-            phone_otp_backend="console",
+            phone_otp_backend=backend,
+            staging_phone_otp_code=code,
             jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
             email_backend="smtp",
             smtp_host="smtp.example.com",
         )
 
 
-def test_controlled_production_testing_does_not_enable_sns() -> None:
-    with pytest.raises(ValidationError, match="requires PHONE_OTP_BACKEND=staging_fixed"):
-        _settings(
-            app_env="production",
-            controlled_testing=True,
-            phone_otp_backend="sns",
-            jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
-            email_backend="smtp",
-            smtp_host="smtp.example.com",
-        )
-
-
-def test_controlled_production_testing_requires_explicit_flag() -> None:
+def test_controlled_testing_flag_cannot_bypass_production_staging_fixed_ban() -> None:
     with pytest.raises(ValidationError, match="forbidden in APP_ENV=production"):
         _settings(
             app_env="production",
             controlled_testing=False,
-            jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
-            email_backend="smtp",
-            smtp_host="smtp.example.com",
-        )
-
-
-@pytest.mark.parametrize(
-    "code",
-    (None, "12345", "1234567", "abcdef"),
-)
-def test_controlled_production_testing_requires_six_digit_code(code: str | None) -> None:
-    with pytest.raises(ValidationError, match="STAGING_PHONE_OTP_CODE|exactly six digits"):
-        _settings(
-            app_env="production",
-            controlled_testing=True,
-            staging_phone_otp_code=code,
             jwt_secret_key="production-jwt-secret-key-that-is-longer-than-forty-eight-characters",
             email_backend="smtp",
             smtp_host="smtp.example.com",
@@ -138,7 +117,10 @@ def test_provider_factory_selects_staging_fixed() -> None:
 
 
 def test_provider_factory_selects_sns() -> None:
-    assert isinstance(get_phone_otp_sender(_settings(phone_otp_backend="sns", aws_region="us-east-1")), SnsPhoneOtpSender)
+    assert isinstance(
+        get_phone_otp_sender(_settings(phone_otp_backend="sns", aws_region="us-east-1")),
+        SnsPhoneOtpSender,
+    )
 
 
 def test_unknown_provider_fails_closed() -> None:
@@ -316,7 +298,9 @@ def _pending(phone: str = ALLOWED_PHONE) -> SimpleNamespace:
     )
 
 
-def _service(*, otp_store: _FakeOtpStore, email_sender: _FakeEmailSender | None = None) -> AuthService:
+def _service(
+    *, otp_store: _FakeOtpStore, email_sender: _FakeEmailSender | None = None
+) -> AuthService:
     service = object.__new__(AuthService)
     service._settings = _settings()  # noqa: SLF001
     service._otp = otp_store  # type: ignore[assignment]  # noqa: SLF001
@@ -344,7 +328,9 @@ async def test_email_signup_channel_routes_through_email_sender_and_updates_coun
     email_sender = _FakeEmailSender()
     pending = _pending()
 
-    response = await _service(otp_store=otp_store, email_sender=email_sender)._send_channel_otp(pending, "email")
+    response = await _service(otp_store=otp_store, email_sender=email_sender)._send_channel_otp(
+        pending, "email"
+    )
 
     assert response.channel == "email"
     assert otp_store.stored is not None
@@ -356,11 +342,15 @@ async def test_email_signup_channel_routes_through_email_sender_and_updates_coun
 @pytest.mark.asyncio
 async def test_email_signup_channel_does_not_increment_counters_when_delivery_fails() -> None:
     otp_store = _FakeOtpStore()
-    email_sender = _FakeEmailSender(exc=ServiceUnavailableError("Unable to send verification email"))
+    email_sender = _FakeEmailSender(
+        exc=ServiceUnavailableError("Unable to send verification email")
+    )
     pending = _pending()
 
     with pytest.raises(ServiceUnavailableError, match="Unable to send verification email"):
-        await _service(otp_store=otp_store, email_sender=email_sender)._send_channel_otp(pending, "email")
+        await _service(otp_store=otp_store, email_sender=email_sender)._send_channel_otp(
+            pending, "email"
+        )
 
     assert pending.email_otp_sent_count == 0
     assert pending.email_last_otp_sent_at is None

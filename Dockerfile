@@ -2,9 +2,6 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
-
-ARG INSTALL_DEV=false
 ARG APP_GIT_SHA=unknown
 ARG APP_BUILD_ID=unknown
 
@@ -21,18 +18,27 @@ RUN apt-get update \
     && useradd --create-home appuser
 
 COPY requirements.txt requirements.txt
-COPY requirements-dev.txt requirements-dev.txt
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && if [ "$INSTALL_DEV" = "true" ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY alembic.ini alembic.ini
 COPY alembic ./alembic
 COPY pyproject.toml pyproject.toml
+
+FROM base AS development
+
+USER root
+ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
+COPY requirements-dev.txt requirements-dev.txt
+RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY tests ./tests
 COPY scripts ./scripts
 RUN chmod 755 scripts/reset_test_data.py
+
+USER appuser
+
+FROM base AS runtime
 
 USER appuser
 

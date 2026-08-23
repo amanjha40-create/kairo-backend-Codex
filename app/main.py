@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -15,8 +15,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.api.v1.router import api_router
 from app.config import get_settings
 from app.db.session import dispose_engine
-from app.infrastructure.redis import close_redis_client
-from app.logging import setup_logging
 from app.exceptions import AppException
 from app.exceptions.handlers import (
     app_exception_handler,
@@ -25,9 +23,11 @@ from app.exceptions.handlers import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from app.infrastructure.redis import close_redis_client
+from app.logging import setup_logging
 from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.schemas.api_errors import ApiErrorResponse
-
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     application.add_middleware(RequestContextMiddleware)
+    application.add_middleware(
+        SecurityHeadersMiddleware,
+        enable_hsts=settings.app_env.value in {"staging", "production"},
+        no_store_prefixes=(f"{settings.api_v1_prefix}/admin", f"{settings.api_v1_prefix}/auth"),
+    )
 
     application.include_router(api_router, prefix=settings.api_v1_prefix)
 
