@@ -4,9 +4,9 @@
 Redis-backed OTP challenge lifecycle while replacing the random phone challenge with a
 secret fixed value for shared internal testers.
 
-It is valid in staging by default. A controlled production pilot may explicitly enable it
-with `CONTROLLED_TESTING=true`; normal production continues to reject it. The console
-provider remains rejected in production, including controlled-testing mode.
+It is valid only in staging. Production rejects `staging_fixed`, `CONTROLLED_TESTING=true`,
+and the presence of `STAGING_PHONE_OTP_CODE`. Production must use the canonical SNS transport
+when phone OTP is enabled.
 
 ## Required staging configuration
 
@@ -21,19 +21,6 @@ SES_FROM_EMAIL=verify@kairoid.com
 EMAIL_REPLY_TO=support@kairoid.com
 AWS_REGION=us-east-1
 ```
-
-For a controlled production pilot, additionally set:
-
-```env
-APP_ENV=production
-CONTROLLED_TESTING=true
-PHONE_OTP_BACKEND=staging_fixed
-PHONE_OTP_ENABLED=true
-```
-
-This flag must be explicit and must not be enabled for public production. It does not
-change the Candidate dual email-and-phone verification lifecycle, expiry, resend limits,
-attempt limits, or session binding.
 
 Inject these values as ECS secrets from AWS Secrets Manager:
 

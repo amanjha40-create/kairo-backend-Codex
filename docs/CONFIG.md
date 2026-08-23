@@ -26,7 +26,7 @@ Variable names are **case-insensitive** and map to fields via **`validation_alia
 |-------|-----------|
 | `development` | Default; relaxed JWT length beyond global minimum |
 | `staging` | Same validation as development unless you extend `Settings` |
-| `production` | **JWT_SECRET_KEY** must be **≥ 48 characters** |
+| `production` | Fails closed unless DB/Redis TLS, HTTPS origins, explicit CORS/trusted hosts, immutable provenance, SQS jobs, production OTP, and disabled development surfaces are configured |
 | `test` | Used by pytest (`tests/conftest.py`) |
 
 ## Observability

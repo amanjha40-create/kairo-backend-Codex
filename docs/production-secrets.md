@@ -32,11 +32,11 @@ Store production secrets in a proper secret manager such as AWS Secrets Manager 
 
 | Variable | Required | Used by | Notes |
 |---|---|---|---|
-| `EMAIL_BACKEND` | Yes | API, worker | Use `ses` for production delivery. This is not secret. |
+| `EMAIL_BACKEND` | Yes | API, worker | Use the approved production provider (`brevo` currently). This is not secret. |
 | `EMAIL_SEND_ENABLED` | Yes | API, worker | Must be `true` to permit external delivery. This is not secret. |
 | `EMAIL_FROM` | Yes | API, worker | Existing sender setting; use `verify@kairoid.com`. This is not secret. |
 | `EMAIL_REPLY_TO` | Yes | API, worker | Support reply address; use `support@kairoid.com`. This is not secret. |
-| `SES_FROM_EMAIL` | Yes | API, worker | SES-verified sender; use `verify@kairoid.com`. This is not secret. |
+| `BREVO_API_KEY` | When `EMAIL_BACKEND=brevo` | API, worker | Store only in the production Secrets Manager namespace. |
 | `AWS_REGION` | Yes | API, worker | SES identity region; use `us-east-1`. This is not secret. |
 
 SES does not require SMTP credentials. Grant the ECS API and worker task roles the minimum
@@ -107,14 +107,19 @@ These are not secrets, but they matter for safe production operation:
 
 - `APP_ENV=production`
 - `DOCS_ENABLED=false`
-- `EMAIL_BACKEND=ses`
+- `EMAIL_BACKEND=brevo`
 - `EMAIL_SEND_ENABLED=true`
 - `EMAIL_REPLY_TO=support@kairoid.com`
-- `SES_FROM_EMAIL=verify@kairoid.com`
 - `AWS_REGION=us-east-1`
-- `APP_PUBLIC_BASE_URL=https://api.kairo.example`
-- `CORS_ORIGINS=https://app.kairo.example`
-- `TRUSTED_HOSTS=api.kairo.example`
+- `APP_PUBLIC_BASE_URL=https://api.kairoid.com`
+- `ADMIN_PORTAL_BASE_URL=https://admin.kairoid.com`
+- `CORS_ORIGINS` includes `https://admin.kairoid.com`
+- `TRUSTED_HOSTS=api.kairoid.com`
+- `PHONE_OTP_BACKEND=sns`
+- `CONTROLLED_TESTING=false`
+- `JOB_BACKEND=sqs`
+
+Never inject `STAGING_PHONE_OTP_CODE` or any `kairo/staging/*` secret reference into a production task.
 
 ## Minimum Deployment Requirement
 

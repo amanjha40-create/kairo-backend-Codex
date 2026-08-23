@@ -2,7 +2,7 @@
 
 This document describes the non-secret production environment shape for the current FastAPI backend.
 
-Use it together with [production-secrets.md](/Users/Aman/Documents/New%20project/kiaro-backend-main/docs/production-secrets.md).
+Use it together with [production-secrets.md](production-secrets.md).
 
 ## Production Rules
 
@@ -11,6 +11,8 @@ Use it together with [production-secrets.md](/Users/Aman/Documents/New%20project
 - Do not run with `DOCS_ENABLED=true` in production.
 - Run database migrations before serving traffic.
 - Run the SQS worker in production if async jobs are enabled.
+- Set immutable Git/build provenance on every task revision.
+- Use SNS for phone OTP; fixed or console OTP providers are forbidden.
 
 ## Recommended Production Variables
 
@@ -20,6 +22,9 @@ These values are examples and are intentionally placeholders.
 APP_ENV=production
 APP_NAME=kairo-backend
 APP_VERSION=0.1.0
+APP_GIT_SHA=<full-40-character-release-sha>
+APP_BUILD_ID=<immutable-release-build-id>
+APP_DEPLOYED_AT=<ISO-8601-UTC-timestamp>
 API_V1_PREFIX=/api/v1
 HOST=0.0.0.0
 PORT=8000
@@ -28,11 +33,10 @@ LOG_LEVEL=INFO
 LOG_JSON=true
 LOG_ACCESS_ENABLED=true
 
-EMAIL_BACKEND=ses
+EMAIL_BACKEND=brevo
 EMAIL_SEND_ENABLED=true
 EMAIL_FROM=verify@kairoid.com
 EMAIL_REPLY_TO=support@kairoid.com
-SES_FROM_EMAIL=verify@kairoid.com
 AWS_REGION=us-east-1
 
 DATABASE_POOL_SIZE=20
@@ -55,8 +59,9 @@ SIGNUP_OTP_MAX_VERIFY_ATTEMPTS=5
 SIGNUP_OTP_MAX_SENDS_PER_HOUR=5
 SIGNUP_PENDING_TTL_HOURS=24
 
-APP_PUBLIC_BASE_URL=https://api.kairo.example
-EMPLOYER_PORTAL_BASE_URL=https://app.kairo.example
+APP_PUBLIC_BASE_URL=https://api.kairoid.com
+EMPLOYER_PORTAL_BASE_URL=https://app.kairoid.com
+ADMIN_PORTAL_BASE_URL=https://admin.kairoid.com
 EMPLOYER_VERIFICATION_TOKEN_TTL_HOURS=168
 
 S3_PRESIGNED_PUT_TTL_SECONDS=600
@@ -67,10 +72,12 @@ EMPLOYMENT_MAX_UPLOAD_BYTES=15000000
 SQS_RECEIVE_WAIT_SECONDS=20
 SQS_MAX_MESSAGES_PER_POLL=10
 
-CORS_ORIGINS=https://app.kairo.example
+CORS_ORIGINS=https://app.kairoid.com,https://admin.kairoid.com,https://hr.kairoid.com,https://institution.kairoid.com
 CORS_ALLOW_CREDENTIALS=false
 DOCS_ENABLED=false
-TRUSTED_HOSTS=api.kairo.example
+TRUSTED_HOSTS=api.kairoid.com
+JOB_BACKEND=sqs
+SQS_MAIN_QUEUE_URL=<production-main-queue-url>
 ```
 
 ## Variables That Must Point to HTTPS Hosts
@@ -123,6 +130,8 @@ Before promoting a release:
 7. Confirm `S3_DOCUMENTS_BUCKET` is private and available.
 8. Confirm `SQS_MAIN_QUEUE_URL` is set if the worker is expected to process jobs.
 9. Run `alembic upgrade head` before serving traffic.
+10. Confirm `APP_GIT_SHA`, `APP_BUILD_ID`, and `APP_DEPLOYED_AT` identify the immutable release.
+11. Confirm `PHONE_OTP_BACKEND=sns`, `CONTROLLED_TESTING=false`, and no staging OTP secret is injected.
 
 ## Short-Term Token Strategy
 
