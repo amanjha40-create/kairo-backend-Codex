@@ -12,3 +12,10 @@ def test_default_docker_stage_excludes_tests_and_qa_scripts() -> None:
     assert "requirements-dev.txt" not in runtime_stage
     assert "FROM base AS runtime" in dockerfile
     assert 'CMD ["gunicorn"' in runtime_stage
+
+
+def test_docker_context_excludes_python_bytecode_caches() -> None:
+    dockerignore = Path(".dockerignore").read_text(encoding="utf-8")
+
+    assert "**/__pycache__" in dockerignore.splitlines()
+    assert "**/*.py[cod]" in dockerignore.splitlines()
