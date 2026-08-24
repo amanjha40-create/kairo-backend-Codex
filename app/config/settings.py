@@ -880,22 +880,16 @@ class Settings(BaseSettings):
         password: SecretStr | None,
         sslmode: str | None,
         label: str,
-        allow_runtime_fallback: bool = False,
     ) -> str:
-        if url_value and any(
-            value is not None for value in (host, port, database, username, password, sslmode)
-        ):
-            raise ValueError(f"{label} must use either a URL or structured fields, not both.")
-
-        if url_value:
-            return url_value
+        resolved_password = password.get_secret_value() if password is not None else None
 
         components = {
             "host": host,
             "port": port,
             "database": database,
             "username": username,
-            "password": password.get_secret_value() if password is not None else None,
+            "password": resolved_password,
+            "sslmode": sslmode,
         }
         provided = {name for name, value in components.items() if value not in (None, "")}
         required = set(components)
@@ -912,15 +906,13 @@ class Settings(BaseSettings):
                 host=components["host"] or "",
                 port=int(components["port"] or 5432),
                 database=components["database"] or "",
-                sslmode=sslmode,
+                sslmode=components["sslmode"] or None,
             )
 
-        if allow_runtime_fallback:
-            return self.runtime_database_url
+        if url_value:
+            return url_value
 
-        raise ValueError(
-            f"{label} is required. Set either the URL or the complete structured field set."
-        )
+        raise ValueError(f"{label} is required. Set the URL or the complete structured field set.")
 
     @property
     def is_production(self) -> bool:
@@ -950,7 +942,6 @@ class Settings(BaseSettings):
             password=self.migration_database_password,
             sslmode=self.migration_database_sslmode,
             label="migration database configuration",
-            allow_runtime_fallback=True,
         )
 
     @property

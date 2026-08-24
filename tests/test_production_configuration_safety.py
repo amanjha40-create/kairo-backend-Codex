@@ -57,6 +57,21 @@ def test_structured_runtime_database_configuration_is_accepted() -> None:
     assert "@db.internal:5432/kairo?sslmode=require" in settings.runtime_database_url
 
 
+def test_structured_runtime_database_configuration_wins_over_legacy_url() -> None:
+    settings = production_settings(
+        database_host="db.internal",
+        database_port=5432,
+        database_name="kairo",
+        database_user="kairo_app",
+        database_password="structured-secret",
+        database_sslmode="require",
+    )
+
+    assert "kairo_app" in settings.runtime_database_url
+    assert "structured-secret" in settings.runtime_database_url
+    assert "kairo:secret" not in settings.runtime_database_url
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -82,16 +97,6 @@ def test_structured_runtime_database_configuration_is_accepted() -> None:
         ({"database_echo_sql": True}, "DATABASE_ECHO_SQL"),
         ({"log_level": "DEBUG"}, "LOG_LEVEL"),
         ({"email_dev_log_secrets": True}, "EMAIL_DEV_LOG_SECRETS"),
-        (
-            {
-                "database_host": "db.internal",
-                "database_port": 5432,
-                "database_name": "kairo",
-                "database_user": "kairo_app",
-                "database_password": "structured-secret",
-            },
-            "either a URL or structured fields",
-        ),
         (
             {
                 "database_url": None,
