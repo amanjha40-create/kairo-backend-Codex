@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 
 def _sync_database_url() -> str:
     settings = get_settings()
-    return build_sync_database_url(settings.database_url)
+    return build_sync_database_url(settings.migration_database_url_effective)
 
 
 def run_migrations_offline() -> None:

@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.db.url import redact_connection_secrets
 from app.exceptions import (
     AppException,
     ConflictError,
@@ -26,7 +27,12 @@ from app.exceptions import (
 logger = logging.getLogger(__name__)
 
 
-def _error_body(code: str, message: str, *, details: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _error_body(
+    code: str,
+    message: str,
+    *,
+    details: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     body: dict[str, Any] = {"error": {"code": code, "message": message}}
     if details:
         body["error"]["details"] = details
@@ -101,7 +107,11 @@ async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSO
 async def sqlalchemy_exception_handler(_: Request, exc: SQLAlchemyError) -> JSONResponse:
     """Do not leak DB internals — log server-side."""
 
-    logger.exception("Database error: %s", exc)
+    logger.error(
+        "Database error [%s]:\n%s",
+        exc.__class__.__name__,
+        _redacted_traceback(exc),
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=_error_body("internal_error", "A database error occurred"),
@@ -109,8 +119,17 @@ async def sqlalchemy_exception_handler(_: Request, exc: SQLAlchemyError) -> JSON
 
 
 async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled error: %s\n%s", exc, traceback.format_exc())
+    logger.error(
+        "Unhandled error [%s]:\n%s",
+        exc.__class__.__name__,
+        _redacted_traceback(exc),
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=_error_body("internal_error", "An unexpected error occurred"),
     )
+
+
+def _redacted_traceback(exc: Exception) -> str:
+    formatted = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return redact_connection_secrets(formatted)

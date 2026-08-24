@@ -20,6 +20,36 @@ Runtime configuration follows **twelve-factor**: one canonical `Settings` object
 
 Variable names are **case-insensitive** and map to fields via **`validation_alias`** (e.g. `DATABASE_URL` → `database_url`).
 
+## Database credential resolution
+
+Runtime and migration DB settings now support two mutually exclusive styles:
+
+1. A single DSN:
+   - `DATABASE_URL`
+   - optional `MIGRATION_DATABASE_URL`
+2. Structured secret fields:
+   - `DATABASE_HOST`
+   - `DATABASE_PORT`
+   - `DATABASE_NAME`
+   - `DATABASE_USER`
+   - `DATABASE_PASSWORD`
+   - optional `DATABASE_SSLMODE`
+   - optional migration equivalents prefixed with `MIGRATION_`
+
+Rules:
+
+- Runtime must use exactly one style.
+- Migration must use exactly one style when explicitly configured.
+- Mixed URL + structured fields fail closed at startup.
+- Incomplete structured DB fields fail closed at startup.
+- When migration settings are omitted, Alembic falls back to the resolved runtime DB settings.
+
+Preferred production direction:
+
+- runtime uses a dedicated least-privileged application identity from one canonical structured secret
+- migration tooling uses a separate privileged migration identity
+- URL-based credentials remain supported for local development and controlled transition periods
+
 ## Environment (`APP_ENV`)
 
 | Value | Behaviour |
@@ -64,3 +94,15 @@ Wire **`send_json_message`** / **`python -m app.workers.sqs_worker`** in your de
 1. Add a typed field to **`app/config/settings.py`** with `Field(..., validation_alias=AliasChoices("MY_NEW_VAR"))`.
 2. Document it in **`.env.example`** and this file.
 3. If tests patch env vars, call **`reload_settings()`** in the fixture after updating `os.environ`.
+
+## Secret-safe error handling
+
+Database and unhandled exception logging must preserve enough context to debug startup and readiness failures without emitting credential-bearing values.
+
+Current guarantees:
+
+- DSNs in tracebacks are redacted before logging.
+- password-like key/value pairs are redacted before logging.
+- production validation still reports actionable categories such as missing TLS, loopback hosts, or mixed DB config styles.
+
+See **`docs/LOGGING.md`** and **`DB_CREDENTIAL_ROTATION_RUNBOOK.md`** for operational guidance.

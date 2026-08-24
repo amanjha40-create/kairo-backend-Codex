@@ -39,6 +39,22 @@ def test_explicit_production_dependencies_are_accepted() -> None:
     settings = production_settings()
 
     assert settings.app_env == "production"
+    assert settings.runtime_database_url.startswith("postgresql+asyncpg://")
+
+
+def test_structured_runtime_database_configuration_is_accepted() -> None:
+    settings = production_settings(
+        database_url=None,
+        database_host="db.internal",
+        database_port=5432,
+        database_name="kairo",
+        database_user="kairo_app",
+        database_password="structured-secret",
+        database_sslmode="require",
+    )
+
+    assert "kairo_app" in settings.runtime_database_url
+    assert "@db.internal:5432/kairo?sslmode=require" in settings.runtime_database_url
 
 
 @pytest.mark.parametrize(
@@ -66,6 +82,26 @@ def test_explicit_production_dependencies_are_accepted() -> None:
         ({"database_echo_sql": True}, "DATABASE_ECHO_SQL"),
         ({"log_level": "DEBUG"}, "LOG_LEVEL"),
         ({"email_dev_log_secrets": True}, "EMAIL_DEV_LOG_SECRETS"),
+        (
+            {
+                "database_host": "db.internal",
+                "database_port": 5432,
+                "database_name": "kairo",
+                "database_user": "kairo_app",
+                "database_password": "structured-secret",
+            },
+            "either a URL or structured fields",
+        ),
+        (
+            {
+                "database_url": None,
+                "database_host": "db.internal",
+                "database_port": 5432,
+                "database_name": "kairo",
+                "database_user": "kairo_app",
+            },
+            "structured fields are incomplete",
+        ),
         ({"job_backend": "inline"}, "JOB_BACKEND"),
         ({"sqs_main_queue_url": None}, "SQS_MAIN_QUEUE_URL"),
         ({"app_git_sha": "short"}, "APP_GIT_SHA"),

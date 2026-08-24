@@ -24,7 +24,9 @@ _echo_sql = (
     else (settings.app_env == AppEnvironment.DEVELOPMENT)
 )
 
-_async_database_url, _async_connect_args = build_async_database_config(settings.database_url)
+_async_database_url, _async_connect_args = build_async_database_config(
+    settings.runtime_database_url
+)
 
 engine: AsyncEngine = create_async_engine(
     _async_database_url,

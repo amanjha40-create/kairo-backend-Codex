@@ -36,8 +36,25 @@ LOG_ACCESS_ENABLED=true
 EMAIL_BACKEND=brevo
 EMAIL_SEND_ENABLED=true
 EMAIL_FROM=verify@kairoid.com
-EMAIL_REPLY_TO=support@kairoid.com
+EMAIL_REPLY_TO=verify@kairoid.com
 AWS_REGION=us-east-1
+
+DATABASE_HOST=<runtime-db-hostname>
+DATABASE_PORT=5432
+DATABASE_NAME=kairo
+DATABASE_USER=<runtime-db-username>
+DATABASE_SSLMODE=require
+
+# Inject the runtime password as a secret, not plain env text:
+# DATABASE_PASSWORD=<runtime-db-password>
+
+# If migrations use a separate identity, wire them only into the migration task:
+# MIGRATION_DATABASE_HOST=<migration-db-hostname>
+# MIGRATION_DATABASE_PORT=5432
+# MIGRATION_DATABASE_NAME=kairo
+# MIGRATION_DATABASE_USER=<migration-db-username>
+# MIGRATION_DATABASE_SSLMODE=require
+# MIGRATION_DATABASE_PASSWORD=<migration-db-password>
 
 DATABASE_POOL_SIZE=20
 DATABASE_MAX_OVERFLOW=20
@@ -97,7 +114,12 @@ Do not use:
 The worker should receive the same infrastructure connectivity configuration as the API where relevant:
 
 - `APP_ENV`
-- `DATABASE_URL`
+- `DATABASE_HOST`
+- `DATABASE_PORT`
+- `DATABASE_NAME`
+- `DATABASE_USER`
+- `DATABASE_PASSWORD`
+- `DATABASE_SSLMODE`
 - `REDIS_URL`
 - `AWS_REGION`
 - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` or IAM role
@@ -126,12 +148,14 @@ Before promoting a release:
 3. Confirm `APP_PUBLIC_BASE_URL` is an HTTPS hostname, not a raw IP.
 4. Confirm `TRUSTED_HOSTS` contains the production API hostname.
 5. Confirm the API and worker IAM roles can call SES and `EMAIL_BACKEND=ses`.
-6. Confirm `SES_FROM_EMAIL=verify@kairoid.com` and the SES identity is verified in `AWS_REGION`.
+6. Confirm `BREVO_API_KEY` is present when `EMAIL_BACKEND=brevo`, or the approved provider-specific credential exists for the selected backend.
 7. Confirm `S3_DOCUMENTS_BUCKET` is private and available.
 8. Confirm `SQS_MAIN_QUEUE_URL` is set if the worker is expected to process jobs.
 9. Run `alembic upgrade head` before serving traffic.
 10. Confirm `APP_GIT_SHA`, `APP_BUILD_ID`, and `APP_DEPLOYED_AT` identify the immutable release.
 11. Confirm `PHONE_OTP_BACKEND=sns`, `CONTROLLED_TESTING=false`, and no staging OTP secret is injected.
+12. Confirm runtime DB settings come from the canonical application secret only and are not a copied mirror of the RDS master secret.
+13. Confirm migration DB settings, if separate, are not injected into the steady-state API or worker service.
 
 ## Short-Term Token Strategy
 
