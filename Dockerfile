@@ -37,6 +37,12 @@ USER appuser
 
 FROM base AS runtime
 
+USER root
+
+# Perl is inherited from the slim base but not used by the Kairo runtime.
+RUN apt-get purge -y --allow-remove-essential perl-base \
+    && rm -rf /var/lib/apt/lists/*
+
 USER appuser
 
 EXPOSE 8000
