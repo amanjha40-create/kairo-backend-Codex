@@ -10,7 +10,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.v1.router import api_router
 from app.config import get_settings
@@ -27,6 +26,7 @@ from app.infrastructure.redis import close_redis_client
 from app.logging import setup_logging
 from app.middleware.request_context import RequestContextMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.trusted_host import HealthAwareTrustedHostMiddleware
 from app.schemas.api_errors import ApiErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,10 @@ def create_app() -> FastAPI:
     application.add_exception_handler(Exception, unhandled_exception_handler)
 
     if settings.trusted_hosts:
-        application.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
+        application.add_middleware(
+            HealthAwareTrustedHostMiddleware,
+            allowed_hosts=settings.trusted_hosts,
+        )
 
     origins = settings.cors_origins if settings.cors_origins else ["*"]
     application.add_middleware(
