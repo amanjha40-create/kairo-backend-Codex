@@ -106,15 +106,6 @@ def _hash_password(plain: str) -> str:
     return hash_password(plain)
 
 
-@pytest.fixture(autouse=True)
-async def _dispose_async_engine_between_tests() -> None:
-    yield
-
-    from app.db.session import dispose_engine
-
-    await dispose_engine()
-
-
 async def _candidate_user():
     from app.api.dependencies.auth import CurrentUser
 

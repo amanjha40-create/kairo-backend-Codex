@@ -23,6 +23,17 @@ from app.config import reload_settings  # noqa: E402
 reload_settings()
 
 
+@pytest.fixture(autouse=True)
+async def _dispose_async_engine_between_tests() -> None:
+    """Prevent pooled asyncpg connections from leaking across per-test event loops."""
+
+    yield
+
+    from app.db.session import dispose_engine
+
+    await dispose_engine()
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
