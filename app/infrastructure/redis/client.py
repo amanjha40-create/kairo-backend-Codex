@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 
 import redis.asyncio as aioredis
+from app.config import get_settings
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-
-from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +38,16 @@ async def close_redis_client() -> None:
 
     global _client
     if _client is not None:
-        await _client.aclose()
+        client = _client
         _client = None
-        logger.info("Redis client pool closed")
+        try:
+            await client.aclose()
+        except RuntimeError as exc:
+            if "Event loop is closed" not in str(exc):
+                raise
+            logger.warning("Redis client pool closed after event loop shutdown")
+        else:
+            logger.info("Redis client pool closed")
 
 
 async def ping_redis() -> bool:

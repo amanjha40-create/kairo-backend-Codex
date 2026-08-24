@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.config.settings import AppEnvironment
@@ -24,17 +25,24 @@ _echo_sql = (
     else (settings.app_env == AppEnvironment.DEVELOPMENT)
 )
 
-_async_database_url, _async_connect_args = build_async_database_config(settings.database_url)
-
-engine: AsyncEngine = create_async_engine(
-    _async_database_url,
-    connect_args=_async_connect_args,
-    pool_pre_ping=True,
-    pool_size=settings.database_pool_size,
-    max_overflow=settings.database_max_overflow,
-    pool_timeout=settings.database_pool_timeout,
-    echo=_echo_sql,
+_async_database_url, _async_connect_args = build_async_database_config(
+    settings.runtime_database_url
 )
+
+_engine_kwargs = {
+    "connect_args": _async_connect_args,
+    "pool_pre_ping": True,
+    "echo": _echo_sql,
+}
+if settings.app_env == AppEnvironment.TEST:
+    # Function-scoped asyncio test loops cannot safely share pooled asyncpg connections.
+    _engine_kwargs["poolclass"] = NullPool
+else:
+    _engine_kwargs["pool_size"] = settings.database_pool_size
+    _engine_kwargs["max_overflow"] = settings.database_max_overflow
+    _engine_kwargs["pool_timeout"] = settings.database_pool_timeout
+
+engine: AsyncEngine = create_async_engine(_async_database_url, **_engine_kwargs)
 
 async_session_factory = async_sessionmaker(
     engine,

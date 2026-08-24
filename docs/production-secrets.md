@@ -19,7 +19,20 @@ Store production secrets in a proper secret manager such as AWS Secrets Manager 
 
 | Variable | Required | Used by | Notes |
 |---|---|---|---|
-| `DATABASE_URL` | Yes | API, worker | Production Postgres DSN using `postgresql+asyncpg://` |
+| `DATABASE_HOST` | Yes | API, worker | Runtime database host for the canonical application credential. |
+| `DATABASE_PORT` | Yes | API, worker | Runtime database port. |
+| `DATABASE_NAME` | Yes | API, worker | Runtime database name. |
+| `DATABASE_USER` | Yes | API, worker | Dedicated least-privileged runtime DB identity (preferred: `kairo_app` or equivalent). |
+| `DATABASE_PASSWORD` | Yes | API, worker | Canonical runtime DB password. |
+| `DATABASE_SSLMODE` | Recommended | API, worker | Use `require` or stricter in production. |
+| `DATABASE_URL` | Transitional only | API, worker | Supported for controlled transition periods, but not preferred for the steady state. |
+| `MIGRATION_DATABASE_HOST` | Recommended | deployment migration task | Separate migration DB host when using a privileged migration identity. |
+| `MIGRATION_DATABASE_PORT` | Recommended | deployment migration task | Migration DB port. |
+| `MIGRATION_DATABASE_NAME` | Recommended | deployment migration task | Migration DB name. |
+| `MIGRATION_DATABASE_USER` | Recommended | deployment migration task | Privileged migration DB identity. |
+| `MIGRATION_DATABASE_PASSWORD` | Recommended | deployment migration task | Migration DB password. |
+| `MIGRATION_DATABASE_SSLMODE` | Recommended | deployment migration task | Use `require` or stricter in production. |
+| `MIGRATION_DATABASE_URL` | Transitional only | deployment migration task | Optional DSN form for migration automation if structured fields are not yet wired. |
 | `JWT_SECRET_KEY` | Yes | API | Use a long random value. Production should use at least 48 characters. |
 
 ### Redis
@@ -35,7 +48,7 @@ Store production secrets in a proper secret manager such as AWS Secrets Manager 
 | `EMAIL_BACKEND` | Yes | API, worker | Use the approved production provider (`brevo` currently). This is not secret. |
 | `EMAIL_SEND_ENABLED` | Yes | API, worker | Must be `true` to permit external delivery. This is not secret. |
 | `EMAIL_FROM` | Yes | API, worker | Existing sender setting; use `verify@kairoid.com`. This is not secret. |
-| `EMAIL_REPLY_TO` | Yes | API, worker | Support reply address; use `support@kairoid.com`. This is not secret. |
+| `EMAIL_REPLY_TO` | Yes | API, worker | Reply-to address; use `verify@kairoid.com`. This is not secret. |
 | `BREVO_API_KEY` | When `EMAIL_BACKEND=brevo` | API, worker | Store only in the production Secrets Manager namespace. |
 | `AWS_REGION` | Yes | API, worker | SES identity region; use `us-east-1`. This is not secret. |
 
@@ -96,10 +109,25 @@ Set only the providers you actually enable.
 
 ## Recommended Secret Handling
 
+### Target database secret architecture
+
+- Runtime application secret:
+  - one canonical secret only
+  - structured DB fields preferred over an opaque DSN
+  - read by API and worker runtime only
+- Migration secret:
+  - separate privileged identity where practical
+  - read only by deployment / migration automation
+- RDS-managed master secret:
+  - reserved for database administration and recovery
+  - not duplicated into the runtime application secret
+- Do not keep the runtime application password as an independently copied mirror of the RDS master password.
+
 - Prefer IAM roles over static AWS credentials.
-- Keep `DATABASE_URL`, `JWT_SECRET_KEY`, static AWS credentials, and OAuth secrets out of `.env.example`.
+- Keep DB passwords, JWT secrets, static AWS credentials, and OAuth secrets out of `.env.example`.
 - Restrict who can read production secrets.
 - Audit access to secret stores.
+- Scope ECS runtime secret access to the exact secret ARNs required by the service.
 
 ## Production-Safe Defaults to Pair With Secrets
 
@@ -109,7 +137,7 @@ These are not secrets, but they matter for safe production operation:
 - `DOCS_ENABLED=false`
 - `EMAIL_BACKEND=brevo`
 - `EMAIL_SEND_ENABLED=true`
-- `EMAIL_REPLY_TO=support@kairoid.com`
+- `EMAIL_REPLY_TO=verify@kairoid.com`
 - `AWS_REGION=us-east-1`
 - `APP_PUBLIC_BASE_URL=https://api.kairoid.com`
 - `ADMIN_PORTAL_BASE_URL=https://admin.kairoid.com`
@@ -120,6 +148,16 @@ These are not secrets, but they matter for safe production operation:
 - `JOB_BACKEND=sqs`
 
 Never inject `STAGING_PHONE_OTP_CODE` or any `kairo/staging/*` secret reference into a production task.
+
+## Rotation Safety Notes
+
+- Rotation is not complete when a secret value changes; it is complete only after:
+  - a fresh connection with the new credential succeeds
+  - a new ECS task revision starts with the new secret
+  - `/api/v1/health/ready` passes
+  - the new task reaches steady-state health behind the load balancer
+- Database-related exception logs must redact passwords and credential-bearing DSNs before they reach CloudWatch.
+- Runtime and migration identities should be rotated independently when they are separate principals.
 
 ## Minimum Deployment Requirement
 

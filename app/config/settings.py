@@ -16,6 +16,12 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.db.url import (
+    SUPPORTED_MIGRATION_DRIVERS,
+    SUPPORTED_RUNTIME_DRIVER,
+    build_database_url,
+)
+
 
 class AppEnvironment(StrEnum):
     """Deployment slice — drives stricter validation in production."""
@@ -97,10 +103,58 @@ class Settings(BaseSettings):
     )
 
     # --- Database (async SQLAlchemy runtime) ---
-    database_url: str = Field(
-        ...,
+    database_url: str | None = Field(
+        default=None,
         description="postgresql+asyncpg://user:pass@host:5432/dbname",
         validation_alias=AliasChoices("DATABASE_URL"),
+    )
+    database_host: str | None = Field(default=None, validation_alias=AliasChoices("DATABASE_HOST"))
+    database_port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        validation_alias=AliasChoices("DATABASE_PORT"),
+    )
+    database_name: str | None = Field(default=None, validation_alias=AliasChoices("DATABASE_NAME"))
+    database_user: str | None = Field(default=None, validation_alias=AliasChoices("DATABASE_USER"))
+    database_password: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_PASSWORD"),
+    )
+    database_sslmode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_SSLMODE"),
+    )
+    migration_database_url: str | None = Field(
+        default=None,
+        description="Optional migration-only DSN; when unset, migrations use runtime DB config",
+        validation_alias=AliasChoices("MIGRATION_DATABASE_URL"),
+    )
+    migration_database_host: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MIGRATION_DATABASE_HOST"),
+    )
+    migration_database_port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        validation_alias=AliasChoices("MIGRATION_DATABASE_PORT"),
+    )
+    migration_database_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MIGRATION_DATABASE_NAME"),
+    )
+    migration_database_user: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MIGRATION_DATABASE_USER"),
+    )
+    migration_database_password: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MIGRATION_DATABASE_PASSWORD"),
+    )
+    migration_database_sslmode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MIGRATION_DATABASE_SSLMODE"),
     )
     database_pool_size: int = Field(
         default=10,
@@ -529,10 +583,23 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def validate_async_pg_url(cls, v: str) -> str:
+    def validate_async_pg_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         lowered = v.lower()
-        if "+asyncpg" not in lowered and "asyncpg" not in lowered:
-            msg = "database_url must use asyncpg driver, e.g. postgresql+asyncpg://..."
+        if not lowered.startswith(f"{SUPPORTED_RUNTIME_DRIVER}://"):
+            msg = f"database_url must use {SUPPORTED_RUNTIME_DRIVER}://..."
+            raise ValueError(msg)
+        return v
+
+    @field_validator("migration_database_url")
+    @classmethod
+    def validate_migration_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        lowered = v.lower()
+        if not any(lowered.startswith(f"{driver}://") for driver in SUPPORTED_MIGRATION_DRIVERS):
+            msg = "migration_database_url must use postgresql+asyncpg:// or postgresql+psycopg://"
             raise ValueError(msg)
         return v
 
@@ -649,6 +716,8 @@ class Settings(BaseSettings):
         if not isclose(weights_total, 1.0, abs_tol=1e-6):
             raise ValueError("TRUST_SCORE_*_WEIGHT values must sum to exactly 1.0")
 
+        runtime_database_url = self.runtime_database_url
+
         if self.app_env == AppEnvironment.PRODUCTION:
             if len(self.jwt_secret_key) < 48:
                 msg = "JWT_SECRET_KEY must be at least 48 characters in APP_ENV=production."
@@ -673,9 +742,9 @@ class Settings(BaseSettings):
                     "PHONE_OTP_BACKEND must be sns in APP_ENV=production "
                     "when PHONE_OTP_ENABLED=true."
                 )
-            if _is_loopback_url(self.database_url):
+            if _is_loopback_url(runtime_database_url):
                 raise ValueError("DATABASE_URL must not use a loopback host in APP_ENV=production.")
-            if not _database_uses_tls(self.database_url):
+            if not _database_uses_tls(runtime_database_url):
                 raise ValueError("DATABASE_URL must require TLS in APP_ENV=production.")
             if _is_loopback_url(self.redis_url):
                 raise ValueError("REDIS_URL must not use a loopback host in APP_ENV=production.")
@@ -800,9 +869,89 @@ class Settings(BaseSettings):
 
         return self
 
+    def _resolve_database_url(
+        self,
+        *,
+        url_value: str | None,
+        host: str | None,
+        port: int | None,
+        database: str | None,
+        username: str | None,
+        password: SecretStr | None,
+        sslmode: str | None,
+        label: str,
+        allow_runtime_fallback: bool = False,
+    ) -> str:
+        if url_value and any(
+            value is not None for value in (host, port, database, username, password, sslmode)
+        ):
+            raise ValueError(f"{label} must use either a URL or structured fields, not both.")
+
+        if url_value:
+            return url_value
+
+        components = {
+            "host": host,
+            "port": port,
+            "database": database,
+            "username": username,
+            "password": password.get_secret_value() if password is not None else None,
+        }
+        provided = {name for name, value in components.items() if value not in (None, "")}
+        required = set(components)
+
+        if provided:
+            missing = sorted(required - provided)
+            if missing:
+                joined = ", ".join(missing)
+                raise ValueError(f"{label} structured fields are incomplete: missing {joined}.")
+            return build_database_url(
+                drivername=SUPPORTED_RUNTIME_DRIVER,
+                username=components["username"] or "",
+                password=components["password"] or "",
+                host=components["host"] or "",
+                port=int(components["port"] or 5432),
+                database=components["database"] or "",
+                sslmode=sslmode,
+            )
+
+        if allow_runtime_fallback:
+            return self.runtime_database_url
+
+        raise ValueError(
+            f"{label} is required. Set either the URL or the complete structured field set."
+        )
+
     @property
     def is_production(self) -> bool:
         return self.app_env == AppEnvironment.PRODUCTION
+
+    @property
+    def runtime_database_url(self) -> str:
+        return self._resolve_database_url(
+            url_value=self.database_url,
+            host=self.database_host,
+            port=self.database_port,
+            database=self.database_name,
+            username=self.database_user,
+            password=self.database_password,
+            sslmode=self.database_sslmode,
+            label="runtime database configuration",
+        )
+
+    @property
+    def migration_database_url_effective(self) -> str:
+        return self._resolve_database_url(
+            url_value=self.migration_database_url,
+            host=self.migration_database_host,
+            port=self.migration_database_port,
+            database=self.migration_database_name,
+            username=self.migration_database_user,
+            password=self.migration_database_password,
+            sslmode=self.migration_database_sslmode,
+            label="migration database configuration",
+            allow_runtime_fallback=True,
+        )
 
     @property
     def cors_effective_allow_credentials(self) -> bool:
