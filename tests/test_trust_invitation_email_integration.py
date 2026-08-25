@@ -140,7 +140,8 @@ class FailingOrganizationPersonService:
 
 
 @pytest.mark.asyncio
-async def test_create_trust_invitation_dispatches_notification_without_changing_response_shape() -> None:
+async def test_create_trust_invitation_dispatches_notification_without_changing_response_shape(
+) -> None:
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
@@ -172,6 +173,8 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
     assert "/api/v1/" not in response.invitation_url
     assert response.subject_email == "aman3@test.com"
     assert response.status == TrustInvitationStatus.PENDING
+    assert response.delivery_state.value == "queued"
+    assert response.sent_at is None
     assert len(notifications.calls) == 1
     request = notifications.calls[0]["request"]
     assert isinstance(request, NotificationRequest)
@@ -212,6 +215,49 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
     assert response.status == TrustInvitationStatus.PENDING
     assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
     assert "/api/v1/" not in response.invitation_url
+
+
+@pytest.mark.asyncio
+async def test_public_lookup_records_opened_without_mutating_delivery_state() -> None:
+    session = FakeSession()
+    organization = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000100"),
+        public_id=UUID("00000000-0000-0000-0000-000000000101"),
+        name="Kairo Verification Ops",
+    )
+    repo = FakeTrustInvitationRepository(organization)
+    service = TrustInvitationService(
+        session,  # type: ignore[arg-type]
+        _settings(),
+        repo=repo,  # type: ignore[arg-type]
+        organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
+        notifications=FakeNotificationService(),  # type: ignore[arg-type]
+        people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
+    )
+
+    response = await service.create(
+        UUID("00000000-0000-0000-0000-000000000111"),
+        organization.public_id,
+        TrustInvitationCreateRequest(
+            subject_name="Aman Jha",
+            subject_email="aman3@test.com",
+            expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+        ),
+    )
+    raw_token = response.invitation_url.rsplit("/", 1)[-1]
+
+    async def _resolve_active_token(raw_token_value: str):  # noqa: ANN001
+        assert raw_token_value == raw_token
+        return repo.invitation
+
+    service._resolve_active_token = _resolve_active_token  # type: ignore[assignment]
+
+    lookup = await service.get_public_by_token(raw_token)
+
+    assert lookup.public_id == response.public_id
+    assert repo.invitation.delivery_state.value == "queued"
+    assert repo.invitation.opened_at is not None
+    assert repo.events[-1].event_type == "opened"
 
 
 @pytest.mark.asyncio

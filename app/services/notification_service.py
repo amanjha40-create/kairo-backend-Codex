@@ -461,18 +461,19 @@ class NotificationService:
             raise
         await self._record_delivery(notification, outcome)
         self._apply_outcome(notification, outcome)
-        completion_event_type = (
-            "notification_dispatch_completed"
-            if notification.status == NotificationStatus.SENT.value
-            else "notification_dispatch_failed"
-        )
-        await self._append_event(
-            notification,
-            actor_user_id=actor_user_id,
-            event_type=completion_event_type,
-            status=notification.status,
-            metadata={"channel": notification.channel, "provider": outcome.provider},
-        )
+        completion_event_type: str | None = None
+        if notification.status == NotificationStatus.SENT.value:
+            completion_event_type = "notification_dispatch_completed"
+        elif notification.status == NotificationStatus.FAILED.value:
+            completion_event_type = "notification_dispatch_failed"
+        if completion_event_type is not None:
+            await self._append_event(
+                notification,
+                actor_user_id=actor_user_id,
+                event_type=completion_event_type,
+                status=notification.status,
+                metadata={"channel": notification.channel, "provider": outcome.provider},
+            )
 
     async def _record_delivery(
         self,

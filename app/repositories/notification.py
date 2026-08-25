@@ -152,6 +152,22 @@ class NotificationDeliveryRepository:
         await self._session.flush()
         return delivery
 
+    async def get_by_email_delivery_log_id(
+        self,
+        email_delivery_log_id: UUID,
+    ) -> NotificationDelivery | None:
+        stmt = (
+            select(NotificationDelivery)
+            .options(
+                joinedload(NotificationDelivery.email_delivery_log),
+                joinedload(NotificationDelivery.notification),
+            )
+            .where(NotificationDelivery.email_delivery_log_id == email_delivery_log_id)
+            .order_by(NotificationDelivery.created_at.desc(), NotificationDelivery.id.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_notification(self, notification_id: UUID) -> list[NotificationDelivery]:
         stmt = (
             select(NotificationDelivery)

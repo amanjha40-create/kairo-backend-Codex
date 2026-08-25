@@ -80,20 +80,28 @@ class TrustInvitationService:
             subject_email=self._normalize_email(str(payload.subject_email)),
             subject_phone=payload.subject_phone,
             purpose=payload.purpose,
-            requested_verification_types=[item.value for item in payload.requested_verification_types],
+            requested_verification_types=[
+                item.value for item in payload.requested_verification_types
+            ],
             message=payload.message,
             token_hash=hash_refresh_token(signed_token),
-            status=TrustInvitationStatus.DRAFT if payload.mode == "draft" else TrustInvitationStatus.PENDING,
+            status=(
+                TrustInvitationStatus.DRAFT
+                if payload.mode == "draft"
+                else TrustInvitationStatus.PENDING
+            ),
             delivery_method=payload.delivery_method,
             delivery_state=TrustInvitationDeliveryState.QUEUED,
             created_by_user_id=actor_user_id,
             expires_at=payload.expires_at,
-            sent_at=datetime.now(tz=UTC) if payload.mode == "send" else None,
+            sent_at=None,
         )
         await self._repo.create(invitation)
-        await self._record_event(invitation, TrustInvitationEventType.CREATED, actor_user_id=actor_user_id)
-        if payload.mode == "send":
-            await self._record_event(invitation, TrustInvitationEventType.SENT, actor_user_id=actor_user_id)
+        await self._record_event(
+            invitation,
+            TrustInvitationEventType.CREATED,
+            actor_user_id=actor_user_id,
+        )
         await self._session.commit()
 
         refreshed = await self._repo.get_by_public_id(invitation.public_id, include_events=True)
@@ -134,7 +142,10 @@ class TrustInvitationService:
         changed = await self._expire_if_needed(invitation)
         if changed:
             await self._session.commit()
-            invitation = await self._repo.get_by_public_id(invitation_public_id, include_events=True)
+            invitation = await self._repo.get_by_public_id(
+                invitation_public_id,
+                include_events=True,
+            )
             if invitation is None:
                 raise NotFoundError("Trust invitation not found")
         return self._to_detail_response(invitation)
@@ -154,15 +165,32 @@ class TrustInvitationService:
         now = datetime.now(tz=UTC)
         expiring_cutoff = now + timedelta(days=2)
         return TrustInvitationSummaryResponse(
-            active_count=sum(1 for invitation in invitations if invitation.status == TrustInvitationStatus.PENDING),
-            accepted_count=sum(1 for invitation in invitations if invitation.status == TrustInvitationStatus.ACCEPTED),
-            cancelled_count=sum(1 for invitation in invitations if invitation.status == TrustInvitationStatus.CANCELLED),
+            active_count=sum(
+                1
+                for invitation in invitations
+                if invitation.status == TrustInvitationStatus.PENDING
+            ),
+            accepted_count=sum(
+                1
+                for invitation in invitations
+                if invitation.status == TrustInvitationStatus.ACCEPTED
+            ),
+            cancelled_count=sum(
+                1
+                for invitation in invitations
+                if invitation.status == TrustInvitationStatus.CANCELLED
+            ),
             expiring_soon_count=sum(
                 1
                 for invitation in invitations
-                if invitation.status == TrustInvitationStatus.PENDING and invitation.expires_at <= expiring_cutoff
+                if invitation.status == TrustInvitationStatus.PENDING
+                and invitation.expires_at <= expiring_cutoff
             ),
-            draft_count=sum(1 for invitation in invitations if invitation.status == TrustInvitationStatus.DRAFT),
+            draft_count=sum(
+                1
+                for invitation in invitations
+                if invitation.status == TrustInvitationStatus.DRAFT
+            ),
         )
 
     async def list_for_organization(
@@ -199,7 +227,11 @@ class TrustInvitationService:
             default_sort_by="created_at",
         )
 
-    async def send(self, actor_user_id: UUID, invitation_public_id: UUID) -> TrustInvitationDetailResponse:
+    async def send(
+        self,
+        actor_user_id: UUID,
+        invitation_public_id: UUID,
+    ) -> TrustInvitationDetailResponse:
         invitation = await self._require_member_visible_invitation(
             actor_user_id,
             invitation_public_id,
@@ -210,8 +242,6 @@ class TrustInvitationService:
             raise ConflictError("Only draft trust invitations can be sent")
 
         invitation.status = TrustInvitationStatus.PENDING
-        invitation.sent_at = datetime.now(tz=UTC)
-        await self._record_event(invitation, TrustInvitationEventType.SENT, actor_user_id=actor_user_id)
         await self._deliver_invitation(
             invitation,
             actor_user_id=actor_user_id,
@@ -225,7 +255,11 @@ class TrustInvitationService:
             raise NotFoundError("Trust invitation not found")
         return self._to_detail_response(refreshed)
 
-    async def resend(self, actor_user_id: UUID, invitation_public_id: UUID) -> TrustInvitationDetailResponse:
+    async def resend(
+        self,
+        actor_user_id: UUID,
+        invitation_public_id: UUID,
+    ) -> TrustInvitationDetailResponse:
         invitation = await self._require_member_visible_invitation(
             actor_user_id,
             invitation_public_id,
@@ -235,7 +269,11 @@ class TrustInvitationService:
         if invitation.status == TrustInvitationStatus.DRAFT:
             raise ConflictError("Draft trust invitations must be sent before they can be resent")
 
-        await self._record_event(invitation, TrustInvitationEventType.RESENT, actor_user_id=actor_user_id)
+        await self._record_event(
+            invitation,
+            TrustInvitationEventType.RESENT,
+            actor_user_id=actor_user_id,
+        )
         await self._deliver_invitation(
             invitation,
             actor_user_id=actor_user_id,
@@ -250,7 +288,10 @@ class TrustInvitationService:
         return self._to_detail_response(refreshed)
 
     async def delete(self, actor_user_id: UUID, invitation_public_id: UUID) -> None:
-        invitation = await self._require_member_visible_invitation(actor_user_id, invitation_public_id)
+        invitation = await self._require_member_visible_invitation(
+            actor_user_id,
+            invitation_public_id,
+        )
         if invitation.status != TrustInvitationStatus.DRAFT:
             raise ConflictError("Only draft trust invitations can be deleted")
         await self._repo.delete(invitation)
@@ -261,7 +302,6 @@ class TrustInvitationService:
         changed = False
         if invitation.opened_at is None:
             invitation.opened_at = datetime.now(tz=UTC)
-            invitation.delivery_state = TrustInvitationDeliveryState.OPENED
             await self._record_event(invitation, TrustInvitationEventType.OPENED)
             changed = True
         if changed:
@@ -279,21 +319,35 @@ class TrustInvitationService:
             status=invitation.status,
         )
 
-    async def accept(self, raw_token: str, actor_user_id: UUID, actor_email: str) -> TrustInvitationAcceptResponse:
+    async def accept(
+        self,
+        raw_token: str,
+        actor_user_id: UUID,
+        actor_email: str,
+    ) -> TrustInvitationAcceptResponse:
         invitation = await self._resolve_active_token(raw_token)
         if self._normalize_email(actor_email) != invitation.subject_email:
-            raise ForbiddenError("This trust invitation is not assigned to the authenticated account")
+            raise ForbiddenError(
+                "This trust invitation is not assigned to the authenticated account"
+            )
 
         now = datetime.now(tz=UTC)
         if invitation.opened_at is None:
             invitation.opened_at = now
-            invitation.delivery_state = TrustInvitationDeliveryState.OPENED
-            await self._record_event(invitation, TrustInvitationEventType.OPENED, actor_user_id=actor_user_id)
+            await self._record_event(
+                invitation,
+                TrustInvitationEventType.OPENED,
+                actor_user_id=actor_user_id,
+            )
 
         invitation.status = TrustInvitationStatus.ACCEPTED
         invitation.accepted_by_user_id = actor_user_id
         invitation.accepted_at = now
-        await self._record_event(invitation, TrustInvitationEventType.ACCEPTED, actor_user_id=actor_user_id)
+        await self._record_event(
+            invitation,
+            TrustInvitationEventType.ACCEPTED,
+            actor_user_id=actor_user_id,
+        )
         await self._session.commit()
         await self._sync_person_link_best_effort(invitation, actor_user_id=actor_user_id)
 
@@ -307,8 +361,15 @@ class TrustInvitationService:
             accepted_at=refreshed.accepted_at,
         )
 
-    async def cancel(self, actor_user_id: UUID, invitation_public_id: UUID) -> TrustInvitationResponse:
-        invitation = await self._require_member_visible_invitation(actor_user_id, invitation_public_id)
+    async def cancel(
+        self,
+        actor_user_id: UUID,
+        invitation_public_id: UUID,
+    ) -> TrustInvitationResponse:
+        invitation = await self._require_member_visible_invitation(
+            actor_user_id,
+            invitation_public_id,
+        )
         _, actor_membership = await self._organizations.require_org_member(
             actor_user_id,
             invitation.organization.public_id,
@@ -324,7 +385,11 @@ class TrustInvitationService:
 
         invitation.status = TrustInvitationStatus.CANCELLED
         invitation.cancelled_at = datetime.now(tz=UTC)
-        await self._record_event(invitation, TrustInvitationEventType.CANCELLED, actor_user_id=actor_user_id)
+        await self._record_event(
+            invitation,
+            TrustInvitationEventType.CANCELLED,
+            actor_user_id=actor_user_id,
+        )
         await self._session.commit()
 
         refreshed = await self._repo.get_by_public_id(invitation.public_id)
@@ -339,10 +404,16 @@ class TrustInvitationService:
         *,
         include_events: bool = False,
     ) -> TrustInvitation:
-        invitation = await self._repo.get_by_public_id(invitation_public_id, include_events=include_events)
+        invitation = await self._repo.get_by_public_id(
+            invitation_public_id,
+            include_events=include_events,
+        )
         if invitation is None:
             raise NotFoundError("Trust invitation not found")
-        await self._organizations.require_org_member(actor_user_id, invitation.organization.public_id)
+        await self._organizations.require_org_member(
+            actor_user_id,
+            invitation.organization.public_id,
+        )
         return invitation
 
     async def _resolve_active_token(self, raw_token: str) -> TrustInvitation:
@@ -410,6 +481,7 @@ class TrustInvitationService:
             await self._record_event(invitation, trigger_event, actor_user_id=actor_user_id)
 
         invitation_url = self._build_invitation_url(invitation.public_id)
+        invitation.delivery_state = TrustInvitationDeliveryState.QUEUED
         try:
             await self._notifications.create_and_dispatch(
                 NotificationRequest(
@@ -430,8 +502,6 @@ class TrustInvitationService:
                 ),
                 actor_user_id=actor_user_id,
             )
-            if invitation.delivery_state != TrustInvitationDeliveryState.OPENED:
-                invitation.delivery_state = TrustInvitationDeliveryState.DELIVERED
         except Exception as exc:
             invitation.delivery_state = TrustInvitationDeliveryState.FAILED
             await self._record_event(
@@ -526,7 +596,9 @@ class TrustInvitationService:
                     occurred_at=event.occurred_at,
                     actor_user_id=event.actor_user_id,
                     actor_email=event.actor_user.email if event.actor_user is not None else None,
-                    actor_full_name=event.actor_user.full_name if event.actor_user is not None else None,
+                    actor_full_name=(
+                        event.actor_user.full_name if event.actor_user is not None else None
+                    ),
                     metadata=event.metadata_payload,
                 )
                 for event in invitation.events
@@ -538,7 +610,10 @@ class TrustInvitationService:
             return None
         return invitation.verification_requests[0].public_id
 
-    def _deserialize_verification_types(self, values: list[str]) -> list[TrustInvitationVerificationType]:
+    def _deserialize_verification_types(
+        self,
+        values: list[str],
+    ) -> list[TrustInvitationVerificationType]:
         return [TrustInvitationVerificationType(value) for value in values]
 
     def _build_invitation_url(self, invitation_public_id: UUID) -> str:

@@ -224,6 +224,31 @@ async def test_create_and_dispatch_records_sent_notification_delivery() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_and_dispatch_leaves_queued_notification_without_false_failure_event() -> None:
+    dispatcher = FakeDispatcher(
+        NotificationDispatchOutcome(
+            status=NotificationStatus.QUEUED.value,
+            provider="brevo",
+            dispatched_at=datetime.now(tz=UTC),
+        )
+    )
+    service = _build_service(
+        dispatcher=dispatcher,
+        preference_decision=NotificationPreferenceDecision(enabled=True, selected_channel="email"),
+    )
+
+    detail = await service.create_and_dispatch(_trust_invitation_request(), actor_user_id=uuid4())
+
+    assert detail.status == NotificationStatus.QUEUED.value
+    assert len(detail.deliveries) == 1
+    assert [item.event_type for item in detail.history] == [
+        "notification_created",
+        "notification_dispatch_started",
+    ]
+    assert len(dispatcher.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_create_and_dispatch_respects_disabled_preferences() -> None:
     dispatcher = FakeDispatcher(
         NotificationDispatchOutcome(
