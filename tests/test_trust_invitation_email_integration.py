@@ -362,11 +362,11 @@ async def test_accept_trust_invitation_survives_people_sync_failure() -> None:
     )
     raw_token = response.invitation_url.rsplit("/", 1)[-1]
 
-    async def _resolve_active_token(raw_token_value: str):  # noqa: ANN001
+    async def _resolve_token_for_accept(raw_token_value: str):  # noqa: ANN001
         assert raw_token_value == raw_token
         return repo.invitation
 
-    service._resolve_active_token = _resolve_active_token  # type: ignore[assignment]
+    service._resolve_token_for_accept = _resolve_token_for_accept  # type: ignore[assignment]
     service._people = FailingOrganizationPersonService()  # type: ignore[assignment]
 
     accepted = await service.accept(raw_token, actor_id, "aman3@test.com")
@@ -412,11 +412,11 @@ async def test_accept_trust_invitation_refetches_events_for_people_sync_after_pr
 
     expired_invitation = ExpiredInvitationState(repo.invitation)
 
-    async def _resolve_active_token(raw_token_value: str):  # noqa: ANN001
+    async def _resolve_token_for_accept(raw_token_value: str):  # noqa: ANN001
         assert raw_token_value == raw_token
         return expired_invitation
 
-    service._resolve_active_token = _resolve_active_token  # type: ignore[assignment]
+    service._resolve_token_for_accept = _resolve_token_for_accept  # type: ignore[assignment]
 
     accepted = await service.accept(raw_token, actor_id, "aman3@test.com")
 
@@ -430,3 +430,58 @@ async def test_accept_trust_invitation_refetches_events_for_people_sync_after_pr
     assert repo.invitation.accepted_at is not None
     assert repo.invitation.delivery_state == TrustInvitationDeliveryState.DELIVERED
     assert [event.event_type for event in repo.events].count("accepted") == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_trust_invitation_retry_is_idempotent_after_primary_acceptance_persists(
+) -> None:
+    session = FakeSession()
+    organization = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000100"),
+        public_id=UUID("00000000-0000-0000-0000-000000000101"),
+        name="Kairo Verification Ops",
+    )
+    repo = FakeTrustInvitationRepository(organization)
+    service = TrustInvitationService(
+        session,  # type: ignore[arg-type]
+        _settings(),
+        repo=repo,  # type: ignore[arg-type]
+        organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
+        notifications=FakeNotificationService(),  # type: ignore[arg-type]
+        people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
+    )
+
+    actor_id = UUID("00000000-0000-0000-0000-000000000111")
+    response = await service.create(
+        actor_id,
+        organization.public_id,
+        TrustInvitationCreateRequest(
+            subject_name="Aman Jha",
+            subject_email="aman3@test.com",
+            expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+        ),
+    )
+    raw_token = response.invitation_url.rsplit("/", 1)[-1]
+    repo.invitation.delivery_state = TrustInvitationDeliveryState.DELIVERED
+
+    async def _resolve_token_for_accept(raw_token_value: str):  # noqa: ANN001
+        assert raw_token_value == raw_token
+        return repo.invitation
+
+    service._resolve_token_for_accept = _resolve_token_for_accept  # type: ignore[assignment]
+    service._people = FailingOrganizationPersonService()  # type: ignore[assignment]
+
+    first_accept = await service.accept(raw_token, actor_id, "aman3@test.com")
+
+    assert first_accept.status == TrustInvitationStatus.ACCEPTED
+    assert [event.event_type for event in repo.events].count("accepted") == 1
+
+    retry_people = AssertLoadedEventsOrganizationPersonService()
+    service._people = retry_people  # type: ignore[assignment]
+
+    second_accept = await service.accept(raw_token, actor_id, "aman3@test.com")
+
+    assert second_accept.status == TrustInvitationStatus.ACCEPTED
+    assert retry_people.calls == 1
+    assert [event.event_type for event in repo.events].count("accepted") == 1
+    assert repo.invitation.accepted_at is not None

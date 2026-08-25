@@ -328,13 +328,38 @@ class TrustInvitationService:
         actor_user_id: UUID,
         actor_email: str,
     ) -> TrustInvitationAcceptResponse:
-        invitation = await self._resolve_active_token(raw_token)
+        invitation = await self._resolve_token_for_accept(raw_token)
         if self._normalize_email(actor_email) != invitation.subject_email:
             raise ForbiddenError(
                 "This trust invitation is not assigned to the authenticated account"
             )
 
         invitation_public_id = invitation.public_id
+        if (
+            invitation.status == TrustInvitationStatus.ACCEPTED
+            and invitation.accepted_at is not None
+        ):
+            if (
+                invitation.accepted_by_user_id is not None
+                and invitation.accepted_by_user_id != actor_user_id
+            ):
+                raise ForbiddenError(
+                    "This trust invitation is not assigned to the authenticated account"
+                )
+            await self._sync_person_link_best_effort(
+                invitation_public_id,
+                actor_user_id=invitation.accepted_by_user_id or actor_user_id,
+            )
+            refreshed = await self._repo.get_by_public_id(invitation_public_id)
+            if refreshed is None or refreshed.accepted_at is None:
+                raise NotFoundError("Trust invitation not found")
+            return TrustInvitationAcceptResponse(
+                public_id=refreshed.public_id,
+                organization_public_id=refreshed.organization.public_id,
+                status=refreshed.status,
+                accepted_at=refreshed.accepted_at,
+            )
+
         now = datetime.now(tz=UTC)
         if invitation.opened_at is None:
             invitation.opened_at = now
@@ -442,6 +467,36 @@ class TrustInvitationService:
             await self._session.commit()
             raise NotFoundError("Trust invitation not found")
 
+        if invitation.status not in {TrustInvitationStatus.DRAFT, TrustInvitationStatus.PENDING}:
+            raise NotFoundError("Trust invitation not found")
+        if invitation.cancelled_at is not None or invitation.accepted_at is not None:
+            raise NotFoundError("Trust invitation not found")
+        return invitation
+
+    async def _resolve_token_for_accept(self, raw_token: str) -> TrustInvitation:
+        if not raw_token or len(raw_token) < 16:
+            raise NotFoundError("Trust invitation not found")
+
+        invitation: TrustInvitation | None
+        signed_public_id = self._verify_signed_token(raw_token)
+        if signed_public_id is not None:
+            invitation = await self._repo.get_by_public_id(signed_public_id)
+        else:
+            invitation = await self._repo.get_by_token_hash(hash_refresh_token(raw_token))
+
+        if invitation is None:
+            raise NotFoundError("Trust invitation not found")
+
+        expired = await self._expire_if_needed(invitation)
+        if expired:
+            await self._session.commit()
+            raise NotFoundError("Trust invitation not found")
+
+        if (
+            invitation.status == TrustInvitationStatus.ACCEPTED
+            and invitation.accepted_at is not None
+        ):
+            return invitation
         if invitation.status not in {TrustInvitationStatus.DRAFT, TrustInvitationStatus.PENDING}:
             raise NotFoundError("Trust invitation not found")
         if invitation.cancelled_at is not None or invitation.accepted_at is not None:
