@@ -39,6 +39,7 @@ from app.services import (
     PassportEngineService,
     PassportShareService,
     PassportShareViewService,
+    PublicInstitutionVerificationService,
     PublicPassportService,
     TrustInvitationService,
     TrustRegistryAdminService,
@@ -231,6 +232,13 @@ def get_institution_workspace_service(
     session: AsyncSession = Depends(get_session),
 ) -> InstitutionWorkspaceService:
     return InstitutionWorkspaceService(session)
+
+
+def get_public_institution_verification_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PublicInstitutionVerificationService:
+    return PublicInstitutionVerificationService(session, settings)
 
 
 def get_workspace_service(session: AsyncSession = Depends(get_session)) -> WorkspaceService:

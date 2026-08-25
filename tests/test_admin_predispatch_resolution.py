@@ -103,11 +103,40 @@ async def test_admin_resolves_organization_during_pre_dispatch_without_dispatchi
     assert request.registry_resolution_state == "resolved"
     assert request.registry_resolution_method == "exact_domain"
     assert request.employment.verification_status == "draft"
-    service._workflow.record_action.assert_awaited_once()
-    call = service._workflow.record_action.await_args.kwargs
-    assert call["event_type"] == "verification_request_organization_resolved"
-    assert call["event_source"] == VerificationRequestEventSource.ADMIN
-    service._advance_to_organization_stage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_education_dispatch_issues_public_institution_link() -> None:
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        status=VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+        organization_id=uuid4(),
+        target_organization_name="Institution Acceptance University",
+        employment_id=None,
+        education_id=uuid4(),
+        organization_outreach_sent_at=None,
+    )
+    actor_user_id = uuid4()
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._contacts = SimpleNamespace(get_current=AsyncMock(return_value=None))
+    service._institution_outreach = SimpleNamespace(issue_public_link=AsyncMock())
+    service._workflow = SimpleNamespace(
+        transition=AsyncMock(),
+        record_action=AsyncMock(),
+    )
+
+    await service._advance_to_organization_stage(request, actor_user_id=actor_user_id)
+
+    service._institution_outreach.issue_public_link.assert_awaited_once_with(
+        actor_user_id=actor_user_id,
+        verification_request=request,
+    )
+    service._workflow.transition.assert_awaited_once()
+    assert request.organization_outreach_sent_at is not None
+    call = service._workflow.transition.await_args.kwargs
+    assert call["event_type"] == "organization_resolved"
+    assert call["event_source"] == VerificationRequestEventSource.SYSTEM
 
 
 @pytest.mark.asyncio

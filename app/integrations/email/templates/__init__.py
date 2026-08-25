@@ -10,6 +10,7 @@ class EmailTemplateKey(StrEnum):
     PASSWORD_RESET = "password_reset"
     ADMIN_INVITATION = "admin_invitation"
     EMPLOYER_VERIFICATION = "employer_verification"
+    INSTITUTION_VERIFICATION = "institution_verification"
     TRUST_INVITATION = "trust_invitation"
     VERIFICATION_COMPLETED = "verification_completed"
 

@@ -74,6 +74,9 @@ from app.schemas.verification_request import (
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.notification_service import NotificationService
 from app.services.organization_registry_sync_service import OrganizationRegistrySyncService
+from app.services.public_institution_verification_service import (
+    PublicInstitutionVerificationService,
+)
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
@@ -124,6 +127,7 @@ class VerificationRequestAdminReviewService:
         self._registry_sync = OrganizationRegistrySyncService(session)
         self._settings = settings or get_settings()
         self._employer_outreach = EmployerVerificationService(session, self._settings)
+        self._institution_outreach = PublicInstitutionVerificationService(session, self._settings)
         self._workflow = VerificationRequestWorkflowService(self._requests)
         self._notifications = NotificationService(session, self._settings)
 
@@ -1142,6 +1146,11 @@ class VerificationRequestAdminReviewService:
                     relationship=contact.contact_role
                     or normalize_contact_type(contact.contact_type),
                 ),
+            )
+        elif request.education_id is not None:
+            await self._institution_outreach.issue_public_link(
+                actor_user_id=actor_user_id,
+                verification_request=request,
             )
         request.organization_outreach_sent_at = datetime.now(tz=UTC)
         await self._workflow.transition(

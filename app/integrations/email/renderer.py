@@ -14,6 +14,10 @@ from app.integrations.email.templates.employer_verification import (
     EmployerVerificationContext,
     render_employer_verification,
 )
+from app.integrations.email.templates.institution_verification import (
+    InstitutionVerificationContext,
+    render_institution_verification,
+)
 from app.integrations.email.templates.password_reset import (
     PasswordResetContext,
     render_password_reset,
@@ -30,6 +34,7 @@ from app.integrations.email.templates.verification_completed import (
 from app.schemas.email_delivery import (
     AdminInvitationEmailTemplateData,
     EmployerVerificationEmailTemplateData,
+    InstitutionVerificationEmailTemplateData,
     PasswordResetEmailTemplateData,
     RenderedEmailMessage,
     SignupOtpEmailTemplateData,
@@ -136,6 +141,37 @@ def _render_employer_verification(to_email: str, data: dict[str, Any]) -> Render
     )
 
 
+def _render_institution_verification(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = InstitutionVerificationEmailTemplateData.model_validate(data)
+    content = render_institution_verification(
+        InstitutionVerificationContext(
+            contact_name=payload.contact_name,
+            subject_name=payload.subject_name,
+            institution_name=payload.institution_name,
+            degree=payload.degree,
+            programme=payload.programme,
+            review_url=payload.review_url,
+            expires_hours=payload.ttl_hours,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.INSTITUTION_VERIFICATION.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={
+            "contact_name": payload.contact_name,
+            "subject_name": payload.subject_name,
+            "institution_name": payload.institution_name,
+            "degree": payload.degree,
+            "programme": payload.programme,
+            "ttl_hours": payload.ttl_hours,
+        },
+    )
+
+
 def _render_trust_invitation(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
     payload = TrustInvitationEmailTemplateData.model_validate(data)
     content = render_trust_invitation(
@@ -196,6 +232,7 @@ class EmailTemplateRenderer:
             EmailTemplateKey.PASSWORD_RESET.value: _render_password_reset,
             EmailTemplateKey.ADMIN_INVITATION.value: _render_admin_invitation,
             EmailTemplateKey.EMPLOYER_VERIFICATION.value: _render_employer_verification,
+            EmailTemplateKey.INSTITUTION_VERIFICATION.value: _render_institution_verification,
             EmailTemplateKey.TRUST_INVITATION.value: _render_trust_invitation,
             EmailTemplateKey.VERIFICATION_COMPLETED.value: _render_verification_completed,
         }

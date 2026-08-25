@@ -6,6 +6,7 @@ from app.repositories.criteria import EmploymentDocumentSortField, EmploymentSor
 from app.repositories.email_delivery_log import EmailDeliveryLogRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
+from app.repositories.institution_verification import InstitutionVerificationRepository
 from app.repositories.notification import (
     NotificationDeliveryRepository,
     NotificationEventRepository,
@@ -35,6 +36,7 @@ __all__ = [
     "EmploymentDocumentRepository",
     "EmploymentDocumentSortField",
     "EmploymentRepository",
+    "InstitutionVerificationRepository",
     "EmploymentSortField",
     "NotificationDeliveryRepository",
     "NotificationEventRepository",

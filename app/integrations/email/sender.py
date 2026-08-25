@@ -61,6 +61,20 @@ class EmailSender(Protocol):
         audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
+    async def send_institution_verification(
+        self,
+        *,
+        to_email: str,
+        contact_name: str,
+        subject_name: str,
+        institution_name: str,
+        degree: str,
+        programme: str,
+        review_url: str,
+        ttl_hours: int,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None: ...
+
 
 class ProviderEmailSender:
     """Compatibility facade for auth/outreach flows using the shared provider stack."""
@@ -223,6 +237,40 @@ class ProviderEmailSender:
                     },
                 ),
                 failure_message="Unable to send employer verification email",
+                audit_metadata=audit_metadata,
+            )
+        except ServiceUnavailableError:
+            raise
+
+    async def send_institution_verification(
+        self,
+        *,
+        to_email: str,
+        contact_name: str,
+        subject_name: str,
+        institution_name: str,
+        degree: str,
+        programme: str,
+        review_url: str,
+        ttl_hours: int,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None:
+        try:
+            await self._send_rendered(
+                message=self._renderer.render(
+                    template_key=EmailTemplateKey.INSTITUTION_VERIFICATION.value,
+                    to_email=to_email,
+                    data={
+                        "contact_name": contact_name,
+                        "subject_name": subject_name,
+                        "institution_name": institution_name,
+                        "degree": degree,
+                        "programme": programme,
+                        "review_url": review_url,
+                        "ttl_hours": ttl_hours,
+                    },
+                ),
+                failure_message="Unable to send institution verification email",
                 audit_metadata=audit_metadata,
             )
         except ServiceUnavailableError:

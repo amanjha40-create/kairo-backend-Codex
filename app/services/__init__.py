@@ -29,6 +29,7 @@ from app.services.organization_service import OrganizationService
 from app.services.passport_engine_service import PassportEngineService
 from app.services.passport_share_service import PassportShareService
 from app.services.passport_share_view_service import PassportShareViewService
+from app.services.public_institution_verification_service import PublicInstitutionVerificationService
 from app.services.public_passport_service import PublicPassportService
 from app.services.resume_service import ResumeService
 from app.services.trust_invitation_service import TrustInvitationService
@@ -79,6 +80,7 @@ __all__ = [
     "PassportEngineService",
     "PassportShareService",
     "PassportShareViewService",
+    "PublicInstitutionVerificationService",
     "PublicPassportService",
     "TrustScoreService",
     "TrustInvitationService",

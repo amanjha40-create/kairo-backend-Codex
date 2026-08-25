@@ -51,6 +51,18 @@ class EmployerVerificationEmailTemplateData(BaseModel):
     ttl_hours: int = Field(ge=1, le=720)
 
 
+class InstitutionVerificationEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    contact_name: str = Field(min_length=1, max_length=255)
+    subject_name: str = Field(min_length=1, max_length=255)
+    institution_name: str = Field(min_length=1, max_length=255)
+    degree: str = Field(min_length=1, max_length=255)
+    programme: str = Field(min_length=1, max_length=255)
+    review_url: str = Field(min_length=1, max_length=4096)
+    ttl_hours: int = Field(ge=1, le=720)
+
+
 class VerificationCompletedEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

@@ -413,6 +413,11 @@ class Settings(BaseSettings):
         description="Frontend origin used for employer verification magic links",
         validation_alias=AliasChoices("EMPLOYER_PORTAL_BASE_URL"),
     )
+    institution_portal_base_url: str | None = Field(
+        default=None,
+        description="Frontend origin used for public institution verification magic links",
+        validation_alias=AliasChoices("INSTITUTION_PORTAL_BASE_URL"),
+    )
     admin_portal_base_url: str = Field(
         default="http://localhost:3000",
         description="Admin frontend origin used for Admin access invitation links",

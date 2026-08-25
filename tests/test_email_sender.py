@@ -111,6 +111,20 @@ class FakeEmailDeliveryLogRepository:
             "employer_verification",
             "verify their employment",
         ),
+        (
+            lambda sender: sender.send_institution_verification(
+                to_email="recipient@example.com",
+                contact_name="Registrar",
+                subject_name="Candidate",
+                institution_name="Kairo University",
+                degree="BSc",
+                programme="Computer Science",
+                review_url="https://example.com/institution/verify/token",
+                ttl_hours=72,
+            ),
+            "institution_verification",
+            "review an education claim",
+        ),
     ],
 )
 async def test_provider_email_sender_renders_supported_transactional_flows(
@@ -175,6 +189,29 @@ async def test_provider_email_sender_preserves_verification_outreach_failure_mes
             job_title="Engineer",
             relationship="HR",
             review_url="https://example.com/verify/token",
+            ttl_hours=72,
+        )
+
+
+@pytest.mark.asyncio
+async def test_provider_email_sender_preserves_institution_verification_failure_message() -> None:
+    sender = ProviderEmailSender(
+        _settings(),
+        provider=FakeProvider(exc=ServiceUnavailableError("Unable to send email")),
+    )
+
+    with pytest.raises(
+        ServiceUnavailableError,
+        match="Unable to send institution verification email",
+    ):
+        await sender.send_institution_verification(
+            to_email="recipient@example.com",
+            contact_name="Registrar",
+            subject_name="Candidate",
+            institution_name="Kairo University",
+            degree="BSc",
+            programme="Computer Science",
+            review_url="https://example.com/institution/verify/token",
             ttl_hours=72,
         )
 

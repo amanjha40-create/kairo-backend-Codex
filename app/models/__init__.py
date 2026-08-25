@@ -20,6 +20,7 @@ from app.models.institution_people import (
     OrganizationCredentialEvent,
     OrganizationCredentialRecord,
 )
+from app.models.institution_verification_request import InstitutionVerificationRequest
 from app.models.internship import Internship
 from app.models.internship_document import InternshipDocument
 from app.models.notification import Notification
@@ -112,6 +113,7 @@ __all__ = [
     "InstitutionPersonConsent",
     "InstitutionPersonLifecycleEvent",
     "InstitutionPersonProfile",
+    "InstitutionVerificationRequest",
     "OrganizationCredentialEvent",
     "OrganizationCredentialRecord",
     "OrganizationPersonIdentifier",

@@ -39,6 +39,7 @@ from app.api.v1.routes import (
     public_credential_verification,
     public_employer_portal,
     public_employer_verification,
+    public_institution_verification,
     public_passport,
     public_profile,
     public_vault,
@@ -79,6 +80,7 @@ api_router.include_router(verification_requests.org_router)
 api_router.include_router(employments.router)
 api_router.include_router(public_employer_verification.router)
 api_router.include_router(public_employer_portal.router)
+api_router.include_router(public_institution_verification.router)
 api_router.include_router(public_profile.router)
 api_router.include_router(public_passport.router)
 api_router.include_router(public_vault.router)
