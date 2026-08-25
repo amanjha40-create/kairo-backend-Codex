@@ -7,13 +7,14 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.exc import MissingGreenlet
 
 from app.config import Settings
 from app.notifications.contracts import NotificationRequest
 from app.organization.enums import OrganizationRole
 from app.schemas.trust_invitation import TrustInvitationCreateRequest
 from app.services.trust_invitation_service import TrustInvitationService
-from app.trust_invitations.enums import TrustInvitationStatus
+from app.trust_invitations.enums import TrustInvitationDeliveryState, TrustInvitationStatus
 
 
 def _settings(**overrides: object) -> Settings:
@@ -46,6 +47,7 @@ class FakeTrustInvitationRepository:
         self.organization = organization
         self.invitation = None
         self.events = []
+        self.get_by_public_id_calls: list[tuple[object, bool]] = []
 
     async def create(self, invitation):  # noqa: ANN001
         invitation.id = 1
@@ -62,6 +64,7 @@ class FakeTrustInvitationRepository:
         return event
 
     async def get_by_public_id(self, invitation_public_id, include_events: bool = False):  # noqa: ANN001
+        self.get_by_public_id_calls.append((invitation_public_id, include_events))
         if self.invitation is None or self.invitation.public_id != invitation_public_id:
             return None
         created_by_user = SimpleNamespace(
@@ -130,13 +133,45 @@ class FakeNotificationService:
 
 
 class FakeOrganizationPersonService:
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def resolve_for_trust_invitation(self, invitation, *, actor_user_id=None):  # noqa: ANN001
+        self.calls += 1
         return invitation
 
 
 class FailingOrganizationPersonService:
     async def resolve_for_trust_invitation(self, invitation, *, actor_user_id=None):  # noqa: ANN001
         raise RuntimeError("people sync unavailable")
+
+
+class AssertLoadedEventsOrganizationPersonService:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def resolve_for_trust_invitation(self, invitation, *, actor_user_id=None):  # noqa: ANN001
+        self.calls += 1
+        _ = [event.occurred_at for event in invitation.events]
+        invitation.organization_person_id = uuid4()
+        return invitation
+
+
+class ExpiredInvitationState:
+    def __init__(self, target) -> None:  # noqa: ANN001
+        object.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name: str):  # noqa: ANN201
+        if name == "events":
+            raise MissingGreenlet("greenlet_spawn has not been called")
+        return getattr(self._target, name)
+
+    def __setattr__(self, name: str, value) -> None:  # noqa: ANN001
+        setattr(self._target, name, value)
+
+    @property
+    def events(self):  # noqa: ANN201
+        raise MissingGreenlet("greenlet_spawn has not been called")
 
 
 @pytest.mark.asyncio
@@ -339,3 +374,59 @@ async def test_accept_trust_invitation_survives_people_sync_failure() -> None:
     assert accepted.status == TrustInvitationStatus.ACCEPTED
     assert session.commits >= 3
     assert session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_trust_invitation_refetches_events_for_people_sync_after_primary_commit(
+) -> None:
+    session = FakeSession()
+    organization = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000100"),
+        public_id=UUID("00000000-0000-0000-0000-000000000101"),
+        name="Kairo Verification Ops",
+    )
+    repo = FakeTrustInvitationRepository(organization)
+    people = AssertLoadedEventsOrganizationPersonService()
+    service = TrustInvitationService(
+        session,  # type: ignore[arg-type]
+        _settings(),
+        repo=repo,  # type: ignore[arg-type]
+        organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
+        notifications=FakeNotificationService(),  # type: ignore[arg-type]
+        people=people,  # type: ignore[arg-type]
+    )
+
+    actor_id = UUID("00000000-0000-0000-0000-000000000111")
+    response = await service.create(
+        actor_id,
+        organization.public_id,
+        TrustInvitationCreateRequest(
+            subject_name="Aman Jha",
+            subject_email="aman3@test.com",
+            expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+        ),
+    )
+    raw_token = response.invitation_url.rsplit("/", 1)[-1]
+    repo.invitation.delivery_state = TrustInvitationDeliveryState.DELIVERED
+    people.calls = 0
+
+    expired_invitation = ExpiredInvitationState(repo.invitation)
+
+    async def _resolve_active_token(raw_token_value: str):  # noqa: ANN001
+        assert raw_token_value == raw_token
+        return expired_invitation
+
+    service._resolve_active_token = _resolve_active_token  # type: ignore[assignment]
+
+    accepted = await service.accept(raw_token, actor_id, "aman3@test.com")
+
+    assert accepted.status == TrustInvitationStatus.ACCEPTED
+    assert people.calls == 1
+    assert any(
+        public_id == repo.invitation.public_id and include_events
+        for public_id, include_events in repo.get_by_public_id_calls
+    )
+    assert session.rollbacks == 0
+    assert repo.invitation.accepted_at is not None
+    assert repo.invitation.delivery_state == TrustInvitationDeliveryState.DELIVERED
+    assert [event.event_type for event in repo.events].count("accepted") == 1

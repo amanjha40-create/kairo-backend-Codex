@@ -107,7 +107,10 @@ class TrustInvitationService:
         refreshed = await self._repo.get_by_public_id(invitation.public_id, include_events=True)
         if refreshed is None:
             raise NotFoundError("Trust invitation not found")
-        await self._sync_person_link_best_effort(refreshed, actor_user_id=actor_user_id)
+        await self._sync_person_link_best_effort(
+            refreshed.public_id,
+            actor_user_id=actor_user_id,
+        )
         refreshed = await self._repo.get_by_public_id(invitation.public_id, include_events=True)
         if refreshed is None:
             raise NotFoundError("Trust invitation not found")
@@ -331,6 +334,7 @@ class TrustInvitationService:
                 "This trust invitation is not assigned to the authenticated account"
             )
 
+        invitation_public_id = invitation.public_id
         now = datetime.now(tz=UTC)
         if invitation.opened_at is None:
             invitation.opened_at = now
@@ -349,9 +353,12 @@ class TrustInvitationService:
             actor_user_id=actor_user_id,
         )
         await self._session.commit()
-        await self._sync_person_link_best_effort(invitation, actor_user_id=actor_user_id)
+        await self._sync_person_link_best_effort(
+            invitation_public_id,
+            actor_user_id=actor_user_id,
+        )
 
-        refreshed = await self._repo.get_by_public_id(invitation.public_id)
+        refreshed = await self._repo.get_by_public_id(invitation_public_id)
         if refreshed is None or refreshed.accepted_at is None:
             raise NotFoundError("Trust invitation not found")
         return TrustInvitationAcceptResponse(
@@ -542,12 +549,21 @@ class TrustInvitationService:
 
     async def _sync_person_link_best_effort(
         self,
-        invitation: TrustInvitation,
+        invitation_public_id: UUID,
         *,
         actor_user_id: UUID | None,
     ) -> None:
         try:
-            await self._people.resolve_for_trust_invitation(invitation, actor_user_id=actor_user_id)
+            invitation = await self._repo.get_by_public_id(
+                invitation_public_id,
+                include_events=True,
+            )
+            if invitation is None:
+                return
+            await self._people.resolve_for_trust_invitation(
+                invitation,
+                actor_user_id=actor_user_id,
+            )
             await self._session.commit()
         except Exception:
             await self._session.rollback()
@@ -555,7 +571,7 @@ class TrustInvitationService:
                 "trust_invitation_person_sync_failed",
                 extra={
                     "event": "trust_invitation_person_sync_failed",
-                    "invitation_public_id": str(invitation.public_id),
+                    "invitation_public_id": str(invitation_public_id),
                     "actor_user_id": str(actor_user_id) if actor_user_id is not None else None,
                 },
             )
