@@ -30,6 +30,13 @@ TASK_DEFINITION_FIELDS = (
     "runtimePlatform",
 )
 
+RUNTIME_HEALTHCHECK_COMMAND = [
+    "CMD",
+    "python",
+    "-c",
+    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=5)",
+]
+
 
 def _run(command: Sequence[str], *, cwd: Path | None = None) -> str:
     return subprocess.run(
@@ -78,6 +85,10 @@ def build_task_definition_payload(
         raise RuntimeError(f"task definition has no {container_name!r} container")
 
     container["image"] = image_uri
+    health_check = dict(container.get("healthCheck") or {})
+    if health_check:
+        health_check["command"] = list(RUNTIME_HEALTHCHECK_COMMAND)
+        container["healthCheck"] = health_check
     environment = {
         item["name"]: item["value"]
         for item in container.get("environment", [])
