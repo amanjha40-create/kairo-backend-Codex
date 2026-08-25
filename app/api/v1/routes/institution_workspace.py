@@ -16,9 +16,12 @@ from app.schemas.institution_workspace import (
     InstitutionVerificationInboxQuery,
     InstitutionVerificationInboxResponse,
 )
+from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.verification_request import (
     VerificationRequestActionPayload,
+    VerificationRequestEvidenceResponse,
     VerificationRequestPriorityRequest,
+    VerificationRequestTimelineResponse,
 )
 from app.services.institution_workspace_service import InstitutionWorkspaceService
 
@@ -57,6 +60,45 @@ async def get_institution_verification(
     service: Annotated[InstitutionWorkspaceService, Depends(get_institution_workspace_service)],
 ) -> InstitutionVerificationDetailResponse:
     return await service.verification_detail(current.id, org_public_id, request_public_id)
+
+
+@router.get(
+    "/verification-requests/{request_public_id}/evidence",
+    response_model=Page[VerificationRequestEvidenceResponse]
+    | list[VerificationRequestEvidenceResponse],
+)
+async def list_institution_verification_evidence(
+    org_public_id: UUID,
+    request_public_id: UUID,
+    params: Annotated[ListQueryParams, Depends()],
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    service: Annotated[InstitutionWorkspaceService, Depends(get_institution_workspace_service)],
+) -> Page[VerificationRequestEvidenceResponse] | list[VerificationRequestEvidenceResponse]:
+    return await service.list_verification_evidence(
+        current.id,
+        org_public_id,
+        request_public_id,
+        params,
+    )
+
+
+@router.get(
+    "/verification-requests/{request_public_id}/timeline",
+    response_model=VerificationRequestTimelineResponse,
+)
+async def get_institution_verification_timeline(
+    org_public_id: UUID,
+    request_public_id: UUID,
+    params: Annotated[ListQueryParams, Depends()],
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    service: Annotated[InstitutionWorkspaceService, Depends(get_institution_workspace_service)],
+) -> VerificationRequestTimelineResponse:
+    return await service.get_verification_timeline(
+        current.id,
+        org_public_id,
+        request_public_id,
+        params,
+    )
 
 
 @router.post(

@@ -22,6 +22,9 @@ from app.organization.enums import OrganizationType
 from app.repositories.institution_people import InstitutionPeopleRepository
 from app.repositories.organization import OrganizationRepository
 from app.repositories.verification_request import VerificationRequestRepository
+from app.repositories.verification_request_evidence import (
+    VerificationRequestEvidenceRepository,
+)
 from app.schemas.institution_people import InstitutionPeriod
 from app.schemas.institution_workspace import (
     InstitutionAuthoritativeRecord,
@@ -40,8 +43,18 @@ from app.schemas.institution_workspace import (
     InstitutionVerificationInboxQuery,
     InstitutionVerificationInboxResponse,
 )
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
+from app.schemas.verification_request import (
+    VerificationRequestEvidenceResponse,
+    VerificationRequestTimelineEventResponse,
+    VerificationRequestTimelineResponse,
+)
 from app.services.institution_people_service import InstitutionPeopleService
-from app.services.verification_request_service import VerificationRequestService
+from app.services.verification_request_service import (
+    VerificationRequestService,
+    is_internal_admin_note_event,
+    is_private_organization_event,
+)
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
@@ -87,8 +100,10 @@ class InstitutionWorkspaceService:
         self._organizations = OrganizationRepository(session)
         self._people = InstitutionPeopleRepository(session)
         self._people_service = InstitutionPeopleService(session)
+        self._verification_requests = VerificationRequestRepository(session)
+        self._verification_evidence = VerificationRequestEvidenceRepository(session)
         self._verification_service = VerificationRequestService(session)
-        self._workflow = VerificationRequestWorkflowService(VerificationRequestRepository(session))
+        self._workflow = VerificationRequestWorkflowService(self._verification_requests)
 
     async def dashboard(
         self, actor_user_id: UUID, org_public_id: UUID
@@ -179,6 +194,86 @@ class InstitutionWorkspaceService:
         organization, _ = await self._require_university_access(actor_user_id, org_public_id)
         request = await self._get_academic_request(organization.id, request_public_id)
         return self._detail_response(request, await self._comparison(organization.id, request))
+
+    async def list_verification_evidence(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        request_public_id: UUID,
+        params: ListQueryParams | None = None,
+    ) -> list[VerificationRequestEvidenceResponse] | Page[VerificationRequestEvidenceResponse]:
+        organization, _ = await self._require_university_access(actor_user_id, org_public_id)
+        request = await self._get_academic_request(organization.id, request_public_id)
+        items = await self._verification_evidence.list_for_request(request.id)
+        visible_items = self._verification_service._filter_evidence_by_consent(request, items)  # noqa: SLF001
+        responses = [
+            await self._verification_service._to_evidence_response(  # noqa: SLF001
+                item,
+                include_download_url=True,
+            )
+            for item in visible_items
+        ]
+        if params is None:
+            return responses
+        return filter_sort_paginate(
+            responses,
+            params=params,
+            search_fields=("evidence_type", "field_key", "status"),
+            allowed_sort_fields=(
+                "created_at",
+                "updated_at",
+                "evidence_type",
+                "field_key",
+                "status",
+            ),
+            default_sort_by="created_at",
+        )
+
+    async def get_verification_timeline(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        request_public_id: UUID,
+        params: ListQueryParams | None = None,
+    ) -> VerificationRequestTimelineResponse:
+        organization, _ = await self._require_university_access(actor_user_id, org_public_id)
+        request = await self._get_academic_request(organization.id, request_public_id)
+        rows = await self._verification_requests.list_timeline(request.id)
+        timeline_items = [
+            VerificationRequestTimelineEventResponse(
+                public_id=row.public_id,
+                event_type=row.event_type,
+                event_source=row.event_source,
+                previous_status=row.previous_status,
+                new_status=row.new_status,
+                metadata=dict(row.metadata_payload or {}),
+                created_at=row.created_at,
+            )
+            for row in rows
+            if self._institution_timeline_event_visible(row)
+        ]
+        effective_params = params or ListQueryParams()
+        page = filter_sort_paginate(
+            timeline_items,
+            params=effective_params,
+            search_fields=("event_type", "event_source"),
+            status_field=None,
+            allowed_sort_fields=("created_at", "event_type"),
+            default_sort_by="created_at",
+            force_page_envelope=True,
+        )
+        if not isinstance(page, Page):
+            raise RuntimeError("Timeline pagination must return a page envelope")
+        return VerificationRequestTimelineResponse(
+            verification_request_public_id=request.public_id,
+            items=page.items,
+            total=page.total,
+            page=page.page,
+            page_size=page.page_size,
+            total_pages=page.total_pages,
+            offset=page.offset,
+            limit=page.limit,
+        )
 
     async def cancel_verification(
         self,
@@ -505,6 +600,16 @@ class InstitutionWorkspaceService:
     @staticmethod
     def _date_value(value) -> str | None:  # noqa: ANN001
         return value.isoformat() if value is not None else None
+
+    @staticmethod
+    def _institution_timeline_event_visible(row: VerificationRequestEvent) -> bool:
+        return not is_internal_admin_note_event(
+            row.event_type,
+            row.metadata_payload,
+        ) and not is_private_organization_event(
+            row.event_type,
+            row.metadata_payload,
+        )
 
     def _detail_response(
         self,

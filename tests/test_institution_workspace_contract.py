@@ -29,6 +29,11 @@ from app.schemas.institution_workspace import (
     InstitutionVerificationInboxQuery,
     InstitutionVerificationInboxResponse,
 )
+from app.schemas.verification_request import (
+    VerificationRequestEvidenceResponse,
+    VerificationRequestTimelineEventResponse,
+    VerificationRequestTimelineResponse,
+)
 from app.verification_requests.enums import VerificationRequestStatus, VerificationRequestType
 
 
@@ -85,6 +90,63 @@ class FakeInstitutionWorkspaceService:
         assert org_public_id == self.organization_public_id
         assert request_public_id == self.request_public_id
         return self._detail()
+
+    async def list_verification_evidence(  # noqa: ANN001
+        self, actor_user_id, org_public_id, request_public_id, params
+    ):
+        assert actor_user_id
+        assert org_public_id == self.organization_public_id
+        assert request_public_id == self.request_public_id
+        assert params.page == 1
+        return [
+            VerificationRequestEvidenceResponse(
+                public_id=uuid4(),
+                evidence_type="transcript",
+                field_key="education_evidence",
+                document_id=None,
+                employment_document_id=None,
+                education_document_id=uuid4(),
+                value=None,
+                status="submitted",
+                created_at=self.now,
+                updated_at=self.now,
+                document_type="transcript",
+                original_filename="transcript.pdf",
+                mime_type="application/pdf",
+                file_size=1024,
+                upload_status="uploaded",
+                download_url="https://example.test/evidence.pdf",
+                download_url_expires_in_seconds=300,
+            )
+        ]
+
+    async def get_verification_timeline(  # noqa: ANN001
+        self, actor_user_id, org_public_id, request_public_id, params
+    ):
+        assert actor_user_id
+        assert org_public_id == self.organization_public_id
+        assert request_public_id == self.request_public_id
+        assert params.page == 1
+        return VerificationRequestTimelineResponse(
+            verification_request_public_id=self.request_public_id,
+            items=[
+                VerificationRequestTimelineEventResponse(
+                    public_id=uuid4(),
+                    event_type="verification_request_created",
+                    event_source="candidate",
+                    previous_status=None,
+                    new_status="pending_subject_submission",
+                    metadata={},
+                    created_at=self.now,
+                )
+            ],
+            total=1,
+            page=1,
+            page_size=10,
+            total_pages=1,
+            offset=0,
+            limit=10,
+        )
 
     async def cancel_verification(self, actor_user_id, org_public_id, request_public_id, payload):  # noqa: ANN001
         assert actor_user_id
@@ -144,6 +206,12 @@ async def test_institution_workspace_routes_are_authenticated_and_allowlisted() 
             f"{prefix}/verification-requests?priority=high&page=1&page_size=10"
         )
         detail = await client.get(f"{prefix}/verification-requests/{service.request_public_id}")
+        evidence = await client.get(
+            f"{prefix}/verification-requests/{service.request_public_id}/evidence?page=1&page_size=10"
+        )
+        timeline = await client.get(
+            f"{prefix}/verification-requests/{service.request_public_id}/timeline?page=1&page_size=10"
+        )
         cancelled = await client.post(
             f"{prefix}/verification-requests/{service.request_public_id}/cancel",
             json={"note": "Duplicate request"},
@@ -161,6 +229,10 @@ async def test_institution_workspace_routes_are_authenticated_and_allowlisted() 
     assert inbox.json()["total"] == 1
     assert detail.status_code == 200
     assert detail.json()["comparison"]["match_status"] == "partial"
+    assert evidence.status_code == 200
+    assert len(evidence.json()) == 1
+    assert timeline.status_code == 200
+    assert timeline.json()["total"] == 1
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
     assert service.cancelled is True
@@ -211,6 +283,8 @@ def test_openapi_exposes_institution_workspace_contract() -> None:
     assert f"{prefix}/dashboard" in paths
     assert f"{prefix}/verification-requests" in paths
     assert f"{prefix}/verification-requests/{{request_public_id}}" in paths
+    assert f"{prefix}/verification-requests/{{request_public_id}}/evidence" in paths
+    assert f"{prefix}/verification-requests/{{request_public_id}}/timeline" in paths
     assert f"{prefix}/verification-requests/{{request_public_id}}/cancel" in paths
     assert "post" in paths[f"{prefix}/verification-requests/{{request_public_id}}/priority"]
     assert f"{prefix}/people/{{person_public_id}}/passport-summary" in paths
