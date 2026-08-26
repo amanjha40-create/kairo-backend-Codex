@@ -124,7 +124,7 @@ def test_provider_factory_selects_sns() -> None:
 
 
 def test_unknown_provider_fails_closed() -> None:
-    with pytest.raises(ValidationError, match="must be one of: console, staging_fixed, sns"):
+    with pytest.raises(ValidationError, match="must be one of: console, staging_fixed, sns, msg91"):
         _settings(phone_otp_backend="unknown")
 
 

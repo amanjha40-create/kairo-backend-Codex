@@ -26,9 +26,15 @@ from app.auth.tokens import (
 )
 from app.config import Settings
 from app.core.constants import Role, SignupKind
-from app.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
+from app.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
+from app.integrations.phone_otp.msg91 import Msg91PhoneOtpProvider
 from app.models import PasswordResetToken, PendingSignup, RefreshToken, User
 from app.models.user_social_account import UserSocialAccount
 from app.organization.enums import OrganizationType
@@ -107,7 +113,16 @@ class AuthService:
         self._social = UserSocialAccountRepository(session)
         self._otp = SignupOtpStore(redis, settings)
         self._email = get_email_sender(settings, session=session)
-        self._phone = get_phone_otp_sender(settings)
+        self._phone = (
+            None
+            if settings.phone_otp_backend == "msg91"
+            else get_phone_otp_sender(settings)
+        )
+        self._msg91_phone = (
+            Msg91PhoneOtpProvider(settings)
+            if settings.phone_otp_backend == "msg91"
+            else None
+        )
 
     def _institution_portal_origin_from_request(self, requested_base_url: str | None) -> str | None:
         base_url = (self._settings.institution_portal_base_url or "").strip().rstrip("/")
@@ -246,7 +261,7 @@ class AuthService:
         pending = await self._load_active_pending(data.signup_session_id)
         self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         self._otp.assert_resend_allowed(pending.email_last_otp_sent_at)
-        return await self._send_channel_otp(pending, "email")
+        return await self._send_channel_otp(pending, "email", resend=True)
 
     async def verify_signup_email(self, data: SignupVerifyRequest) -> SignupChannelVerifyResponse:
         pending = await self._load_active_pending(data.signup_session_id)
@@ -266,7 +281,7 @@ class AuthService:
         pending = await self._load_active_pending(data.signup_session_id)
         self._assert_signup_kind(pending, SignupKind.CANDIDATE)
         self._otp.assert_resend_allowed(pending.phone_last_otp_sent_at)
-        return await self._send_channel_otp(pending, "phone")
+        return await self._send_channel_otp(pending, "phone", resend=True)
 
     async def verify_signup_phone(self, data: SignupVerifyRequest) -> SignupChannelVerifyResponse:
         if not self._settings.phone_otp_enabled:
@@ -691,23 +706,44 @@ class AuthService:
             await self._refresh.revoke(existing.id)
             await self._session.commit()
 
-    async def _send_channel_otp(self, pending: PendingSignup, channel: SignupChannel) -> SignupChannelSendResponse:
+    async def _send_channel_otp(
+        self,
+        pending: PendingSignup,
+        channel: SignupChannel,
+        *,
+        resend: bool = False,
+    ) -> SignupChannelSendResponse:
         if channel == "email" and pending.email_verified_at is not None:
             return self._build_channel_send_response(pending, channel, verified=True, message="Email already verified")
         if channel == "phone" and pending.phone_verified_at is not None:
             return self._build_channel_send_response(pending, channel, verified=True, message="Phone already verified")
 
-        code = generate_otp_code()
         await self._otp.enforce_send_rate(pending.id, channel)
+        ttl_minutes = max(1, self._settings.signup_otp_ttl_seconds // 60)
+        if channel == "phone" and self._settings.phone_otp_backend == "msg91":
+            await self._send_msg91_phone_otp(pending, resend=resend)
+            pending.phone_otp_sent_count += 1
+            pending.phone_last_otp_sent_at = datetime.now(tz=UTC)
+            await self._session.flush()
+            await self._session.commit()
+            return self._build_channel_send_response(
+                pending,
+                channel,
+                verified=False,
+                message="Verification code sent",
+            )
+
+        code = generate_otp_code()
         if channel == "phone":
+            assert self._phone is not None
             code = self._phone.challenge_code(to_phone=pending.phone or "", generated_code=code)
         await self._otp.store_otp(pending.id, channel, code)
-        ttl_minutes = max(1, self._settings.signup_otp_ttl_seconds // 60)
         if channel == "email":
             await self._email.send_signup_otp(to_email=pending.email, code=code, ttl_minutes=ttl_minutes)
             pending.email_otp_sent_count += 1
             pending.email_last_otp_sent_at = datetime.now(tz=UTC)
         else:
+            assert self._phone is not None
             await self._phone.send_signup_otp(to_phone=pending.phone or "", code=code, ttl_minutes=ttl_minutes)
             pending.phone_otp_sent_count += 1
             pending.phone_last_otp_sent_at = datetime.now(tz=UTC)
@@ -734,6 +770,9 @@ class AuthService:
         if channel == "phone" and pending.phone_verified_at is not None:
             return self._build_channel_verify_response(pending, channel, message="Phone already verified")
 
+        if channel == "phone" and self._settings.phone_otp_backend == "msg91":
+            return await self._verify_msg91_phone_otp(pending, normalized_code)
+
         ok = await self._otp.verify_and_consume(pending.id, channel, normalized_code)
         if not ok:
             if channel == "email":
@@ -750,6 +789,69 @@ class AuthService:
             pending.phone_verified_at = now
         await self._session.commit()
         return self._build_channel_verify_response(pending, channel, message=f"{channel.capitalize()} verified")
+
+    async def _send_msg91_phone_otp(self, pending: PendingSignup, *, resend: bool) -> None:
+        if self._msg91_phone is None:
+            raise RuntimeError("MSG91 phone provider is not configured")
+
+        phone_e164 = normalize_phone(pending.phone or "", self._settings)
+        existing_state = await self._otp.get_provider_state(pending.id, "phone")
+        if resend and existing_state is not None:
+            dispatch = await self._msg91_phone.resend_signup_otp(
+                to_phone=phone_e164,
+                prior_request_id=str(existing_state.get("request_id") or "") or None,
+            )
+        else:
+            dispatch = await self._msg91_phone.send_signup_otp(to_phone=phone_e164)
+
+        await self._otp.store_provider_state(
+            pending.id,
+            "phone",
+            {
+                "provider": dispatch.provider,
+                "request_id": dispatch.request_id,
+                "phone_e164": phone_e164,
+            },
+        )
+
+    async def _verify_msg91_phone_otp(
+        self,
+        pending: PendingSignup,
+        code: str,
+    ) -> SignupChannelVerifyResponse:
+        if self._msg91_phone is None:
+            raise RuntimeError("MSG91 phone provider is not configured")
+
+        state = await self._otp.get_provider_state(pending.id, "phone")
+        if state is None:
+            pending.phone_verify_attempt_count += 1
+            await self._session.commit()
+            raise UnauthorizedError("Invalid or expired verification code")
+
+        expected_phone = normalize_phone(pending.phone or "", self._settings)
+        stored_phone = str(state.get("phone_e164") or "").strip()
+        request_id = str(state.get("request_id") or "").strip()
+        if not stored_phone or not request_id:
+            pending.phone_verify_attempt_count += 1
+            await self._otp.clear(pending.id, "phone")
+            await self._session.commit()
+            raise UnauthorizedError("Invalid or expired verification code")
+        if stored_phone != expected_phone:
+            pending.phone_verify_attempt_count += 1
+            await self._session.commit()
+            raise ConflictError("Verified phone number does not match signup session")
+
+        try:
+            await self._msg91_phone.verify_signup_otp(to_phone=expected_phone, code=code)
+        except UnauthorizedError:
+            pending.phone_verify_attempt_count += 1
+            await self._session.commit()
+            raise
+
+        await self._otp.clear(pending.id, "phone")
+        pending.phone_verified_at = datetime.now(tz=UTC)
+        await self._session.commit()
+        return self._build_channel_verify_response(pending, "phone", message="Phone verified")
 
     async def _load_active_pending(self, signup_session_id: UUID, allow_completed: bool = False) -> PendingSignup:
         pending = await self._pending.get_by_id(signup_session_id)

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -48,6 +50,12 @@ class SignupOtpStore:
             identifier=str(signup_session_id),
         )
 
+    def _provider_state_key(self, signup_session_id: UUID, channel: str) -> str:
+        return self._keys.cache(
+            domain=f"signup_otp_provider:{channel}",
+            key=str(signup_session_id),
+        )
+
     async def store_otp(self, signup_session_id: UUID, channel: str, code: str) -> None:
         ttl = self._settings.signup_otp_ttl_seconds
         await self._redis.set(self._otp_key(signup_session_id, channel), hash_otp_code(code), ex=ttl)
@@ -71,11 +79,48 @@ return 1
 
     async def clear(self, signup_session_id: UUID, channel: str) -> None:
         await self._redis.delete(self._otp_key(signup_session_id, channel))
+        if channel == "phone":
+            await self._redis.delete(self._provider_state_key(signup_session_id, channel))
 
     async def clear_all(self, signup_session_id: UUID) -> None:
         # Redis Cluster rejects multi-key commands when keys hash to different slots.
         await self._redis.delete(self._otp_key(signup_session_id, "email"))
         await self._redis.delete(self._otp_key(signup_session_id, "phone"))
+        await self._redis.delete(self._provider_state_key(signup_session_id, "phone"))
+
+    async def store_provider_state(
+        self,
+        signup_session_id: UUID,
+        channel: str,
+        state: dict[str, Any],
+    ) -> None:
+        ttl = max(
+            self._settings.signup_otp_ttl_seconds,
+            self._settings.msg91_otp_expiry_minutes * 60,
+        )
+        await self._redis.set(
+            self._provider_state_key(signup_session_id, channel),
+            json.dumps(state),
+            ex=ttl,
+        )
+
+    async def get_provider_state(
+        self,
+        signup_session_id: UUID,
+        channel: str,
+    ) -> dict[str, Any] | None:
+        raw = await self._redis.get(self._provider_state_key(signup_session_id, channel))
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        if not isinstance(raw, str):
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
 
     async def enforce_send_rate(self, signup_session_id: UUID, channel: str) -> None:
         """Hourly send cap across start + resend.

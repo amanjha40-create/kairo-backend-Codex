@@ -43,6 +43,16 @@ def test_explicit_production_dependencies_are_accepted() -> None:
     assert settings.runtime_database_url.startswith("postgresql+asyncpg://")
 
 
+def test_msg91_production_phone_otp_is_accepted_when_fully_configured() -> None:
+    settings = production_settings(
+        phone_otp_backend="msg91",
+        msg91_auth_key="server-auth-key",
+        msg91_template_id="template-123",
+    )
+
+    assert settings.phone_otp_backend == "msg91"
+
+
 def test_structured_runtime_database_configuration_is_accepted() -> None:
     settings = production_settings(
         database_url=None,
@@ -97,6 +107,15 @@ def test_structured_runtime_database_configuration_wins_over_legacy_url() -> Non
         (
             {"phone_otp_backend": "staging_fixed", "staging_phone_otp_code": "123456"},
             "Staging fixed OTP",
+        ),
+        ({"phone_otp_backend": "msg91", "msg91_auth_key": None}, "MSG91_AUTH_KEY"),
+        (
+            {
+                "phone_otp_backend": "msg91",
+                "msg91_auth_key": "server-auth-key",
+                "msg91_template_id": None,
+            },
+            "MSG91_TEMPLATE_ID",
         ),
         ({"docs_enabled": True}, "DOCS_ENABLED"),
         ({"database_echo_sql": True}, "DATABASE_ECHO_SQL"),
