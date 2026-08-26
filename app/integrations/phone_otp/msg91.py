@@ -19,6 +19,8 @@ from app.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+_MSG91_SIGNUP_OTP_LENGTH = "6"
+
 _INVALID_PHONE_HINTS = (
     "invalid mobile",
     "invalid phone",
@@ -141,6 +143,7 @@ class Msg91PhoneOtpProvider:
                 "authkey": self._auth_key(),
                 "mobile": self._provider_identifier(to_phone),
                 "template_id": self._settings.msg91_template_id or "",
+                "otp_length": _MSG91_SIGNUP_OTP_LENGTH,
                 "otp_expiry": str(self._settings.msg91_otp_expiry_minutes),
             },
             log_event="otp_provider_accepted",

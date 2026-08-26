@@ -145,15 +145,17 @@ def _response(status_code: int, payload: dict[str, object]) -> httpx.Response:
 async def test_msg91_send_returns_request_id_and_redacts_secrets(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    client = _FakeMsg91Client(_response(200, {"type": "success", "message": "req-123"}))
     provider = Msg91PhoneOtpProvider(
         _settings(),
-        client=_FakeMsg91Client(_response(200, {"type": "success", "message": "req-123"})),
+        client=client,
     )
 
     with caplog.at_level(logging.INFO):
         result = await provider.send_signup_otp(to_phone="+919876543210")
 
     assert result.request_id == "req-123"
+    assert client.calls[0][2]["otp_length"] == "6"
     assert "server-auth-key" not in caplog.text
     assert "+919876543210" not in caplog.text
 
