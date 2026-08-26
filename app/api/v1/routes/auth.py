@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.rate_limit import auth_rate_limit, otp_verify_rate_limit
@@ -270,10 +270,12 @@ async def login(
     dependencies=[Depends(auth_rate_limit)],
 )
 async def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
     auth: AuthService = Depends(get_auth_service),
 ) -> ForgotPasswordResponse:
-    return await auth.forgot_password(payload)
+    requested_base_url = request.headers.get("origin") or request.headers.get("referer")
+    return await auth.forgot_password(payload, requested_base_url=requested_base_url)
 
 
 @router.post(

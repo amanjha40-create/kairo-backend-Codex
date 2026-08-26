@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -109,7 +109,37 @@ class AuthService:
         self._email = get_email_sender(settings, session=session)
         self._phone = get_phone_otp_sender(settings)
 
-    async def _password_reset_url_for_user(self, user: User, raw_token: str) -> str | None:
+    def _institution_portal_origin_from_request(self, requested_base_url: str | None) -> str | None:
+        base_url = (self._settings.institution_portal_base_url or "").strip().rstrip("/")
+        if not base_url:
+            return None
+        requested = (requested_base_url or "").strip()
+        if not requested:
+            return None
+
+        parsed = urlparse(requested)
+        if parsed.scheme != "https" or not parsed.netloc:
+            return None
+
+        requested_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        if requested_origin != base_url:
+            return None
+        return base_url
+
+    async def _password_reset_url_for_user(
+        self,
+        user: User,
+        raw_token: str,
+        *,
+        requested_base_url: str | None = None,
+    ) -> str | None:
+        requested_origin = self._institution_portal_origin_from_request(requested_base_url)
+        if requested_origin:
+            return (
+                f"{requested_origin}/institution/login?"
+                f"reset_token={quote(raw_token, safe='')}"
+            )
+
         base_url = (self._settings.institution_portal_base_url or "").strip().rstrip("/")
         if not base_url:
             return None
@@ -354,7 +384,12 @@ class AuthService:
         await self._session.commit()
         return tokens
 
-    async def forgot_password(self, data: ForgotPasswordRequest) -> ForgotPasswordResponse:
+    async def forgot_password(
+        self,
+        data: ForgotPasswordRequest,
+        *,
+        requested_base_url: str | None = None,
+    ) -> ForgotPasswordResponse:
         email = normalize_email(str(data.email))
         user = await self._users.get_by_email(email)
         if (
@@ -381,7 +416,11 @@ class AuthService:
         )
 
         try:
-            reset_url = await self._password_reset_url_for_user(user, raw_token)
+            reset_url = await self._password_reset_url_for_user(
+                user,
+                raw_token,
+                requested_base_url=requested_base_url,
+            )
             await self._email.send_password_reset(
                 to_email=user.email,
                 reset_token=raw_token,

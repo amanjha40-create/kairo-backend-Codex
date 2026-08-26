@@ -79,5 +79,24 @@ async def test_password_reset_url_falls_back_when_user_has_no_university_members
     assert url is None
 
 
+@pytest.mark.asyncio
+async def test_password_reset_url_uses_matching_institution_request_origin_without_membership() -> None:
+    service = AuthService(session=object(), settings=_settings(), redis=object())  # type: ignore[arg-type]
+    service._organizations.list_for_user = lambda user_id: _async_return([])  # type: ignore[method-assign]
+    user = User(email="institution.user@example.com")
+
+    url = await service._password_reset_url_for_user(
+        user,
+        "reset-token",
+        requested_base_url="https://institution-staging.d3lrsnjzo6p8fc.amplifyapp.com/institution/login",
+    )
+
+    assert (
+        url
+        == "https://institution-staging.d3lrsnjzo6p8fc.amplifyapp.com"
+        "/institution/login?reset_token=reset-token"
+    )
+
+
 async def _async_return(value):  # noqa: ANN001
     return value
