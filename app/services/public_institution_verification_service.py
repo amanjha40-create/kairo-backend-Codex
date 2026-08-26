@@ -442,7 +442,7 @@ class PublicInstitutionVerificationService:
         return PublicInstitutionVerificationRequestProjection(
             reference=f"VR-{str(request.public_id).split('-', 1)[0].upper()}",
             requested_by=organization_name,
-            purpose=f"{request.request_type.value.replace('_', ' ').title()} verification request",
+            purpose=f"{self._request_type_label(request)} verification request",
             request_date=request.created_at,
             consent_received=request.consented_at is not None,
             candidate=PublicInstitutionVerificationCandidateClaim(
@@ -471,6 +471,11 @@ class PublicInstitutionVerificationService:
 
     def _request_organization_name(self, request: VerificationRequest) -> str:
         return request.target_organization_name or "Kairo"
+
+    @staticmethod
+    def _request_type_label(request: VerificationRequest) -> str:
+        request_type = getattr(request.request_type, "value", request.request_type)
+        return str(request_type).replace("_", " ").title()
 
     @staticmethod
     def _format_period(value) -> str:  # noqa: ANN001

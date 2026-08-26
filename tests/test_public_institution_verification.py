@@ -202,6 +202,50 @@ async def test_public_projection_does_not_touch_lazy_request_organization() -> N
 
 
 @pytest.mark.asyncio
+async def test_public_projection_accepts_string_request_type() -> None:
+    service = PublicInstitutionVerificationService.__new__(PublicInstitutionVerificationService)
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        education_id=uuid4(),
+        target_organization_name="Institution Acceptance University",
+        subject_name="Synthetic Student",
+        request_type="education",
+        created_at=datetime.now(tz=UTC),
+        consented_at=datetime.now(tz=UTC),
+        candidate_response="Candidate supplied note",
+    )
+    education = SimpleNamespace(
+        institution_name="Kairo University",
+        degree="BSc",
+        field_of_study="Computer Science",
+        start_date=datetime(2020, 1, 1, tzinfo=UTC),
+        end_date=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    evidence_item = SimpleNamespace()
+    evidence_response = SimpleNamespace(
+        public_id=uuid4(),
+        original_filename="transcript.pdf",
+        field_key="education_evidence",
+        document_type="transcript",
+        evidence_type="transcript",
+        created_at=datetime.now(tz=UTC),
+        download_url="https://example.test/evidence.pdf",
+    )
+    service._education = SimpleNamespace(get_active_by_id=AsyncMock(return_value=education))
+    service._evidence = SimpleNamespace(list_for_request=AsyncMock(return_value=[evidence_item]))
+    service._verification_service = SimpleNamespace(
+        _filter_evidence_by_consent=lambda _request, items: items,
+        _to_evidence_response=AsyncMock(return_value=evidence_response),
+    )
+
+    result = await service._build_request_projection(request)
+
+    assert result.purpose == "Education verification request"
+    assert result.requested_by == "Institution Acceptance University"
+
+
+@pytest.mark.asyncio
 async def test_confirm_public_response_advances_to_admin_quality_review_once() -> None:
     service = PublicInstitutionVerificationService.__new__(PublicInstitutionVerificationService)
     now = datetime.now(tz=UTC)
