@@ -46,12 +46,17 @@ def build_password_reset_email(
     from_email: str,
     reset_token: str,
     ttl_minutes: int,
+    reset_url: str | None = None,
     reply_to: str | None = None,
 ) -> EmailMessage:
     del app_name
     return build_mime_message(
         content=render_password_reset(
-            PasswordResetContext(reset_token=reset_token, ttl_minutes=ttl_minutes)
+            PasswordResetContext(
+                reset_token=reset_token,
+                ttl_minutes=ttl_minutes,
+                reset_url=reset_url,
+            )
         ),
         to_email=to_email,
         from_email=from_email,
@@ -136,7 +141,12 @@ class SmtpEmailSender:
         )
 
     async def send_password_reset(
-        self, *, to_email: str, reset_token: str, ttl_minutes: int
+        self,
+        *,
+        to_email: str,
+        reset_token: str,
+        ttl_minutes: int,
+        reset_url: str | None = None,
     ) -> None:
         message = build_password_reset_email(
             app_name=self._settings.app_name,
@@ -144,6 +154,7 @@ class SmtpEmailSender:
             from_email=self._settings.email_from,
             reset_token=reset_token,
             ttl_minutes=ttl_minutes,
+            reset_url=reset_url,
             reply_to=self._settings.email_reply_to,
         )
         try:

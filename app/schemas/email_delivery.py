@@ -29,6 +29,7 @@ class PasswordResetEmailTemplateData(BaseModel):
 
     reset_token: str = Field(min_length=1, max_length=2048)
     ttl_minutes: int = Field(ge=1, le=1440)
+    reset_url: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
 class AdminInvitationEmailTemplateData(BaseModel):

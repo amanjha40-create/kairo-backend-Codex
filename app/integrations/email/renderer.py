@@ -95,6 +95,7 @@ def _render_password_reset(to_email: str, data: dict[str, Any]) -> RenderedEmail
         PasswordResetContext(
             reset_token=payload.reset_token,
             ttl_minutes=payload.ttl_minutes,
+            reset_url=payload.reset_url,
         )
     )
     return RenderedEmailMessage(

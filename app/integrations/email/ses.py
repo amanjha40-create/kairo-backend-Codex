@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from email.message import EmailMessage
 import logging
 import re
+from email.message import EmailMessage
 from typing import Any
 
 import boto3
@@ -113,11 +113,20 @@ class SesEmailSender:
         )
 
     async def send_password_reset(
-        self, *, to_email: str, reset_token: str, ttl_minutes: int
+        self,
+        *,
+        to_email: str,
+        reset_token: str,
+        ttl_minutes: int,
+        reset_url: str | None = None,
     ) -> None:
         message = build_mime_message(
             content=render_password_reset(
-                PasswordResetContext(reset_token=reset_token, ttl_minutes=ttl_minutes)
+                PasswordResetContext(
+                    reset_token=reset_token,
+                    ttl_minutes=ttl_minutes,
+                    reset_url=reset_url,
+                )
             ),
             to_email=to_email,
             from_email=self._settings.ses_from_email or self._settings.email_from,

@@ -76,6 +76,29 @@ def test_render_institution_verification_keeps_review_url_out_of_audit_payload()
     assert raw_token not in str(message.audit_payload)
 
 
+def test_render_password_reset_keeps_reset_url_out_of_audit_payload() -> None:
+    renderer = EmailTemplateRenderer()
+    reset_url = (
+        "https://institution-staging.d3lrsnjzo6p8fc.amplifyapp.com/"
+        "institution/login?reset_token=single-use-reset-token"
+    )
+
+    message = renderer.render(
+        template_key=EmailTemplateKey.PASSWORD_RESET.value,
+        to_email="institution-user@example.com",
+        data={
+            "reset_token": "single-use-reset-token",
+            "ttl_minutes": 15,
+            "reset_url": reset_url,
+        },
+    )
+
+    assert "Reset password:" in message.text_body
+    assert reset_url in message.text_body
+    assert "reset_url" not in message.audit_payload
+    assert "single-use-reset-token" not in str(message.audit_payload)
+
+
 @pytest.mark.parametrize(
     ("template_key", "data", "expected_phrase"),
     [

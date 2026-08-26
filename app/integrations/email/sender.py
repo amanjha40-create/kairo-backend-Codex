@@ -34,6 +34,7 @@ class EmailSender(Protocol):
         to_email: str,
         reset_token: str,
         ttl_minutes: int,
+        reset_url: str | None = None,
         audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
@@ -167,6 +168,7 @@ class ProviderEmailSender:
         to_email: str,
         reset_token: str,
         ttl_minutes: int,
+        reset_url: str | None = None,
         audit_metadata: dict[str, object] | None = None,
     ) -> None:
         try:
@@ -174,7 +176,11 @@ class ProviderEmailSender:
                 message=self._renderer.render(
                     template_key=EmailTemplateKey.PASSWORD_RESET.value,
                     to_email=to_email,
-                    data={"reset_token": reset_token, "ttl_minutes": ttl_minutes},
+                    data={
+                        "reset_token": reset_token,
+                        "ttl_minutes": ttl_minutes,
+                        "reset_url": reset_url,
+                    },
                 ),
                 failure_message="Unable to send password reset email",
                 audit_metadata=audit_metadata,

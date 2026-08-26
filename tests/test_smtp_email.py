@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from app.integrations.email.smtp import build_password_reset_email, build_signup_otp_email
 
+RESET_URL = (
+    "https://institution-staging.d3lrsnjzo6p8fc.amplifyapp.com/"
+    "institution/login?reset_token=reset-token-123"
+)
+
 
 def _bodies(message) -> tuple[str, str]:
     plain = message.get_body(preferencelist=("plain",))
@@ -41,3 +46,19 @@ def test_build_password_reset_email() -> None:
     text_body, html_body = _bodies(msg)
     assert "reset-token-123" in text_body
     assert "reset-token-123" in html_body
+
+
+def test_build_password_reset_email_with_reset_url() -> None:
+    msg = build_password_reset_email(
+        app_name="Kairo",
+        to_email="user@example.com",
+        from_email="noreply@kairo.app",
+        reset_token="reset-token-123",
+        ttl_minutes=30,
+        reset_url=RESET_URL,
+    )
+
+    text_body, html_body = _bodies(msg)
+    assert "Reset password:" in text_body
+    assert RESET_URL in text_body
+    assert f'href="{RESET_URL}"' in html_body

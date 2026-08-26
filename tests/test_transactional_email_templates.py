@@ -113,6 +113,25 @@ def test_password_reset_contains_token_expiry_and_security_notice() -> None:
     assert "Never share this token" in content.text_body
 
 
+def test_password_reset_prefers_reset_link_when_available() -> None:
+    reset_url = (
+        "https://institution-staging.d3lrsnjzo6p8fc.amplifyapp.com/"
+        "institution/login?reset_token=opaque-reset-token"
+    )
+    content = render_password_reset(
+        PasswordResetContext(
+            reset_token="one-time-reset",
+            ttl_minutes=30,
+            reset_url=reset_url,
+        )
+    )
+
+    assert "Reset password" in content.html_body
+    assert reset_url in content.html_body
+    assert reset_url in content.text_body
+    assert "Password reset token:" not in content.text_body
+
+
 def test_admin_invitation_uses_acceptance_cta_without_standalone_token() -> None:
     raw_token = "single-use-admin-token-1234567890"
     invitation_url = f"https://admin.example.com/admin/accept-invitation#token={raw_token}"

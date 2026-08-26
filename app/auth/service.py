@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from urllib.parse import quote
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -30,7 +31,9 @@ from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
 from app.models import PasswordResetToken, PendingSignup, RefreshToken, User
 from app.models.user_social_account import UserSocialAccount
+from app.organization.enums import OrganizationType
 from app.repositories import PasswordResetTokenRepository, RefreshTokenRepository, UserRepository
+from app.repositories.organization import OrganizationRepository
 from app.repositories.pending_signup import PendingSignupRepository
 from app.repositories.user_social_account import UserSocialAccountRepository
 from app.schemas.auth import (
@@ -97,6 +100,7 @@ class AuthService:
         self._session = session
         self._settings = settings
         self._users = UserRepository(session)
+        self._organizations = OrganizationRepository(session)
         self._pending = PendingSignupRepository(session)
         self._password_resets = PasswordResetTokenRepository(session)
         self._refresh = RefreshTokenRepository(session)
@@ -104,6 +108,21 @@ class AuthService:
         self._otp = SignupOtpStore(redis, settings)
         self._email = get_email_sender(settings, session=session)
         self._phone = get_phone_otp_sender(settings)
+
+    async def _password_reset_url_for_user(self, user: User, raw_token: str) -> str | None:
+        base_url = (self._settings.institution_portal_base_url or "").strip().rstrip("/")
+        if not base_url:
+            return None
+
+        memberships = await self._organizations.list_for_user(user.id)
+        for organization, membership in memberships:
+            if organization.suspended_at is not None or membership.suspended_at is not None:
+                continue
+            if organization.organization_type is not OrganizationType.UNIVERSITY:
+                continue
+            return f"{base_url}/institution/login?reset_token={quote(raw_token, safe='')}"
+
+        return None
 
     async def start_signup(self, data: RegisterRequest) -> SignupStartResponse:
         """Create or replace a staged dual-channel signup session."""
@@ -362,10 +381,12 @@ class AuthService:
         )
 
         try:
+            reset_url = await self._password_reset_url_for_user(user, raw_token)
             await self._email.send_password_reset(
                 to_email=user.email,
                 reset_token=raw_token,
                 ttl_minutes=self._settings.password_reset_token_ttl_minutes,
+                reset_url=reset_url,
             )
         except Exception as exc:
             logger.warning(
