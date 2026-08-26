@@ -136,9 +136,31 @@ def _service(
     return service
 
 
-def _response(status_code: int, payload: dict[str, object]) -> httpx.Response:
-    request = httpx.Request("POST", "https://control.msg91.com/api/v5/otp")
+def _response(
+    status_code: int,
+    payload: dict[str, object],
+    *,
+    method: str = "POST",
+    path: str = "/otp",
+) -> httpx.Response:
+    request = httpx.Request(method, f"https://control.msg91.com/api/v5{path}")
     return httpx.Response(status_code, request=request, json=payload)
+
+
+def _raw_response(
+    status_code: int,
+    body: str,
+    *,
+    method: str = "GET",
+    path: str = "/otp/verify",
+) -> httpx.Response:
+    request = httpx.Request(method, f"https://control.msg91.com/api/v5{path}")
+    return httpx.Response(
+        status_code,
+        request=request,
+        content=body.encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
 
 
 @pytest.mark.asyncio
@@ -210,6 +232,121 @@ async def test_msg91_verify_maps_invalid_otp_to_unauthorized() -> None:
     )
 
     with pytest.raises(UnauthorizedError, match="Invalid or expired verification code"):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+
+@pytest.mark.asyncio
+async def test_msg91_verify_accepts_explicit_success_body_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _FakeMsg91Client(
+        _response(
+            200,
+            {"type": "success", "message": "OTP verified success", "reqId": "req-123"},
+            method="GET",
+            path="/otp/verify",
+        )
+    )
+    provider = Msg91PhoneOtpProvider(_settings(), client=client)
+
+    with caplog.at_level(logging.INFO):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+    assert client.calls[0][0] == "GET"
+    assert client.calls[0][1].endswith("/otp/verify")
+    assert any(record.msg == "otp_verify_success" for record in caplog.records)
+    assert not any(record.msg == "msg91_verify_rejected" for record in caplog.records)
+    assert "123456" not in caplog.text
+    assert "+919876543210" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_msg91_verify_rejects_invalid_otp_body_even_with_http_200(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = Msg91PhoneOtpProvider(
+        _settings(),
+        client=_FakeMsg91Client(
+            _response(
+                200,
+                {"type": "error", "message": "Invalid OTP"},
+                method="GET",
+                path="/otp/verify",
+            )
+        ),
+    )
+
+    with caplog.at_level(logging.INFO), pytest.raises(
+        UnauthorizedError, match="Invalid or expired verification code"
+    ):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+    assert any(record.msg == "msg91_verify_rejected" for record in caplog.records)
+    assert not any(record.msg == "otp_verify_success" for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_msg91_verify_rejects_expired_otp_body_even_with_http_200() -> None:
+    provider = Msg91PhoneOtpProvider(
+        _settings(),
+        client=_FakeMsg91Client(
+            _response(
+                200,
+                {"type": "error", "message": "OTP Expired"},
+                method="GET",
+                path="/otp/verify",
+            )
+        ),
+    )
+
+    with pytest.raises(UnauthorizedError, match="Invalid or expired verification code"):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+
+@pytest.mark.asyncio
+async def test_msg91_verify_rejects_unknown_http_200_body_closed() -> None:
+    provider = Msg91PhoneOtpProvider(
+        _settings(),
+        client=_FakeMsg91Client(
+            _response(
+                200,
+                {"type": "success", "message": "Something unexpected"},
+                method="GET",
+                path="/otp/verify",
+            )
+        ),
+    )
+
+    with pytest.raises(ServiceUnavailableError, match="temporarily unavailable"):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+
+@pytest.mark.asyncio
+async def test_msg91_verify_rejects_malformed_http_200_body() -> None:
+    provider = Msg91PhoneOtpProvider(
+        _settings(),
+        client=_FakeMsg91Client(_raw_response(200, "{not-json")),
+    )
+
+    with pytest.raises(ServiceUnavailableError, match="temporarily unavailable"):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+
+@pytest.mark.asyncio
+async def test_msg91_verify_maps_rate_limit_error_from_non_2xx_response() -> None:
+    provider = Msg91PhoneOtpProvider(
+        _settings(),
+        client=_FakeMsg91Client(
+            _response(
+                429,
+                {"type": "rate_limited", "message": "Too many verification attempts"},
+                method="GET",
+                path="/otp/verify",
+            )
+        ),
+    )
+
+    with pytest.raises(RateLimitError, match="Too many verification attempts"):
         await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
 
 
@@ -384,3 +521,5 @@ async def test_auth_service_msg91_verify_increments_attempts_on_invalid_code() -
         )
 
     assert pending.phone_verify_attempt_count == 1
+    assert pending.phone_verified_at is None
+    assert otp_store.clear_calls == []

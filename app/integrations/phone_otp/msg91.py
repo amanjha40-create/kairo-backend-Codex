@@ -51,6 +51,9 @@ _RETRY_EXHAUSTED_HINTS = (
     "retry limit",
     "maximum retry",
 )
+_VERIFY_SUCCESS_MESSAGES = {
+    "otp verified success",
+}
 
 
 @dataclass(slots=True)
@@ -121,6 +124,25 @@ def _raise_verify_error(sanitized: dict[str, str | int]) -> None:
     if _contains_hint(detail, _RATE_LIMIT_HINTS):
         raise RateLimitError("Too many verification attempts. Try again later.")
     raise ServiceUnavailableError("Phone verification is temporarily unavailable")
+
+
+def _sanitize_msg91_payload(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        return {}
+    sanitized: dict[str, str] = {}
+    for key in ("type", "message", "code", "error", "details"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        sanitized[key] = str(value)[:300]
+    return sanitized
+
+
+def _verify_success_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    message = str(payload.get("message") or "").strip().lower()
+    return message in _VERIFY_SUCCESS_MESSAGES
 
 
 class Msg91PhoneOtpProvider:
@@ -203,7 +225,7 @@ class Msg91PhoneOtpProvider:
         return Msg91DispatchResult(provider=self.provider_name, request_id=request_id)
 
     async def verify_signup_otp(self, *, to_phone: str, code: str) -> None:
-        await self._request(
+        payload = await self._request(
             "GET",
             "/otp/verify",
             params={
@@ -214,6 +236,48 @@ class Msg91PhoneOtpProvider:
             log_event="otp_verify_success",
             log_phone=to_phone,
             action="verify",
+            log_on_success=False,
+        )
+
+        if _verify_success_payload(payload):
+            logger.info(
+                "otp_verify_success",
+                extra={
+                    "event": "otp_verify_success",
+                    "provider": self.provider_name,
+                    "action": "verify",
+                    "to_phone_masked": mask_phone(to_phone),
+                    "request_id_present": _extract_request_id(payload) is not None,
+                    "template_id_configured": bool(self._settings.msg91_template_id),
+                    "sender_id_configured": bool(self._settings.msg91_sender_id),
+                },
+            )
+            return
+
+        sanitized = _sanitize_msg91_payload(payload)
+        provider_error_code = (
+            sanitized.get("type") or sanitized.get("code") or "unknown_200"
+        )
+        provider_error_message = (
+            sanitized.get("message") or "Unexpected verification response"
+        )
+        logger.info(
+            "msg91_verify_rejected",
+            extra={
+                "event": "msg91_verify_rejected",
+                "provider": self.provider_name,
+                "action": "verify",
+                "to_phone_masked": mask_phone(to_phone),
+                "provider_error_code": provider_error_code,
+                "provider_error_message": provider_error_message,
+            },
+        )
+        _raise_verify_error(
+            {
+                "http_status": 200,
+                "provider_error_code": provider_error_code,
+                "provider_error_message": provider_error_message,
+            }
         )
 
     def _auth_key(self) -> str:
@@ -238,6 +302,7 @@ class Msg91PhoneOtpProvider:
         log_event: str,
         log_phone: str,
         action: str,
+        log_on_success: bool = True,
     ) -> Any:
         created_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self._settings.msg91_timeout_seconds)
@@ -312,16 +377,17 @@ class Msg91PhoneOtpProvider:
             )
             raise ServiceUnavailableError("Phone verification is temporarily unavailable") from exc
 
-        logger.info(
-            log_event,
-            extra={
-                "event": log_event,
-                "provider": self.provider_name,
-                "action": action,
-                "to_phone_masked": mask_phone(log_phone),
-                "request_id_present": _extract_request_id(payload) is not None,
-                "template_id_configured": bool(self._settings.msg91_template_id),
-                "sender_id_configured": bool(self._settings.msg91_sender_id),
-            },
-        )
+        if log_on_success:
+            logger.info(
+                log_event,
+                extra={
+                    "event": log_event,
+                    "provider": self.provider_name,
+                    "action": action,
+                    "to_phone_masked": mask_phone(log_phone),
+                    "request_id_present": _extract_request_id(payload) is not None,
+                    "template_id_configured": bool(self._settings.msg91_template_id),
+                    "sender_id_configured": bool(self._settings.msg91_sender_id),
+                },
+            )
         return payload
