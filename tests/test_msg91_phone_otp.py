@@ -286,6 +286,24 @@ async def test_msg91_verify_rejects_invalid_otp_body_even_with_http_200(
 
 
 @pytest.mark.asyncio
+async def test_msg91_verify_rejects_otp_not_match_body_even_with_http_200() -> None:
+    provider = Msg91PhoneOtpProvider(
+        _settings(),
+        client=_FakeMsg91Client(
+            _response(
+                200,
+                {"type": "error", "message": "OTP not match"},
+                method="GET",
+                path="/otp/verify",
+            )
+        ),
+    )
+
+    with pytest.raises(UnauthorizedError, match="Invalid or expired verification code"):
+        await provider.verify_signup_otp(to_phone="+919876543210", code="123456")
+
+
+@pytest.mark.asyncio
 async def test_msg91_verify_rejects_expired_otp_body_even_with_http_200() -> None:
     provider = Msg91PhoneOtpProvider(
         _settings(),
