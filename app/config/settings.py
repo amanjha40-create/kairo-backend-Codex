@@ -763,6 +763,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "ADMIN_PORTAL_BASE_URL must be an HTTPS origin in APP_ENV=production."
                 )
+            if self.institution_portal_base_url and not _is_https_origin(
+                self.institution_portal_base_url
+            ):
+                raise ValueError(
+                    "INSTITUTION_PORTAL_BASE_URL must be an HTTPS origin in APP_ENV=production."
+                )
             admin_origin = self.admin_portal_base_url.rstrip("/")
             allowed_origins = {origin.rstrip("/") for origin in self.cors_origins}
             if not allowed_origins or "*" in allowed_origins:

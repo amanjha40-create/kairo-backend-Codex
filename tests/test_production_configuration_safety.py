@@ -21,6 +21,7 @@ def production_settings(**overrides: object) -> Settings:
         "phone_otp_backend": "sns",
         "aws_region": "us-east-1",
         "app_public_base_url": "https://api.kairoid.com",
+        "institution_portal_base_url": "https://institution.kairoid.com",
         "admin_portal_base_url": "https://admin.kairoid.com",
         "cors_origins": ["https://admin.kairoid.com"],
         "docs_enabled": False,
@@ -83,6 +84,10 @@ def test_structured_runtime_database_configuration_wins_over_legacy_url() -> Non
         ({"redis_url": "redis://127.0.0.1:6379/0"}, "REDIS_URL"),
         ({"redis_url": "redis://cache.internal:6379/0"}, "REDIS_URL"),
         ({"app_public_base_url": "http://api.kairoid.com"}, "APP_PUBLIC_BASE_URL"),
+        (
+            {"institution_portal_base_url": "http://institution.kairoid.com"},
+            "INSTITUTION_PORTAL_BASE_URL",
+        ),
         ({"admin_portal_base_url": "http://admin.kairoid.com"}, "ADMIN_PORTAL_BASE_URL"),
         ({"cors_origins": []}, "CORS_ORIGINS"),
         ({"cors_origins": ["*"]}, "CORS_ORIGINS"),

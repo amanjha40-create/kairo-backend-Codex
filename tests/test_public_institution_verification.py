@@ -11,7 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies.services import get_public_institution_verification_service
-from app.exceptions import ConflictError
+from app.exceptions import ConflictError, ValidationAppError
 from app.main import app
 from app.schemas.public_institution_verification import (
     PublicInstitutionVerificationCandidateClaim,
@@ -199,6 +199,77 @@ async def test_public_projection_does_not_touch_lazy_request_organization() -> N
     assert result.requested_by == "Institution Acceptance University"
     assert result.candidate.programme == "Computer Science"
     assert result.evidence[0].name == "transcript.pdf"
+
+
+@pytest.mark.asyncio
+async def test_public_projection_accepts_string_request_type() -> None:
+    service = PublicInstitutionVerificationService.__new__(PublicInstitutionVerificationService)
+    request = SimpleNamespace(
+        id=uuid4(),
+        public_id=uuid4(),
+        education_id=uuid4(),
+        target_organization_name="Institution Acceptance University",
+        subject_name="Synthetic Student",
+        request_type="education",
+        created_at=datetime.now(tz=UTC),
+        consented_at=datetime.now(tz=UTC),
+        candidate_response="Candidate supplied note",
+    )
+    education = SimpleNamespace(
+        institution_name="Kairo University",
+        degree="BSc",
+        field_of_study="Computer Science",
+        start_date=datetime(2020, 1, 1, tzinfo=UTC),
+        end_date=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    evidence_item = SimpleNamespace()
+    evidence_response = SimpleNamespace(
+        public_id=uuid4(),
+        original_filename="transcript.pdf",
+        field_key="education_evidence",
+        document_type="transcript",
+        evidence_type="transcript",
+        created_at=datetime.now(tz=UTC),
+        download_url="https://example.test/evidence.pdf",
+    )
+    service._education = SimpleNamespace(get_active_by_id=AsyncMock(return_value=education))
+    service._evidence = SimpleNamespace(list_for_request=AsyncMock(return_value=[evidence_item]))
+    service._verification_service = SimpleNamespace(
+        _filter_evidence_by_consent=lambda _request, items: items,
+        _to_evidence_response=AsyncMock(return_value=evidence_response),
+    )
+
+    result = await service._build_request_projection(request)
+
+    assert result.purpose == "Education verification request"
+    assert result.requested_by == "Institution Acceptance University"
+
+
+def test_review_link_uses_configured_institution_portal_origin() -> None:
+    service = PublicInstitutionVerificationService.__new__(PublicInstitutionVerificationService)
+    service._settings = SimpleNamespace(  # noqa: SLF001
+        institution_portal_base_url="https://institution-staging.example.com/",
+        app_public_base_url="https://candidate.example.com",
+    )
+
+    link = service._review_link("public-token-value")
+
+    assert link == "https://institution-staging.example.com/institution/verify/public-token-value"
+    assert "candidate.example.com" not in link
+
+
+def test_review_link_requires_dedicated_institution_portal_origin() -> None:
+    service = PublicInstitutionVerificationService.__new__(PublicInstitutionVerificationService)
+    service._settings = SimpleNamespace(  # noqa: SLF001
+        institution_portal_base_url=None,
+        app_public_base_url="https://d3kpvsn9kfajzc.cloudfront.net",
+    )
+
+    with pytest.raises(
+        ValidationAppError,
+        match="INSTITUTION_PORTAL_BASE_URL",
+    ):
+        service._review_link("public-token-value")
 
 
 @pytest.mark.asyncio

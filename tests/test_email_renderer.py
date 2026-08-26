@@ -52,6 +52,30 @@ def test_render_admin_invitation_keeps_tokenized_url_out_of_audit_payload() -> N
     assert raw_token not in str(message.audit_payload)
 
 
+def test_render_institution_verification_keeps_review_url_out_of_audit_payload() -> None:
+    renderer = EmailTemplateRenderer()
+    raw_token = "institution-magic-link-token-1234567890"
+    review_url = f"https://institution.example.com/institution/verify/{raw_token}"
+
+    message = renderer.render(
+        template_key=EmailTemplateKey.INSTITUTION_VERIFICATION.value,
+        to_email="registrar@example.com",
+        data={
+            "contact_name": "Registrar",
+            "subject_name": "Candidate",
+            "institution_name": "Kairo University",
+            "degree": "BSc",
+            "programme": "Computer Science",
+            "review_url": review_url,
+            "ttl_hours": 72,
+        },
+    )
+
+    assert review_url in message.text_body
+    assert "review_url" not in message.audit_payload
+    assert raw_token not in str(message.audit_payload)
+
+
 @pytest.mark.parametrize(
     ("template_key", "data", "expected_phrase"),
     [
@@ -77,6 +101,19 @@ def test_render_admin_invitation_keeps_tokenized_url_out_of_audit_payload() -> N
                 "ttl_hours": 72,
             },
             "verify their employment",
+        ),
+        (
+            EmailTemplateKey.INSTITUTION_VERIFICATION.value,
+            {
+                "contact_name": "Registrar",
+                "subject_name": "Candidate",
+                "institution_name": "Kairo University",
+                "degree": "BSc",
+                "programme": "Computer Science",
+                "review_url": "https://institution.example.com/institution/verify/token",
+                "ttl_hours": 72,
+            },
+            "review an education claim",
         ),
     ],
 )

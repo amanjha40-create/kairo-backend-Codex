@@ -71,9 +71,13 @@ class PublicInstitutionVerificationService:
         self._email = get_email_sender(self._settings, session=session)
 
     def _review_link(self, token: str) -> str:
-        base = (
-            self._settings.institution_portal_base_url or self._settings.app_public_base_url
-        ).rstrip("/")
+        base_url = (self._settings.institution_portal_base_url or "").strip()
+        if not base_url:
+            raise ValidationAppError(
+                "INSTITUTION_PORTAL_BASE_URL must be configured "
+                "for institution verification delivery"
+            )
+        base = base_url.rstrip("/")
         return f"{base}/institution/verify/{token}"
 
     async def issue_public_link(

@@ -140,6 +140,7 @@ These are not secrets, but they matter for safe production operation:
 - `EMAIL_REPLY_TO=verify@kairoid.com`
 - `AWS_REGION=us-east-1`
 - `APP_PUBLIC_BASE_URL=https://api.kairoid.com`
+- `INSTITUTION_PORTAL_BASE_URL=https://institution.kairoid.com`
 - `ADMIN_PORTAL_BASE_URL=https://admin.kairoid.com`
 - `CORS_ORIGINS` includes `https://admin.kairoid.com`
 - `TRUSTED_HOSTS=api.kairoid.com`

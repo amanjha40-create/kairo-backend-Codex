@@ -78,6 +78,7 @@ SIGNUP_PENDING_TTL_HOURS=24
 
 APP_PUBLIC_BASE_URL=https://api.kairoid.com
 EMPLOYER_PORTAL_BASE_URL=https://app.kairoid.com
+INSTITUTION_PORTAL_BASE_URL=https://institution.kairoid.com
 ADMIN_PORTAL_BASE_URL=https://admin.kairoid.com
 EMPLOYER_VERIFICATION_TOKEN_TTL_HOURS=168
 
@@ -101,6 +102,7 @@ SQS_MAIN_QUEUE_URL=<production-main-queue-url>
 
 - `APP_PUBLIC_BASE_URL`
 - `EMPLOYER_PORTAL_BASE_URL`
+- `INSTITUTION_PORTAL_BASE_URL`
 - any production web app origin included in `CORS_ORIGINS`
 - any production OAuth redirect targets
 
