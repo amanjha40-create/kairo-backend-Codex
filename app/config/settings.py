@@ -278,7 +278,7 @@ class Settings(BaseSettings):
     )
     phone_otp_backend: str = Field(
         default="console",
-        description="console | staging_fixed | sns",
+        description="console | staging_fixed | sns | msg91",
         validation_alias=AliasChoices("PHONE_OTP_BACKEND"),
     )
     controlled_testing: bool = Field(
@@ -294,6 +294,38 @@ class Settings(BaseSettings):
     staging_phone_otp_code: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("STAGING_PHONE_OTP_CODE"),
+    )
+    msg91_auth_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MSG91_AUTH_KEY"),
+    )
+    msg91_template_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MSG91_TEMPLATE_ID"),
+    )
+    msg91_sender_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MSG91_SENDER_ID", "MSG91_HEADER"),
+    )
+    msg91_base_url: str = Field(
+        default="https://control.msg91.com/api/v5",
+        validation_alias=AliasChoices("MSG91_BASE_URL"),
+    )
+    msg91_otp_expiry_minutes: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        validation_alias=AliasChoices("MSG91_OTP_EXPIRY"),
+    )
+    msg91_retry_type: str = Field(
+        default="text",
+        validation_alias=AliasChoices("MSG91_RETRY_TYPE"),
+    )
+    msg91_timeout_seconds: float = Field(
+        default=15.0,
+        ge=5.0,
+        le=120.0,
+        validation_alias=AliasChoices("MSG91_TIMEOUT_SECONDS"),
     )
     auth_rate_limit_max_requests: int = Field(
         default=10, ge=1, le=1000, validation_alias=AliasChoices("AUTH_RATE_LIMIT_MAX_REQUESTS")
@@ -633,6 +665,11 @@ class Settings(BaseSettings):
     def normalize_phone_otp_backend(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("msg91_retry_type")
+    @classmethod
+    def normalize_msg91_retry_type(cls, v: str) -> str:
+        return v.strip().lower()
+
     @field_validator("trusted_hosts", mode="before")
     @classmethod
     def parse_trusted_hosts(cls, v: object) -> list[str]:
@@ -742,9 +779,9 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Staging fixed OTP configuration is forbidden in APP_ENV=production."
                 )
-            if self.phone_otp_enabled and self.phone_otp_backend != "sns":
+            if self.phone_otp_enabled and self.phone_otp_backend not in {"sns", "msg91"}:
                 raise ValueError(
-                    "PHONE_OTP_BACKEND must be sns in APP_ENV=production "
+                    "PHONE_OTP_BACKEND must be sns or msg91 in APP_ENV=production "
                     "when PHONE_OTP_ENABLED=true."
                 )
             if _is_loopback_url(runtime_database_url):
@@ -852,12 +889,19 @@ class Settings(BaseSettings):
             msg = "EMAIL_PROVIDER must be one of: console, smtp, ses, brevo."
             raise ValueError(msg)
 
-        if self.phone_otp_backend not in {"console", "staging_fixed", "sns"}:
-            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, sns."
+        if self.phone_otp_backend not in {"console", "staging_fixed", "sns", "msg91"}:
+            msg = "PHONE_OTP_BACKEND must be one of: console, staging_fixed, sns, msg91."
             raise ValueError(msg)
 
         if self.phone_otp_backend == "sns" and not self.aws_region:
             raise ValueError("AWS_REGION is required when PHONE_OTP_BACKEND=sns.")
+        if self.phone_otp_backend == "msg91":
+            if self.msg91_auth_key is None:
+                raise ValueError("MSG91_AUTH_KEY is required when PHONE_OTP_BACKEND=msg91.")
+            if not self.msg91_template_id:
+                raise ValueError("MSG91_TEMPLATE_ID is required when PHONE_OTP_BACKEND=msg91.")
+            if self.msg91_retry_type not in {"text", "voice"}:
+                raise ValueError("MSG91_RETRY_TYPE must be text or voice.")
 
         if self.resume_processing_enabled:
             if self.resume_parser_provider not in {"nova", "anthropic"}:

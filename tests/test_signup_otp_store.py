@@ -27,8 +27,32 @@ async def test_clear_all_deletes_otp_keys_individually_for_redis_cluster() -> No
 
     await store.clear_all(session_id)
 
-    assert redis.delete.await_count == 2
+    assert redis.delete.await_count == 3
     assert all(len(call.args) == 1 for call in redis.delete.await_args_list)
     deleted_keys = {call.args[0] for call in redis.delete.await_args_list}
     assert any(":email:" in key for key in deleted_keys)
     assert any(":phone:" in key for key in deleted_keys)
+
+
+@pytest.mark.asyncio
+async def test_provider_state_round_trips_as_json() -> None:
+    redis = AsyncMock()
+    redis.get.return_value = (
+        '{"provider":"msg91","request_id":"req-123","phone_e164":"+919876543210"}'
+    )
+    store = SignupOtpStore(redis, _settings())  # type: ignore[arg-type]
+    session_id = uuid4()
+
+    await store.store_provider_state(
+        session_id,
+        "phone",
+        {"provider": "msg91", "request_id": "req-123", "phone_e164": "+919876543210"},
+    )
+    state = await store.get_provider_state(session_id, "phone")
+
+    redis.set.assert_awaited()
+    assert state == {
+        "provider": "msg91",
+        "request_id": "req-123",
+        "phone_e164": "+919876543210",
+    }
