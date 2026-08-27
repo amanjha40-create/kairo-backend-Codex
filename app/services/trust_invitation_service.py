@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.tokens import hash_refresh_token
 from app.config import Settings
-from app.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
 from app.notifications.contracts import NotificationRequest
@@ -688,10 +688,13 @@ class TrustInvitationService:
         return [TrustInvitationVerificationType(value) for value in values]
 
     def _build_invitation_url(self, invitation_public_id: UUID) -> str:
-        base = self._settings.app_public_base_url.rstrip("/")
+        base = (self._settings.candidate_portal_base_url or "").strip().rstrip("/")
+        if not base:
+            raise ValidationAppError(
+                "CANDIDATE_PORTAL_BASE_URL must be configured for trust invitation delivery"
+            )
         token = self._build_signed_token(invitation_public_id)
-        # APP_PUBLIC_BASE_URL is the Candidate web origin. Public lookup and
-        # acceptance remain API endpoints behind this human-facing route.
+        # Public lookup and acceptance remain API endpoints behind this human-facing route.
         return f"{base}/trust-invitations/{token}"
 
     def _build_signed_token(self, invitation_public_id: UUID) -> str:

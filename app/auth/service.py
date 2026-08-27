@@ -31,6 +31,7 @@ from app.exceptions import (
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
+    ValidationAppError,
 )
 from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
@@ -124,8 +125,12 @@ class AuthService:
             else None
         )
 
-    def _institution_portal_origin_from_request(self, requested_base_url: str | None) -> str | None:
-        base_url = (self._settings.institution_portal_base_url or "").strip().rstrip("/")
+    def _portal_origin_from_request(
+        self,
+        requested_base_url: str | None,
+        configured_base_url: str | None,
+    ) -> str | None:
+        base_url = (configured_base_url or "").strip().rstrip("/")
         if not base_url:
             return None
         requested = (requested_base_url or "").strip()
@@ -141,6 +146,33 @@ class AuthService:
             return None
         return base_url
 
+    def _institution_portal_origin_from_request(self, requested_base_url: str | None) -> str | None:
+        return self._portal_origin_from_request(
+            requested_base_url,
+            self._settings.institution_portal_base_url,
+        )
+
+    def _candidate_portal_origin_from_request(self, requested_base_url: str | None) -> str | None:
+        return self._portal_origin_from_request(
+            requested_base_url,
+            self._settings.candidate_portal_base_url,
+        )
+
+    def _hr_portal_origin_from_request(self, requested_base_url: str | None) -> str | None:
+        return self._portal_origin_from_request(
+            requested_base_url,
+            self._settings.hr_portal_base_url,
+        )
+
+    def _candidate_reset_url(self, base_url: str, raw_token: str) -> str:
+        return f"{base_url}/reset-password-confirm?token={quote(raw_token, safe='')}"
+
+    def _hr_reset_url(self, base_url: str, raw_token: str) -> str:
+        return f"{base_url}/forgot-password?reset_token={quote(raw_token, safe='')}"
+
+    def _institution_reset_url(self, base_url: str, raw_token: str) -> str:
+        return f"{base_url}/institution/login?reset_token={quote(raw_token, safe='')}"
+
     async def _password_reset_url_for_user(
         self,
         user: User,
@@ -150,14 +182,17 @@ class AuthService:
     ) -> str | None:
         requested_origin = self._institution_portal_origin_from_request(requested_base_url)
         if requested_origin:
-            return (
-                f"{requested_origin}/institution/login?"
-                f"reset_token={quote(raw_token, safe='')}"
-            )
+            return self._institution_reset_url(requested_origin, raw_token)
+
+        requested_origin = self._hr_portal_origin_from_request(requested_base_url)
+        if requested_origin:
+            return self._hr_reset_url(requested_origin, raw_token)
+
+        requested_origin = self._candidate_portal_origin_from_request(requested_base_url)
+        if requested_origin:
+            return self._candidate_reset_url(requested_origin, raw_token)
 
         base_url = (self._settings.institution_portal_base_url or "").strip().rstrip("/")
-        if not base_url:
-            return None
 
         memberships = await self._organizations.list_for_user(user.id)
         for organization, membership in memberships:
@@ -165,9 +200,26 @@ class AuthService:
                 continue
             if organization.organization_type is not OrganizationType.UNIVERSITY:
                 continue
-            return f"{base_url}/institution/login?reset_token={quote(raw_token, safe='')}"
+            if not base_url:
+                raise ValidationAppError(
+                    "INSTITUTION_PORTAL_BASE_URL must be configured for institution password reset delivery"
+                )
+            return self._institution_reset_url(base_url, raw_token)
 
-        return None
+        if user.role in {Role.HR.value, Role.ADMIN.value, Role.SUPERADMIN.value}:
+            hr_base_url = (self._settings.hr_portal_base_url or "").strip().rstrip("/")
+            if not hr_base_url:
+                raise ValidationAppError(
+                    "HR_PORTAL_BASE_URL must be configured for HR password reset delivery"
+                )
+            return self._hr_reset_url(hr_base_url, raw_token)
+
+        candidate_base_url = (self._settings.candidate_portal_base_url or "").strip().rstrip("/")
+        if not candidate_base_url:
+            raise ValidationAppError(
+                "CANDIDATE_PORTAL_BASE_URL must be configured for candidate password reset delivery"
+            )
+        return self._candidate_reset_url(candidate_base_url, raw_token)
 
     async def start_signup(self, data: RegisterRequest) -> SignupStartResponse:
         """Create or replace a staged dual-channel signup session."""

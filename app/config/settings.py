@@ -440,6 +440,16 @@ class Settings(BaseSettings):
         description="Public base URL embedded in employer verification emails (API or web app)",
         validation_alias=AliasChoices("APP_PUBLIC_BASE_URL"),
     )
+    candidate_portal_base_url: str | None = Field(
+        default=None,
+        description="Candidate frontend origin used for trust invitations and candidate reset links",
+        validation_alias=AliasChoices("CANDIDATE_PORTAL_BASE_URL"),
+    )
+    hr_portal_base_url: str | None = Field(
+        default=None,
+        description="HR frontend origin used for HR reset links",
+        validation_alias=AliasChoices("HR_PORTAL_BASE_URL"),
+    )
     employer_portal_base_url: str | None = Field(
         default=None,
         description="Frontend origin used for employer verification magic links",
@@ -795,6 +805,16 @@ class Settings(BaseSettings):
             if not _is_https_origin(self.app_public_base_url):
                 raise ValueError(
                     "APP_PUBLIC_BASE_URL must be an HTTPS origin in APP_ENV=production."
+                )
+            if self.candidate_portal_base_url and not _is_https_origin(
+                self.candidate_portal_base_url
+            ):
+                raise ValueError(
+                    "CANDIDATE_PORTAL_BASE_URL must be an HTTPS origin in APP_ENV=production."
+                )
+            if self.hr_portal_base_url and not _is_https_origin(self.hr_portal_base_url):
+                raise ValueError(
+                    "HR_PORTAL_BASE_URL must be an HTTPS origin in APP_ENV=production."
                 )
             if not _is_https_origin(self.admin_portal_base_url):
                 raise ValueError(

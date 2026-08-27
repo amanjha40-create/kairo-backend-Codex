@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.exc import MissingGreenlet
 
 from app.config import Settings
+from app.exceptions import ValidationAppError
 from app.notifications.contracts import NotificationRequest
 from app.organization.enums import OrganizationRole
 from app.schemas.trust_invitation import TrustInvitationCreateRequest
@@ -21,7 +22,7 @@ def _settings(**overrides: object) -> Settings:
     base = {
         "database_url": "postgresql+asyncpg://kairo:kairo@localhost:5432/kairo",
         "jwt_secret_key": "test-jwt-secret-key-32-chars-minimum!!",
-        "app_public_base_url": "https://api.example.com",
+        "candidate_portal_base_url": "https://candidate.example.com",
     }
     base.update(overrides)
     return Settings(**base)
@@ -204,7 +205,7 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
         ),
     )
 
-    assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
+    assert response.invitation_url.startswith("https://candidate.example.com/trust-invitations/")
     assert "/api/v1/" not in response.invitation_url
     assert response.subject_email == "aman3@test.com"
     assert response.status == TrustInvitationStatus.PENDING
@@ -248,8 +249,38 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
     )
 
     assert response.status == TrustInvitationStatus.PENDING
-    assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
+    assert response.invitation_url.startswith("https://candidate.example.com/trust-invitations/")
     assert "/api/v1/" not in response.invitation_url
+
+
+@pytest.mark.asyncio
+async def test_create_trust_invitation_requires_candidate_portal_origin() -> None:
+    session = FakeSession()
+    organization = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000100"),
+        public_id=UUID("00000000-0000-0000-0000-000000000101"),
+        name="Kairo Verification Ops",
+    )
+    repo = FakeTrustInvitationRepository(organization)
+    service = TrustInvitationService(
+        session,  # type: ignore[arg-type]
+        _settings(candidate_portal_base_url=None),
+        repo=repo,  # type: ignore[arg-type]
+        organizations=FakeOrganizationService(organization),  # type: ignore[arg-type]
+        notifications=FakeNotificationService(),  # type: ignore[arg-type]
+        people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValidationAppError, match="CANDIDATE_PORTAL_BASE_URL"):
+        await service.create(
+            UUID("00000000-0000-0000-0000-000000000111"),
+            organization.public_id,
+            TrustInvitationCreateRequest(
+                subject_name="Aman Jha",
+                subject_email="aman3@test.com",
+                expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -325,7 +356,7 @@ async def test_create_trust_invitation_survives_people_sync_failure() -> None:
     )
 
     assert response.status == TrustInvitationStatus.PENDING
-    assert response.invitation_url.startswith("https://api.example.com/trust-invitations/")
+    assert response.invitation_url.startswith("https://candidate.example.com/trust-invitations/")
     assert "/api/v1/" not in response.invitation_url
     assert session.commits >= 2
     assert session.rollbacks == 1
