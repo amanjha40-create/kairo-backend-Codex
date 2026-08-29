@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RefreshToken
@@ -35,14 +35,16 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         return result.scalar_one_or_none()
 
     async def has_active_family(self, user_id: UUID, family_id: UUID) -> bool:
-        stmt = select(RefreshToken.id).where(
-            RefreshToken.user_id == user_id,
-            RefreshToken.family_id == family_id,
-            RefreshToken.revoked_at.is_(None),
-            RefreshToken.expires_at > datetime.now(tz=UTC),
+        stmt = select(
+            exists().where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.family_id == family_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > datetime.now(tz=UTC),
+            )
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        return bool(result.scalar())
 
     async def revoke(self, token_id: UUID) -> None:
         await self._session.execute(
