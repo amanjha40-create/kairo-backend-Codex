@@ -100,20 +100,23 @@ def _education(*, status: str, institution: str) -> Education:
 
 
 @pytest.mark.asyncio
-async def test_public_vault_filters_employment_and_education_to_trusted_records_only() -> None:
+async def test_public_vault_includes_self_declared_records_without_status_upgrade() -> None:
     session = _FakeSession(
         employments=[
             _employment(status="approved", employer="Verified Employer"),
             _employment(status="verified", employer="Verified Legacy Employer"),
             _employment(status="draft", employer="Draft Employer"),
             _employment(status="submitted", employer="Pending Employer"),
+            _employment(status="unable_to_verify", employer="Unverified Employer"),
             _employment(status="rejected", employer="Rejected Employer"),
+            _employment(status="cancelled", employer="Cancelled Employer"),
         ],
         educations=[
             _education(status="verified", institution="Verified University"),
             _education(status="draft", institution="Draft College"),
             _education(status="pending", institution="Pending Institute"),
             _education(status="unable_to_verify", institution="Unable Institute"),
+            _education(status="rejected", institution="Rejected Institute"),
         ],
     )
     service = _service(session)
@@ -137,10 +140,57 @@ async def test_public_vault_filters_employment_and_education_to_trusted_records_
         public_only=True,
     )
 
-    assert [row.verification_status for row in vault.employments] == ["approved", "verified"]
-    assert [row.employer_legal_name for row in vault.employments] == [None, None]
-    assert [row.verification_status for row in vault.educations] == ["verified"]
-    assert [row.institution_name for row in vault.educations] == ["Verified University"]
+    assert [row.verification_status for row in vault.employments] == [
+        "approved",
+        "verified",
+        "draft",
+        "submitted",
+        "unable_to_verify",
+    ]
+    assert [row.employer_legal_name for row in vault.employments] == [None] * 5
+    assert [row.verification_status for row in vault.educations] == [
+        "verified",
+        "draft",
+        "pending",
+        "unable_to_verify",
+    ]
+    assert [row.institution_name for row in vault.educations] == [
+        "Verified University",
+        "Draft College",
+        "Pending Institute",
+        "Unable Institute",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_public_vault_excludes_disabled_employment_and_education_categories() -> None:
+    session = _FakeSession(
+        employments=[_employment(status="draft", employer="Draft Employer")],
+        educations=[_education(status="draft", institution="Draft College")],
+    )
+    service = _service(session)
+
+    vault = await service.build_vault_for_user(
+        uuid4(),
+        PassportSharePermissions(
+            include_employments=False,
+            include_educations=False,
+            include_internships=False,
+            include_freelance=False,
+            include_gig_platforms=False,
+            include_portfolio=False,
+            include_certifications=False,
+            include_skills=False,
+            include_projects=False,
+            include_user_documents=False,
+            show_employer_names=False,
+            show_documents=False,
+        ),
+        public_only=True,
+    )
+
+    assert vault.employments == []
+    assert vault.educations == []
 
 
 @pytest.mark.asyncio

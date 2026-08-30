@@ -52,11 +52,25 @@ from app.services.user_service import UserService
 class PublicPassportService:
     _PUBLIC_EMPLOYMENT_STATUSES = frozenset(
         {
+            EmploymentVerificationStatus.DRAFT.value,
+            EmploymentVerificationStatus.SUBMITTED.value,
+            EmploymentVerificationStatus.UNDER_REVIEW.value,
+            EmploymentVerificationStatus.ADDITIONAL_INFO_REQUESTED.value,
             EmploymentVerificationStatus.APPROVED.value,
             EmploymentVerificationStatus.VERIFIED.value,
+            EmploymentVerificationStatus.UNABLE_TO_VERIFY.value,
         }
     )
-    _PUBLIC_EDUCATION_STATUSES = frozenset({EducationVerificationStatus.VERIFIED.value})
+    _PUBLIC_EDUCATION_STATUSES = frozenset(
+        {
+            EducationVerificationStatus.DRAFT.value,
+            EducationVerificationStatus.PENDING.value,
+            EducationVerificationStatus.SUBMITTED.value,
+            EducationVerificationStatus.UNDER_REVIEW.value,
+            EducationVerificationStatus.VERIFIED.value,
+            EducationVerificationStatus.UNABLE_TO_VERIFY.value,
+        }
+    )
 
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self._session = session
