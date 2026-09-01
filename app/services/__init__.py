@@ -27,6 +27,7 @@ from app.services.notification_template_resolver import NotificationTemplateReso
 from app.services.organization_person_service import OrganizationPersonService
 from app.services.organization_service import OrganizationService
 from app.services.passport_engine_service import PassportEngineService
+from app.services.passport_pdf_service import PassportPDFService
 from app.services.passport_share_service import PassportShareService
 from app.services.passport_share_view_service import PassportShareViewService
 from app.services.public_institution_verification_service import PublicInstitutionVerificationService
@@ -78,6 +79,7 @@ __all__ = [
     "OrganizationPersonService",
     "OrganizationService",
     "PassportEngineService",
+    "PassportPDFService",
     "PassportShareService",
     "PassportShareViewService",
     "PublicInstitutionVerificationService",

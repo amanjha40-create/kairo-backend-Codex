@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +39,7 @@ from app.services import (
     OrganizationPersonService,
     OrganizationService,
     PassportEngineService,
+    PassportPDFService,
     PassportShareService,
     PassportShareViewService,
     PublicInstitutionVerificationService,
@@ -385,6 +388,12 @@ def get_passport_engine_service(
     settings: Settings = Depends(get_settings),
 ) -> PassportEngineService:
     return PassportEngineService(session, settings)
+
+
+def get_passport_pdf_service(
+    engine: Annotated[PassportEngineService, Depends(get_passport_engine_service)],
+) -> PassportPDFService:
+    return PassportPDFService(engine)
 
 
 def get_public_passport_service(
