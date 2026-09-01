@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -60,6 +62,45 @@ class SignupStartResponse(BaseModel):
     phone_resend_after_seconds: int
     expires_in_seconds: int
     message: str = "Signup session created"
+
+
+class SignupSessionRecoveryState(StrEnum):
+    VALID = "valid"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+
+
+class SignupSessionNextStep(StrEnum):
+    VERIFY_EMAIL = "verify_email"
+    VERIFY_PHONE = "verify_phone"
+    COMPLETE_SIGNUP = "complete_signup"
+    COMPLETED = "completed"
+
+
+class SignupSessionRecoveryResponse(BaseModel):
+    """Privacy-safe, read-only projection of a Candidate signup session."""
+
+    state: SignupSessionRecoveryState
+    email_masked: str
+    phone_masked: str
+    email_verified: bool
+    phone_verified: bool
+    next_step: SignupSessionNextStep | None = Field(
+        description="Authoritative next action; null only when the session is expired."
+    )
+    expires_at: datetime = Field(description="Authoritative pending-signup expiry timestamp.")
+    email_resend_available_at: datetime | None = Field(
+        description=(
+            "Earliest authoritative email resend time; null when already verified or no OTP "
+            "has been sent, in which case sending is available now."
+        )
+    )
+    phone_resend_available_at: datetime | None = Field(
+        description=(
+            "Earliest authoritative phone resend time; null when already verified or no OTP "
+            "has been sent, in which case sending is available now."
+        )
+    )
 
 
 class SignupChannelRequest(BaseModel):

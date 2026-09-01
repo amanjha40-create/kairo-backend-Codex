@@ -333,6 +333,18 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(
         default=60, ge=1, le=3600, validation_alias=AliasChoices("AUTH_RATE_LIMIT_WINDOW_SECONDS")
     )
+    signup_recovery_rate_limit_max_requests: int = Field(
+        default=30,
+        ge=1,
+        le=1000,
+        validation_alias=AliasChoices("SIGNUP_RECOVERY_RATE_LIMIT_MAX_REQUESTS"),
+    )
+    signup_recovery_rate_limit_window_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        validation_alias=AliasChoices("SIGNUP_RECOVERY_RATE_LIMIT_WINDOW_SECONDS"),
+    )
     # --- Versioned Trust Score configuration ---
     trust_score_version: str = Field(
         default="v1", validation_alias=AliasChoices("TRUST_SCORE_VERSION")
