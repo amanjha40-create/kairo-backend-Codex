@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import Depends, Request
 from redis.asyncio import Redis
 
@@ -69,4 +71,21 @@ async def otp_verify_rate_limit(
         key,
         window_seconds=settings.otp_verify_rate_limit_window_seconds,
         max_requests=settings.otp_verify_rate_limit_max_requests,
+    )
+
+
+async def signup_recovery_rate_limit(
+    request: Request,
+    redis: Annotated[Redis, Depends(get_redis)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
+    """Limit privacy-safe signup recovery reads without consuming OTP-send capacity."""
+
+    ip = request.client.host if request.client else "unknown"
+    key = f"rate:signup_recovery:{ip}"
+    await _check_rate(
+        redis,
+        key,
+        window_seconds=settings.signup_recovery_rate_limit_window_seconds,
+        max_requests=settings.signup_recovery_rate_limit_max_requests,
     )

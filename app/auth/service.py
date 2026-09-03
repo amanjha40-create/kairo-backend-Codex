@@ -69,6 +69,9 @@ from app.schemas.auth import (
     SignupCompleteRequest,
     SignupResendRequest,
     SignupResendResponse,
+    SignupSessionNextStep,
+    SignupSessionRecoveryResponse,
+    SignupSessionRecoveryState,
     SignupStartResponse,
     SignupVerifyRequest,
     TokenResponse,
@@ -249,6 +252,64 @@ class AuthService:
             expires_in_seconds=int((pending.expires_at - datetime.now(tz=UTC)).total_seconds()),
             message="Signup session created",
         )
+
+    async def recover_signup_session(
+        self,
+        signup_session_id: UUID,
+    ) -> SignupSessionRecoveryResponse:
+        """Return a read-only, privacy-safe Candidate signup projection."""
+
+        pending = await self._pending.get_by_id(signup_session_id)
+        if pending is None or pending.signup_kind != SignupKind.CANDIDATE.value:
+            raise NotFoundError("Signup session not found")
+
+        now = datetime.now(tz=UTC)
+        email_verified = pending.email_verified_at is not None
+        phone_verified = pending.phone_verified_at is not None
+
+        if pending.completed_user_id is not None:
+            recovery_state = SignupSessionRecoveryState.COMPLETED
+            next_step: SignupSessionNextStep | None = SignupSessionNextStep.COMPLETED
+        elif pending.expires_at <= now:
+            recovery_state = SignupSessionRecoveryState.EXPIRED
+            next_step = None
+        elif not email_verified:
+            recovery_state = SignupSessionRecoveryState.VALID
+            next_step = SignupSessionNextStep.VERIFY_EMAIL
+        elif not phone_verified:
+            recovery_state = SignupSessionRecoveryState.VALID
+            next_step = SignupSessionNextStep.VERIFY_PHONE
+        else:
+            recovery_state = SignupSessionRecoveryState.VALID
+            next_step = SignupSessionNextStep.COMPLETE_SIGNUP
+
+        return SignupSessionRecoveryResponse(
+            state=recovery_state,
+            email_masked=mask_email(pending.email),
+            phone_masked=mask_phone(pending.phone or ""),
+            email_verified=email_verified,
+            phone_verified=phone_verified,
+            next_step=next_step,
+            expires_at=pending.expires_at,
+            email_resend_available_at=self._resend_available_at(
+                pending.email_last_otp_sent_at,
+                already_verified=email_verified,
+            ),
+            phone_resend_available_at=self._resend_available_at(
+                pending.phone_last_otp_sent_at,
+                already_verified=phone_verified,
+            ),
+        )
+
+    def _resend_available_at(
+        self,
+        last_sent_at: datetime | None,
+        *,
+        already_verified: bool,
+    ) -> datetime | None:
+        if already_verified or last_sent_at is None:
+            return None
+        return last_sent_at + timedelta(seconds=self._settings.signup_otp_resend_cooldown_seconds)
 
     async def start_organization_signup(
         self,

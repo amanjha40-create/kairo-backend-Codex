@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
-from app.api.dependencies.rate_limit import auth_rate_limit, otp_verify_rate_limit
+from app.api.dependencies.rate_limit import (
+    auth_rate_limit,
+    otp_verify_rate_limit,
+    signup_recovery_rate_limit,
+)
 from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -35,6 +40,7 @@ from app.schemas.auth import (
     SignupCompleteRequest,
     SignupResendRequest,
     SignupResendResponse,
+    SignupSessionRecoveryResponse,
     SignupStartResponse,
     SignupVerifyRequest,
     TokenResponse,
@@ -130,6 +136,40 @@ async def signup_start(
     auth: AuthService = Depends(get_auth_service),
 ) -> SignupStartResponse:
     return await auth.start_signup(payload)
+
+
+@router.get(
+    "/signup/session",
+    response_model=SignupSessionRecoveryResponse,
+    summary="Recover Candidate signup session state without side effects",
+    description=(
+        "Read-only pre-account recovery lookup. The required X-Signup-Session-ID header "
+        "is the opaque UUIDv4 credential issued by signup/start. It is carried in a header "
+        "instead of the URL so structured access logs do not capture the credential. The "
+        "response contains masked contacts only, does not require a Candidate bearer JWT, "
+        "and never sends or verifies an OTP, completes signup, or mutates session state."
+    ),
+    responses={
+        404: {"description": "Signup session is unknown or not a Candidate signup session"},
+        422: {"description": "The recovery credential is missing or malformed"},
+        429: {"description": "Too many recovery lookups from this client"},
+    },
+    dependencies=[Depends(signup_recovery_rate_limit)],
+)
+async def recover_signup_session(
+    signup_session_id: Annotated[
+        UUID,
+        Header(
+            alias="X-Signup-Session-ID",
+            description=(
+                "Opaque pre-account signup recovery credential returned by signup/start. "
+                "Store and transmit it as a secret over HTTPS."
+            ),
+        ),
+    ],
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> SignupSessionRecoveryResponse:
+    return await auth.recover_signup_session(signup_session_id)
 
 
 @router.post(
