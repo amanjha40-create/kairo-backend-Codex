@@ -11,7 +11,6 @@ from sqlalchemy.orm import joinedload
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
 
-
 _DETAIL_OPTIONS = (
     joinedload(VerificationRequest.organization),
     joinedload(VerificationRequest.registry_record),
@@ -43,8 +42,24 @@ class VerificationRequestRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_public_id_for_update(
+        self,
+        request_public_id: UUID,
+    ) -> VerificationRequest | None:
+        stmt = (
+            select(VerificationRequest)
+            .options(*_DETAIL_OPTIONS)
+            .where(VerificationRequest.public_id == request_public_id)
+            .with_for_update(of=VerificationRequest)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_id(self, request_id: UUID) -> VerificationRequest | None:
-        return (await self._session.execute(select(VerificationRequest).where(VerificationRequest.id == request_id))).scalar_one_or_none()
+        return (
+            await self._session.execute(
+                select(VerificationRequest).where(VerificationRequest.id == request_id)
+            )
+        ).scalar_one_or_none()
 
     async def list_for_organization(self, organization_id: UUID) -> list[VerificationRequest]:
         stmt = (

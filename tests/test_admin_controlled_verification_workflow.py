@@ -12,7 +12,11 @@ import pytest
 from app.education.enums import EducationVerificationStatus
 from app.employment.enums import VerificationStatus
 from app.exceptions import ConflictError, NotFoundError
-from app.schemas.admin_review_workflow import AdminReviewDecisionRequest
+from app.schemas.admin_review_workflow import (
+    AdminReviewDecisionRequest,
+    AdminReviewDirectConfirmationRequest,
+)
+from app.schemas.pagination import ListQueryParams
 from app.services.verification_request_admin_review_service import (
     VerificationRequestAdminReviewService,
 )
@@ -115,6 +119,198 @@ async def test_admin_finalization_updates_linked_employment_only() -> None:
     assert employment.reviewed_by_user_id is not None
 
 
+def _direct_confirmation_payload(
+    *,
+    method: str = "phone",
+    outcome: str = "details_confirmed",
+) -> AdminReviewDirectConfirmationRequest:
+    return AdminReviewDirectConfirmationRequest(
+        confirmation_method=method,
+        confirmed_by="Pat Verifier",
+        verifier_role="HR Manager",
+        contact_detail_used=("pat.verifier@example.com" if method == "email" else "+91 98XXXXXX10"),
+        confirmation_outcome=outcome,
+        internal_note="Confirmed employer, title, and dates directly.",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+        VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+        VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+        VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+        VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+        VerificationRequestStatus.IN_PROGRESS,
+        VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+    ],
+)
+async def test_admin_direct_confirmation_supports_selected_operational_states(status) -> None:  # noqa: ANN001
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = _request(status)
+    request.public_id = uuid4()
+    refreshed = _request(VerificationRequestStatus.VERIFIED)
+    refreshed.public_id = request.public_id
+    review = SimpleNamespace(
+        review_status=None,
+        decision_by_user_id=None,
+        decision_at=None,
+        decision_summary=None,
+    )
+    service._get_required_request_for_update = AsyncMock(return_value=request)
+    service._require_linked_canonical_claim = AsyncMock()
+    service._get_or_create_review = AsyncMock(return_value=review)
+    service._workflow = SimpleNamespace(
+        transition_via_admin_direct_confirmation=AsyncMock(),
+        record_action=AsyncMock(),
+    )
+    service._apply_canonical_outcome = AsyncMock()
+    service._session = SimpleNamespace(commit=AsyncMock())
+    service._notify_finalization = AsyncMock()
+    service._requests = SimpleNamespace(get_by_public_id=AsyncMock(return_value=refreshed))
+    expected_response = SimpleNamespace(status=VerificationRequestStatus.VERIFIED)
+    service._to_request_response = AsyncMock(return_value=expected_response)
+    actor_id = uuid4()
+
+    result = await service.direct_confirm(
+        actor_id,
+        request.public_id,
+        _direct_confirmation_payload(),
+    )
+
+    assert result is expected_response
+    transition = service._workflow.transition_via_admin_direct_confirmation.await_args.kwargs
+    assert transition["metadata"]["reason"] == "manual_direct_confirmation"
+    assert transition["metadata"]["confirmation_method"] == "phone"
+    assert transition["metadata"]["confirmed_by"] == "Pat Verifier"
+    assert transition["metadata"]["verifier_role"] == "HR Manager"
+    assert transition["metadata"]["contact_detail_used"] == "+91 98XXXXXX10"
+    service._apply_canonical_outcome.assert_awaited_once_with(
+        request,
+        actor_id,
+        "verified",
+        "Confirmed employer, title, and dates directly.",
+    )
+    service._session.commit.assert_awaited_once()
+    service._notify_finalization.assert_awaited_once_with(request, actor_id, "verified")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        VerificationRequestStatus.VERIFIED,
+        VerificationRequestStatus.REJECTED,
+        VerificationRequestStatus.UNABLE_TO_VERIFY,
+        VerificationRequestStatus.CANCELLED,
+        VerificationRequestStatus.EXPIRED,
+        VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
+        VerificationRequestStatus.AWAITING_INFORMATION,
+    ],
+)
+async def test_admin_direct_confirmation_fails_closed_outside_allowed_states(status) -> None:  # noqa: ANN001
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = _request(status)
+    request.public_id = uuid4()
+    service._get_required_request_for_update = AsyncMock(return_value=request)
+
+    with pytest.raises(ConflictError, match="not eligible"):
+        await service.direct_confirm(uuid4(), request.public_id, _direct_confirmation_payload())
+
+
+@pytest.mark.asyncio
+async def test_direct_confirmation_discrepancy_does_not_mark_request_verified() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    request = _request(VerificationRequestStatus.PENDING_ADMIN_REVIEW)
+    request.public_id = uuid4()
+    service._get_required_request_for_update = AsyncMock(return_value=request)
+    service._workflow = SimpleNamespace(transition_via_admin_direct_confirmation=AsyncMock())
+
+    with pytest.raises(ConflictError, match="correction workflow"):
+        await service.direct_confirm(
+            uuid4(),
+            request.public_id,
+            _direct_confirmation_payload(outcome="details_confirmed_with_discrepancy"),
+        )
+
+    assert request.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
+    service._workflow.transition_via_admin_direct_confirmation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["phone", "email"])
+async def test_direct_confirmation_event_persists_method_and_contact(method: str) -> None:
+    repository = FakeVerificationRequestRepository()
+    workflow = VerificationRequestWorkflowService(repository)  # type: ignore[arg-type]
+    request = _request(VerificationRequestStatus.IN_PROGRESS)
+    actor_id = uuid4()
+    payload = _direct_confirmation_payload(method=method)
+    metadata = {
+        "reason": "manual_direct_confirmation",
+        "confirmation_method": payload.confirmation_method,
+        "confirmed_by": payload.confirmed_by,
+        "verifier_role": payload.verifier_role,
+        "contact_detail_used": payload.contact_detail_used,
+        "internal_note": payload.internal_note,
+    }
+
+    event = await workflow.transition_via_admin_direct_confirmation(
+        request,
+        actor_user_id=actor_id,
+        metadata=metadata,
+    )
+
+    assert request.status == VerificationRequestStatus.VERIFIED
+    assert event.event_type == "verification_request_manual_direct_confirmation"
+    assert event.previous_status == VerificationRequestStatus.IN_PROGRESS
+    assert event.new_status == VerificationRequestStatus.VERIFIED
+    assert event.actor_user_id == actor_id
+    assert event.metadata_payload["confirmation_method"] == method
+    assert event.metadata_payload["contact_detail_used"] == payload.contact_detail_used
+    assert repository.events == [event]
+
+    with pytest.raises(ConflictError, match="not eligible"):
+        await workflow.transition_via_admin_direct_confirmation(
+            request,
+            actor_user_id=actor_id,
+            metadata=metadata,
+        )
+    assert repository.events == [event]
+
+
+@pytest.mark.asyncio
+async def test_admin_timeline_resolves_canonical_actor_identity() -> None:
+    service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    actor_id = uuid4()
+    request = SimpleNamespace(id=uuid4(), public_id=uuid4())
+    event = SimpleNamespace(
+        public_id=uuid4(),
+        actor_user_id=actor_id,
+        event_type="verification_request_manual_direct_confirmation",
+        event_source=VerificationRequestEventSource.ADMIN,
+        previous_status=VerificationRequestStatus.IN_PROGRESS,
+        new_status=VerificationRequestStatus.VERIFIED,
+        metadata_payload={"confirmation_method": "phone"},
+        created_at=datetime.now(tz=UTC),
+    )
+    actor = SimpleNamespace(full_name="Admin Operator", email="operator@example.com")
+    service._get_required_request = AsyncMock(return_value=request)
+    service._requests = SimpleNamespace(list_timeline=AsyncMock(return_value=[event]))
+    service._users = SimpleNamespace(get_by_id=AsyncMock(return_value=actor))
+
+    result = await service.get_timeline(
+        request.public_id,
+        ListQueryParams(page=1, page_size=100),
+    )
+
+    assert result.timeline.total == 1
+    assert result.timeline.items[0].actor_display_name == "Admin Operator"
+    assert result.timeline.items[0].actor_email == "operator@example.com"
+    service._users.get_by_id.assert_awaited_once_with(actor_id)
+
+
 @pytest.mark.asyncio
 async def test_admin_finalization_updates_linked_education_only() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
@@ -195,8 +391,7 @@ async def test_admin_finalization_notifies_candidate_once_with_authoritative_pay
 
 
 @pytest.mark.asyncio
-async def test_admin_finalization_notifies_candidate_for_education_when_request_type_is_string(
-) -> None:
+async def test_admin_finalization_notifies_candidate_for_education_string_request_type() -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     service._notifications = SimpleNamespace(create_and_dispatch=AsyncMock())
     education_id = uuid4()

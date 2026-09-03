@@ -19,7 +19,6 @@ from app.core.permissions import Permission, has_permission
 from app.education.enums import EducationVerificationStatus
 from app.employment.enums import VerificationStatus
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
@@ -27,7 +26,6 @@ from app.notifications.contracts import NotificationRequest
 from app.repositories.education import EducationRepository
 from app.repositories.employer_verification import EmployerVerificationRepository
 from app.repositories.employment import EmploymentRepository
-from app.repositories.employment_document import EmploymentDocumentRepository
 from app.repositories.organization import OrganizationRepository
 from app.repositories.trust_registry import TrustRegistryRepository
 from app.repositories.user import UserRepository
@@ -45,6 +43,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminReviewDirectConfirmationRequest,
     AdminReviewerSummary,
     AdminReviewEvidenceResponse,
     AdminReviewFinalizationRequest,
@@ -60,6 +59,8 @@ from app.schemas.admin_review_workflow import (
     AdminReviewWorkflowEnvelope,
     AdminVerificationContactResponse,
     AdminVerificationContactReviewRequest,
+    AdminVerificationTimelineEventResponse,
+    AdminVerificationTimelineResponse,
 )
 from app.schemas.employer_verification import EmployerVerificationRequestBody
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
@@ -68,8 +69,6 @@ from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
     VerificationRequestEvidenceResponse,
     VerificationRequestResponse,
-    VerificationRequestTimelineEventResponse,
-    VerificationRequestTimelineResponse,
 )
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.notification_service import NotificationService
@@ -77,7 +76,10 @@ from app.services.organization_registry_sync_service import OrganizationRegistry
 from app.services.public_institution_verification_service import (
     PublicInstitutionVerificationService,
 )
-from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.services.verification_request_workflow_service import (
+    ADMIN_DIRECT_CONFIRMATION_STATUSES,
+    VerificationRequestWorkflowService,
+)
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -117,7 +119,6 @@ class VerificationRequestAdminReviewService:
         self._organizations = OrganizationRepository(session)
         self._employments = EmploymentRepository(session)
         self._educations = EducationRepository(session)
-        self._employment_documents = EmploymentDocumentRepository(session)
         self._employer_verifications = EmployerVerificationRepository(session)
         self._registry = TrustRegistryRepository(session)
         self._users = UserRepository(session)
@@ -221,27 +222,21 @@ class VerificationRequestAdminReviewService:
         evidence = await self._evidence.get_by_public_id(evidence_public_id)
         if evidence is None or evidence.verification_request_id != request.id:
             raise NotFoundError("Verification request evidence not found")
-        if evidence.employment_document_id is None:
-            raise ConflictError("Evidence is not backed by an employment document")
-        document = await self._employment_documents.get_active_by_id(
-            evidence.employment_document_id
-        )
-        if document is None or request.employment_id != document.employment_id:
-            raise NotFoundError("Employment document not found")
-        bucket = self._settings.s3_documents_bucket
-        if not bucket:
-            raise ConflictError("Document storage is not configured")
-        ttl_seconds = 300
-        download_url = await generate_presigned_get_url(
-            bucket=bucket,
-            object_key=document.object_key,
-            ttl_seconds=ttl_seconds,
+        from app.services.verification_request_service import VerificationRequestService
+
+        projection = await VerificationRequestService(
+            self._session,
             settings=self._settings,
+        )._to_evidence_response(
+            evidence,
+            include_download_url=True,
         )
+        if not projection.download_url or not projection.download_url_expires_in_seconds:
+            raise ConflictError("Evidence download is not available")
         return AdminEvidenceDownloadResponse(
             evidence_public_id=evidence.public_id,
-            download_url=download_url,
-            expires_in_seconds=ttl_seconds,
+            download_url=projection.download_url,
+            expires_in_seconds=projection.download_url_expires_in_seconds,
         )
 
     async def get_detail(self, verification_request_public_id: UUID) -> AdminReviewDetailResponse:
@@ -635,6 +630,59 @@ class VerificationRequestAdminReviewService:
             decision_summary=payload.decision_summary,
         )
 
+    async def direct_confirm(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewDirectConfirmationRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request_for_update(verification_request_public_id)
+        if request.status not in ADMIN_DIRECT_CONFIRMATION_STATUSES:
+            raise ConflictError("Verification request is not eligible for direct confirmation")
+        if payload.confirmation_outcome != "details_confirmed":
+            raise ConflictError("Material discrepancies must use the existing correction workflow")
+
+        await self._require_linked_canonical_claim(request)
+        review = await self._get_or_create_review(request, actor_user_id)
+        review.review_status = VerificationRequestReviewStatus.APPROVED
+        review.decision_by_user_id = actor_user_id
+        review.decision_at = datetime.now(tz=UTC)
+        review.decision_summary = payload.internal_note
+
+        await self._workflow.transition_via_admin_direct_confirmation(
+            request,
+            actor_user_id=actor_user_id,
+            metadata={
+                "reason": "manual_direct_confirmation",
+                "verification_request_public_id": str(request.public_id),
+                "confirmation_method": payload.confirmation_method,
+                "confirmation_outcome": payload.confirmation_outcome,
+                "confirmed_by": payload.confirmed_by,
+                "verifier_role": payload.verifier_role,
+                "contact_detail_used": payload.contact_detail_used,
+                "internal_note": payload.internal_note,
+            },
+        )
+        await self._apply_canonical_outcome(
+            request,
+            actor_user_id,
+            "verified",
+            payload.internal_note,
+        )
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="trust_score_recalculation_requested",
+            event_source=VerificationRequestEventSource.SYSTEM,
+            metadata={"outcome": "verified"},
+        )
+        await self._session.commit()
+        await self._notify_finalization(request, actor_user_id, "verified")
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return await self._to_request_response(refreshed)
+
     async def return_to_verifier(
         self,
         actor_user_id: UUID,
@@ -822,8 +870,11 @@ class VerificationRequestAdminReviewService:
     ) -> AdminReviewTimelineResponse:
         request = await self._get_required_request(verification_request_public_id)
         rows = await self._requests.list_timeline(request.id)
+        actors = {}
+        for actor_user_id in {row.actor_user_id for row in rows if row.actor_user_id is not None}:
+            actors[actor_user_id] = await self._users.get_by_id(actor_user_id)
         timeline_items = [
-            VerificationRequestTimelineEventResponse(
+            AdminVerificationTimelineEventResponse(
                 public_id=row.public_id,
                 event_type=row.event_type,
                 event_source=row.event_source,
@@ -831,6 +882,16 @@ class VerificationRequestAdminReviewService:
                 new_status=row.new_status,
                 metadata=row.metadata_payload,
                 created_at=row.created_at,
+                actor_display_name=(
+                    actors[row.actor_user_id].full_name
+                    if row.actor_user_id is not None and actors.get(row.actor_user_id) is not None
+                    else None
+                ),
+                actor_email=(
+                    actors[row.actor_user_id].email
+                    if row.actor_user_id is not None and actors.get(row.actor_user_id) is not None
+                    else None
+                ),
             )
             for row in rows
         ]
@@ -846,7 +907,7 @@ class VerificationRequestAdminReviewService:
         if not isinstance(page, Page):
             raise RuntimeError("Admin review timeline must return a page envelope")
         return AdminReviewTimelineResponse(
-            timeline=VerificationRequestTimelineResponse(
+            timeline=AdminVerificationTimelineResponse(
                 verification_request_public_id=request.public_id,
                 items=page.items,
                 total=page.total,
@@ -1069,6 +1130,12 @@ class VerificationRequestAdminReviewService:
 
     async def _get_required_request(self, verification_request_public_id: UUID):
         request = await self._requests.get_by_public_id(verification_request_public_id)
+        if request is None:
+            raise NotFoundError("Verification request not found")
+        return request
+
+    async def _get_required_request_for_update(self, verification_request_public_id: UUID):
+        request = await self._requests.get_by_public_id_for_update(verification_request_public_id)
         if request is None:
             raise NotFoundError("Verification request not found")
         return request

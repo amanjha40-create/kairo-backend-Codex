@@ -14,6 +14,18 @@ from app.verification_requests.enums import (
     VerificationRequestStatus,
 )
 
+ADMIN_DIRECT_CONFIRMATION_STATUSES = frozenset(
+    {
+        VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+        VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+        VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+        VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+        VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+        VerificationRequestStatus.IN_PROGRESS,
+        VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+    }
+)
+
 
 class VerificationRequestWorkflowService:
     """Owns all valid transitions and immutable event generation."""
@@ -167,6 +179,31 @@ class VerificationRequestWorkflowService:
             )
         )
 
+    async def transition_via_admin_direct_confirmation(
+        self,
+        request: VerificationRequest,
+        *,
+        actor_user_id: UUID,
+        metadata: dict[str, Any],
+    ) -> VerificationRequestEvent:
+        """Apply the Admin-only override without widening normal transitions."""
+
+        current_status = request.status
+        if current_status not in ADMIN_DIRECT_CONFIRMATION_STATUSES:
+            raise ConflictError("Verification request is not eligible for direct confirmation")
+        request.status = VerificationRequestStatus.VERIFIED
+        return await self._repo.append_event(
+            VerificationRequestEvent(
+                verification_request_id=request.id,
+                actor_user_id=actor_user_id,
+                event_type="verification_request_manual_direct_confirmation",
+                event_source=VerificationRequestEventSource.ADMIN,
+                previous_status=current_status,
+                new_status=VerificationRequestStatus.VERIFIED,
+                metadata_payload=metadata,
+            )
+        )
+
     def _assert_valid_transition(
         self,
         current_status: VerificationRequestStatus,
@@ -176,6 +213,8 @@ class VerificationRequestWorkflowService:
             raise ConflictError("Verification request is already in the requested status")
         allowed = self.VALID_TRANSITIONS.get(current_status, set())
         if target_status not in allowed:
-            raise ConflictError(
-                f"Verification request cannot transition from {current_status.value} to {target_status.value}"
+            message = (
+                "Verification request cannot transition from "
+                f"{current_status.value} to {target_status.value}"
             )
+            raise ConflictError(message)
