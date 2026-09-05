@@ -98,8 +98,16 @@ def test_item_update_rejects_extra_mutation_controls() -> None:
 def test_import_plan_only_blocks_structurally_unusable_employment_claims() -> None:
     service = ResumeReviewService(SimpleNamespace())
     assert "unsupported_import_target" not in service._required_blockers("project", {"title": "Synthetic"})
-    assert service._required_blockers("employment", {}) == ["missing_employment_identity"]
-    assert service._required_blockers("employment", {"company_name": "Synthetic"}) == []
+    assert service._required_blockers("employment", {}) == [
+        "missing_company_name",
+        "missing_role_title",
+    ]
+    assert service._required_blockers("employment", {"company_name": "Synthetic"}) == [
+        "missing_role_title"
+    ]
+    assert service._required_blockers("employment", {"role_title": "Engineer"}) == [
+        "missing_company_name"
+    ]
     assert service._required_blockers("employment", {
         "company_name": "Synthetic", "role_title": "Engineer", "start_date": "2024-01-01",
     }) == []
@@ -214,14 +222,16 @@ def test_resume_review_date_normalization(value, display, is_end, expected) -> N
     assert normalize_review_date(value, display, is_end=is_end) == expected
 
 
-def test_edited_employment_dates_are_normalized_before_review_validation() -> None:
+def test_edited_employment_dates_preserve_partial_precision_without_inventing_days() -> None:
     payload = ResumeReviewService._normalize_review_payload("employment", {
         "claim_type": "employment", "company_name": "Synthetic", "role_title": "Engineer",
         "start_date": None, "start_date_display": "Apr 2023", "end_date": None,
         "end_date_display": "Jan 2025", "is_current": False,
     })
-    assert payload["start_date"] == "2023-04-01"
-    assert payload["end_date"] == "2025-01-31"
+    assert payload["start_date"] is None
+    assert payload["start_date_display"] == "Apr 2023"
+    assert payload["end_date"] is None
+    assert payload["end_date_display"] == "Jan 2025"
     assert payload["start_date_precision"] == "month"
     assert payload["end_date_precision"] == "month"
 
