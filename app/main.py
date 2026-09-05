@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
@@ -99,6 +99,23 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    @application.get("/.well-known/assetlinks.json", include_in_schema=False)
+    async def android_asset_links() -> list[dict[str, object]]:
+        """Serve Android App Link verification only when explicitly configured."""
+
+        package = settings.google_android_app_link_package
+        fingerprint = settings.google_android_app_link_cert_sha256
+        if settings.app_env.value != "staging" or not package or not fingerprint:
+            raise HTTPException(status_code=404)
+        return [{
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+                "namespace": "android_app",
+                "package_name": package,
+                "sha256_cert_fingerprints": [fingerprint],
+            },
+        }]
 
     @application.get("/", tags=["meta"])
     async def root() -> dict[str, str]:

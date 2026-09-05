@@ -219,6 +219,35 @@ class OAuthCallbackRequest(BaseModel):
     code: str = Field(..., min_length=1, description="Authorization code returned by the provider redirect")
 
 
+class GoogleHandoffExchangeRequest(BaseModel):
+    """Opaque, one-time code delivered to the Android App Link."""
+
+    code: str = Field(..., min_length=20, max_length=512)
+
+
+class GooglePhoneStartRequest(BaseModel):
+    """Adds the phone number after Google has securely verified the email."""
+
+    signup_session_id: UUID
+    phone: str = Field(..., min_length=8, max_length=32)
+
+
+class GoogleAuthOutcome(StrEnum):
+    LOGIN_COMPLETE = "LOGIN_COMPLETE"
+    PHONE_VERIFICATION_REQUIRED = "PHONE_VERIFICATION_REQUIRED"
+    ACCOUNT_LINKING_REQUIRED = "ACCOUNT_LINKING_REQUIRED"
+    AUTH_FAILED = "AUTH_FAILED"
+
+
+class GoogleHandoffExchangeResponse(BaseModel):
+    """Safe result of one-time Google App Link handoff exchange."""
+
+    outcome: GoogleAuthOutcome
+    message: str
+    tokens: TokenResponse | None = None
+    signup: SignupStartResponse | None = None
+
+
 class SetPasswordRequest(BaseModel):
     """Allow a social-only user to add email/password login to their account."""
 

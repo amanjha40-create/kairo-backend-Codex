@@ -599,6 +599,15 @@ class Settings(BaseSettings):
         default="http://localhost:8000/api/v1/auth/google/callback",
         validation_alias=AliasChoices("GOOGLE_REDIRECT_URI"),
     )
+    google_app_handoff_uri: str | None = Field(
+        default=None, validation_alias=AliasChoices("GOOGLE_APP_HANDOFF_URI")
+    )
+    google_android_app_link_package: str | None = Field(
+        default=None, validation_alias=AliasChoices("GOOGLE_ANDROID_APP_LINK_PACKAGE")
+    )
+    google_android_app_link_cert_sha256: str | None = Field(
+        default=None, validation_alias=AliasChoices("GOOGLE_ANDROID_APP_LINK_CERT_SHA256")
+    )
 
     # --- LinkedIn OAuth ---
     linkedin_client_id: str | None = Field(
