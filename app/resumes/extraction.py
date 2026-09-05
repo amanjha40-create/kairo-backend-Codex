@@ -44,6 +44,18 @@ _CITY_ALIASES = {
     "kolkata": "Kolkata",
 }
 
+_MODEL_COLLECTION_FIELDS = (
+    "employments",
+    "education",
+    "internships",
+    "freelance",
+    "gig_platforms",
+    "certifications",
+    "projects",
+    "skills",
+    "portfolio_links",
+)
+
 
 def parse_resume_date(value: Any) -> tuple[date | None, str | None, DatePrecision | None, bool]:
     """Return exact date, display value, precision, and current-role marker."""
@@ -201,7 +213,27 @@ def enrich_employment_claims(payload: dict[str, Any], extracted_text: str) -> di
 
 def normalize_extracted_payload(payload: dict[str, Any], extracted_text: str = "") -> dict[str, Any]:
     """Normalize partial dates and high-confidence location/date hints without inventing values."""
-    value = _normalize_link_fields(dict(payload))
+    value = dict(payload)
+    if value.get("candidate_profile") is None:
+        value["candidate_profile"] = {}
+    profile = value.get("candidate_profile")
+    if isinstance(profile, dict) and profile.get("profile_links") is None:
+        profile["profile_links"] = []
+    if value.get("warnings") is None:
+        value["warnings"] = []
+    for collection in _MODEL_COLLECTION_FIELDS:
+        if value.get(collection) is None:
+            value[collection] = []
+        if collection == "portfolio_links" or not isinstance(value.get(collection), list):
+            continue
+        for claim in value[collection]:
+            if not isinstance(claim, dict):
+                continue
+            if claim.get("warnings") is None:
+                claim["warnings"] = []
+            claim["source_type"] = "resume"
+            claim["selected_for_import"] = False
+    value = _normalize_link_fields(value)
     for collection in ("employments", "education"):
         claims = []
         for claim in value.get(collection) or []:

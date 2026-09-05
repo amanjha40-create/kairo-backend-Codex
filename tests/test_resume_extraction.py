@@ -4,7 +4,11 @@ from datetime import date
 
 import pytest
 
-from app.resumes.extraction import enrich_employment_claims, normalize_extracted_payload, parse_resume_date
+from app.resumes.extraction import (
+    enrich_employment_claims,
+    normalize_extracted_payload,
+    parse_resume_date,
+)
 
 
 @pytest.mark.parametrize(
@@ -88,6 +92,34 @@ def test_profile_links_are_bounded_to_review_schema_limit() -> None:
         {"candidate_profile": {"profile_links": [f"https://example.com/{index}" for index in range(25)]}}
     )
     assert len(result["candidate_profile"]["profile_links"]) == 20
+
+
+def test_nullable_model_collections_and_claim_metadata_are_normalized_safely() -> None:
+    result = normalize_extracted_payload(
+        {
+            "candidate_profile": {"profile_links": None},
+            "employments": [
+                {
+                    "company_name": "Synthetic Company",
+                    "role_title": "Engineer",
+                    "warnings": None,
+                    "source_type": None,
+                    "selected_for_import": True,
+                }
+            ],
+            "education": None,
+            "skills": None,
+            "warnings": None,
+        }
+    )
+
+    assert result["candidate_profile"]["profile_links"] == []
+    assert result["education"] == []
+    assert result["skills"] == []
+    assert result["warnings"] == []
+    assert result["employments"][0]["warnings"] == []
+    assert result["employments"][0]["source_type"] == "resume"
+    assert result["employments"][0]["selected_for_import"] is False
 
 
 def test_skill_names_are_bounded_to_review_schema_limit() -> None:

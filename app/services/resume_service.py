@@ -19,13 +19,21 @@ from app.models.resume_document import ResumeDocument
 from app.models.resume_parsed_result import ResumeParsedResult
 from app.models.resume_processing_job import ResumeProcessingJob
 from app.resumes.enums import ResumeProcessingStatus, ResumeUploadStatus
-from app.resumes.providers import DeterministicDocxExtractor, TextractDocumentExtractor, build_resume_parser
+from app.resumes.providers import (
+    DeterministicDocxExtractor,
+    TextractDocumentExtractor,
+    build_resume_parser,
+)
+from app.resumes.schemas import (
+    ResumeCompleteUploadRequest,
+    ResumeParsedResultResponse,
+    ResumeProcessResponse,
+    ResumeResponse,
+    ResumeUploadIntentRequest,
+    ResumeUploadIntentResponse,
+)
 from app.resumes.validation import validate_resume_bytes, validate_resume_declaration
 from app.schemas.pagination import Page, PageParams
-from app.resumes.schemas import (
-    ResumeCompleteUploadRequest, ResumeParsedResultResponse, ResumeProcessResponse,
-    ResumeResponse, ResumeUploadIntentRequest, ResumeUploadIntentResponse,
-)
 from app.services.job_dispatcher import JobDispatcher
 
 logger = logging.getLogger(__name__)
@@ -63,10 +71,21 @@ class ResumeService:
         await self.session.commit()
         return ResumeUploadIntentResponse(resume_id=resume_id, upload_url=url, expires_in=ttl, object_key=key)
 
-    async def _owned(self, user_id: UUID, resume_id: UUID) -> ResumeDocument:
-        row = await self.session.scalar(select(ResumeDocument).where(
-            ResumeDocument.id == resume_id, ResumeDocument.user_id == user_id, ResumeDocument.deleted_at.is_(None),
-        ))
+    async def _owned(
+        self,
+        user_id: UUID,
+        resume_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> ResumeDocument:
+        statement = select(ResumeDocument).where(
+            ResumeDocument.id == resume_id,
+            ResumeDocument.user_id == user_id,
+            ResumeDocument.deleted_at.is_(None),
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = await self.session.scalar(statement)
         if row is None:
             raise NotFoundError("Resume not found")
         return row
@@ -97,7 +116,7 @@ class ResumeService:
         return await asyncio.to_thread(read)
 
     async def process(self, user_id: UUID, resume_id: UUID) -> ResumeProcessResponse:
-        row = await self._owned(user_id, resume_id)
+        row = await self._owned(user_id, resume_id, for_update=True)
         if row.upload_status != ResumeUploadStatus.UPLOADED.value:
             raise ConflictError("Resume must be uploaded before processing")
         latest = await self.session.scalar(
@@ -105,13 +124,31 @@ class ResumeService:
             .where(ResumeProcessingJob.resume_document_id == resume_id)
             .order_by(ResumeProcessingJob.created_at.desc())
         )
-        if latest and latest.status in {
+        active_statuses = {
             ResumeProcessingStatus.QUEUED.value,
             ResumeProcessingStatus.EXTRACTING.value,
             ResumeProcessingStatus.PARSING.value,
-            ResumeProcessingStatus.NEEDS_REVIEW.value,
-        }:
+        }
+        if latest and latest.status == ResumeProcessingStatus.NEEDS_REVIEW.value:
             return ResumeProcessResponse(resume_id=resume_id, job_id=latest.id, status=latest.status)
+        if latest and latest.status in active_statuses:
+            reference = latest.updated_at or latest.created_at
+            stale_before = datetime.now(UTC) - timedelta(
+                seconds=self.settings.resume_processing_stale_seconds
+            )
+            if reference and reference > stale_before:
+                return ResumeProcessResponse(
+                    resume_id=resume_id,
+                    job_id=latest.id,
+                    status=latest.status,
+                )
+            latest.status = ResumeProcessingStatus.FAILED.value
+            latest.failure_category = "StaleProcessingJob"
+            latest.sanitized_failure_code = "processing_stale"
+            latest.completed_at = datetime.now(UTC)
+            row.processing_status = ResumeProcessingStatus.FAILED.value
+            row.failure_code = "processing_stale"
+            await self.session.flush()
         if latest and latest.status == ResumeProcessingStatus.FAILED.value:
             attempts = await self.session.scalar(
                 select(func.count())
@@ -175,7 +212,16 @@ class ResumeService:
             return
         job.attempt_count += 1
         job.status = ResumeProcessingStatus.EXTRACTING.value
+        job.started_at = datetime.now(UTC)
+        job.extraction_provider = (
+            "textract"
+            if row.content_type == "application/pdf"
+            else "deterministic_docx"
+        )
+        job.parsing_provider = self.settings.resume_parser_provider
         row.processing_status = job.status
+        row.failure_code = None
+        row.last_error = None
         await self.session.flush()
         extraction_started_at = time.monotonic()
         extraction_provider = "textract" if row.content_type == "application/pdf" else "deterministic_docx"
@@ -221,12 +267,19 @@ class ResumeService:
             )
             result = ResumeParsedResult(
                 job_id=job.id, user_id=row.user_id, schema_version=parsed.schema_version,
-                structured_result=parsed.model_dump(mode="json"), parser_metadata={"provider": "bedrock"}, warnings=parsed.warnings,
+                structured_result=parsed.model_dump(mode="json"),
+                parser_metadata={
+                    "provider": self.settings.resume_parser_provider,
+                    "model_id": self.settings.bedrock_model_id,
+                    "extraction_provider": extraction_provider,
+                },
+                warnings=parsed.warnings,
             )
             self.session.add(result)
             job.status = ResumeProcessingStatus.NEEDS_REVIEW.value
             row.processing_status = job.status
             job.completed_at = datetime.now(UTC)
+            row.failure_code = None
             await self.session.flush()
             logger.info(
                 "resume.result.validated",
@@ -240,6 +293,7 @@ class ResumeService:
             row.processing_status = job.status
             job.failure_category = type(exc).__name__[:64]
             job.sanitized_failure_code = "processing_failed"
+            job.completed_at = datetime.now(UTC)
             row.failure_code = "processing_failed"
             logger.warning(
                 "resume.processing.failed",
