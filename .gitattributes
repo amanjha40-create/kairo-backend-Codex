@@ -1,0 +1,2 @@
+tests/fixtures/resume_golden/documents/*.docx binary
+tests/fixtures/resume_golden/documents/*.pdf binary

@@ -1,0 +1,2147 @@
+{
+  "corpus": {
+    "fixture_count": 30,
+    "formats_declared": [
+      "docx",
+      "pdf"
+    ],
+    "synthetic_only": true
+  },
+  "field_metrics": {
+    "certifications.expiry": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "certifications.issued": {
+      "accuracy_pct": 100.0,
+      "correct": 4,
+      "total": 4
+    },
+    "certifications.issuing_organization": {
+      "accuracy_pct": 100.0,
+      "correct": 4,
+      "total": 4
+    },
+    "certifications.title": {
+      "accuracy_pct": 100.0,
+      "correct": 4,
+      "total": 4
+    },
+    "education.degree": {
+      "accuracy_pct": 94.44,
+      "correct": 17,
+      "total": 18
+    },
+    "education.end": {
+      "accuracy_pct": 100.0,
+      "correct": 18,
+      "total": 18
+    },
+    "education.field_of_study": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "education.institution_name": {
+      "accuracy_pct": 100.0,
+      "correct": 18,
+      "total": 18
+    },
+    "education.is_current": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "education.start": {
+      "accuracy_pct": 100.0,
+      "correct": 18,
+      "total": 18
+    },
+    "employments.company_name": {
+      "accuracy_pct": 100.0,
+      "correct": 36,
+      "total": 36
+    },
+    "employments.end": {
+      "accuracy_pct": 97.22,
+      "correct": 35,
+      "total": 36
+    },
+    "employments.is_current": {
+      "accuracy_pct": 100.0,
+      "correct": 36,
+      "total": 36
+    },
+    "employments.role_title": {
+      "accuracy_pct": 100.0,
+      "correct": 36,
+      "total": 36
+    },
+    "employments.start": {
+      "accuracy_pct": 91.67,
+      "correct": 33,
+      "total": 36
+    },
+    "freelance.client_name": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "freelance.end": {
+      "accuracy_pct": 0.0,
+      "correct": 0,
+      "total": 1
+    },
+    "freelance.project_title": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "freelance.start": {
+      "accuracy_pct": 0.0,
+      "correct": 0,
+      "total": 1
+    },
+    "gig_platforms.end": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "gig_platforms.is_current": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "gig_platforms.partner_role": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "gig_platforms.platform_name": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "gig_platforms.start": {
+      "accuracy_pct": 0.0,
+      "correct": 0,
+      "total": 1
+    },
+    "internships.company_name": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "internships.end": {
+      "accuracy_pct": 0.0,
+      "correct": 0,
+      "total": 1
+    },
+    "internships.role": {
+      "accuracy_pct": 100.0,
+      "correct": 1,
+      "total": 1
+    },
+    "internships.start": {
+      "accuracy_pct": 0.0,
+      "correct": 0,
+      "total": 1
+    },
+    "profile.email": {
+      "accuracy_pct": 100.0,
+      "correct": 7,
+      "total": 7
+    },
+    "profile.full_name": {
+      "accuracy_pct": 96.55,
+      "correct": 28,
+      "total": 29
+    },
+    "profile.phone": {
+      "accuracy_pct": 100.0,
+      "correct": 2,
+      "total": 2
+    },
+    "profile.professional_headline": {
+      "accuracy_pct": 96.43,
+      "correct": 27,
+      "total": 28
+    },
+    "projects.title": {
+      "accuracy_pct": 100.0,
+      "correct": 6,
+      "total": 6
+    },
+    "projects.url": {
+      "accuracy_pct": 100.0,
+      "correct": 6,
+      "total": 6
+    }
+  },
+  "fixture_results": [
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "skills": {
+          "expected": 4,
+          "hallucinated": 0,
+          "matched": 4,
+          "omitted": 0,
+          "predicted": 4
+        }
+      },
+      "id": "standard_software_engineer",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "month_year_dates",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "year_only_dates",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "current_role_variants",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "missing_dates",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "skills": {
+          "expected": 5,
+          "hallucinated": 0,
+          "matched": 5,
+          "omitted": 0,
+          "predicted": 5
+        }
+      },
+      "id": "multi_page_long",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "two_column_simulated",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "narrative_resume",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "unusual_headings",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "format_noise_headers",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "day_month_dates_india",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "mixed_date_styles",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "certification_dense",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "projects_and_portfolio",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "skills_precision_negative",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "candidate_and_references",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        }
+      },
+      "id": "minimal_no_career",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        }
+      },
+      "id": "employment_gap",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "promotion_same_employer",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "repeated_section_duplicate",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "adversarial_resume_instructions",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "ocr_noise",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "current_education",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "freelance": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "gig_platforms": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "internships": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "internship_freelance_gig",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "international_unicode",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "title_company_order",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "employments": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 3,
+          "hallucinated": 0,
+          "matched": 3,
+          "omitted": 0,
+          "predicted": 3
+        }
+      },
+      "id": "table_like_records",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "malformed_urls_and_contact",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 1,
+          "hallucinated": 0,
+          "matched": 1,
+          "omitted": 0,
+          "predicted": 1
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 2,
+          "hallucinated": 0,
+          "matched": 2,
+          "omitted": 0,
+          "predicted": 2
+        }
+      },
+      "id": "role_without_employer",
+      "status": "scored"
+    },
+    {
+      "banned_value_leaks": 0,
+      "collections": {
+        "certifications": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "education": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "employments": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "freelance": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "gig_platforms": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "internships": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "projects": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        },
+        "skills": {
+          "expected": 0,
+          "hallucinated": 0,
+          "matched": 0,
+          "omitted": 0,
+          "predicted": 0
+        }
+      },
+      "id": "empty_and_decorative",
+      "status": "scored"
+    }
+  ],
+  "overall": {
+    "banned_value_leaks": 0,
+    "catastrophic_failure_rate_pct": 0.0,
+    "date_accuracy_pct": 92.44,
+    "duplicate_rate_pct": 0.0,
+    "hallucination_rate_pct": 0.0,
+    "invalid_import_rate_pct": 0.0,
+    "omission_rate_pct": 0.0,
+    "record_precision_pct": 100.0,
+    "record_recall_pct": 100.0
+  },
+  "record_metrics": {
+    "certifications": {
+      "expected": 4,
+      "matched": 4,
+      "precision_pct": 100.0,
+      "predicted": 4,
+      "recall_pct": 100.0
+    },
+    "education": {
+      "expected": 18,
+      "matched": 18,
+      "precision_pct": 100.0,
+      "predicted": 18,
+      "recall_pct": 100.0
+    },
+    "employments": {
+      "expected": 36,
+      "matched": 36,
+      "precision_pct": 100.0,
+      "predicted": 36,
+      "recall_pct": 100.0
+    },
+    "freelance": {
+      "expected": 1,
+      "matched": 1,
+      "precision_pct": 100.0,
+      "predicted": 1,
+      "recall_pct": 100.0
+    },
+    "gig_platforms": {
+      "expected": 1,
+      "matched": 1,
+      "precision_pct": 100.0,
+      "predicted": 1,
+      "recall_pct": 100.0
+    },
+    "internships": {
+      "expected": 1,
+      "matched": 1,
+      "precision_pct": 100.0,
+      "predicted": 1,
+      "recall_pct": 100.0
+    },
+    "projects": {
+      "expected": 6,
+      "matched": 6,
+      "precision_pct": 100.0,
+      "predicted": 6,
+      "recall_pct": 100.0
+    },
+    "skills": {
+      "expected": 74,
+      "matched": 74,
+      "precision_pct": 100.0,
+      "predicted": 74,
+      "recall_pct": 100.0
+    }
+  },
+  "runtime": {
+    "model_id": "us.amazon.nova-2-lite-v1:0",
+    "provider": "nova"
+  }
+}
