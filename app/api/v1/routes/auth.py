@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
+from urllib.parse import urlencode
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.rate_limit import (
@@ -24,6 +26,9 @@ from app.schemas.auth import (
     LoginRequest,
     OAuthAuthUrlResponse,
     OAuthCallbackRequest,
+    GoogleHandoffExchangeRequest,
+    GoogleHandoffExchangeResponse,
+    GooglePhoneStartRequest,
     OrganizationSignupEmailSendResponse,
     OrganizationSignupEmailVerifyResponse,
     OrganizationSignupStartRequest,
@@ -225,6 +230,19 @@ async def signup_phone_send(
 
 
 @router.post(
+    "/signup/google/phone",
+    response_model=SignupStartResponse,
+    summary="Add phone number after verified Google signup",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_google_phone_start(
+    payload: GooglePhoneStartRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> SignupStartResponse:
+    return await auth.start_google_phone_verification(payload)
+
+
+@router.post(
     "/signup/phone/resend",
     response_model=SignupChannelSendResponse,
     summary="Resend signup phone OTP",
@@ -332,7 +350,42 @@ async def reset_password(
 
 
 # ---------------------------------------------------------------------------
-# OAuth providers — generic /{provider}/ routes (google, linkedin, github, ...)
+# Google OAuth — state/PKCE is mandatory and its callback is browser-only.
+# ---------------------------------------------------------------------------
+
+@router.get("/google/callback", include_in_schema=False)
+async def google_callback(
+    auth: AuthService = Depends(get_auth_service),
+    code: str | None = Query(default=None),
+    state_value: str | None = Query(default=None, alias="state"),
+    error: str | None = Query(default=None),
+) -> RedirectResponse:
+    handoff_code = await auth.complete_google_callback(code=code, state=state_value, error=error)
+    handoff_uri = auth.google_app_handoff_uri
+    if not handoff_uri:
+        # A generic failure avoids revealing deployment configuration to the browser.
+        return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        f"{handoff_uri}?{urlencode({'code': handoff_code})}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post(
+    "/google/handoff/exchange",
+    response_model=GoogleHandoffExchangeResponse,
+    summary="Consume one-time Google Android App Link handoff",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def google_handoff_exchange(
+    payload: GoogleHandoffExchangeRequest,
+    auth: AuthService = Depends(get_auth_service),
+) -> GoogleHandoffExchangeResponse:
+    return await auth.exchange_google_handoff(payload.code)
+
+
+# OAuth providers — generic /{provider}/ routes (linkedin, github, ...).
+# Google is deliberately intercepted above so it cannot use the legacy exchange.
 # ---------------------------------------------------------------------------
 
 @router.get(
@@ -346,6 +399,8 @@ async def oauth_url(
 ) -> OAuthAuthUrlResponse:
     """Returns the provider's login URL. Supported: google, linkedin, github."""
 
+    if provider == "google":
+        return await auth.start_google_oauth()
     return auth.get_oauth_url(provider)
 
 
@@ -361,6 +416,9 @@ async def oauth_callback(
 ) -> TokenResponse:
     """Exchange the authorization code returned by the provider for app JWT tokens."""
 
+    if provider == "google":
+        # Google only accepts the state-bound browser callback above.
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
     return await auth.oauth_callback(provider, payload)
 
 

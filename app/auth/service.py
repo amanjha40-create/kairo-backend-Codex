@@ -18,6 +18,7 @@ from app.auth.email_utils import mask_email, normalize_email
 from app.auth.passwords import hash_password, password_needs_rehash, verify_password
 from app.auth.phone_utils import mask_phone, normalize_phone
 from app.auth.provider_registry import get_provider
+from app.auth.oauth_transactions import OAuthHandoffStore, OAuthTransactionStore
 from app.auth.signup_otp import SignupOtpStore, generate_otp_code
 from app.auth.tokens import (
     create_access_token,
@@ -53,6 +54,9 @@ from app.schemas.auth import (
     LoginRequest,
     OAuthAuthUrlResponse,
     OAuthCallbackRequest,
+    GoogleHandoffExchangeResponse,
+    GoogleAuthOutcome,
+    GooglePhoneStartRequest,
     OrganizationSignupEmailSendResponse,
     OrganizationSignupEmailVerifyResponse,
     OrganizationSignupStartRequest,
@@ -77,6 +81,7 @@ from app.schemas.auth import (
     TokenResponse,
     UnlinkProviderResponse,
 )
+from app.infrastructure.redis.keys import RedisKeys
 
 logger = logging.getLogger(__name__)
 SignupChannel = Literal["email", "phone"]
@@ -116,6 +121,8 @@ class AuthService:
         self._refresh = RefreshTokenRepository(session)
         self._social = UserSocialAccountRepository(session)
         self._otp = SignupOtpStore(redis, settings)
+        self._oauth_transactions = OAuthTransactionStore(redis, RedisKeys(settings))
+        self._oauth_handoffs = OAuthHandoffStore(redis, RedisKeys(settings))
         self._email = get_email_sender(settings, session=session)
         self._phone = (
             None
@@ -407,6 +414,24 @@ class AuthService:
         pending = await self._load_active_pending(data.signup_session_id, allow_completed=True)
         return await self._complete_pending_signup(pending, SignupKind.CANDIDATE)
 
+    async def start_google_phone_verification(self, data: GooglePhoneStartRequest) -> SignupStartResponse:
+        """Attach a phone to a Google-pending signup; OTP verification remains mandatory."""
+
+        pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
+        if pending.oauth_provider != "google" or pending.email_verified_at is None:
+            raise ForbiddenError("This signup cannot use Google phone verification")
+
+        phone = normalize_phone(data.phone, self._settings)
+        existing = await self._users.get_by_phone(phone)
+        other_pending = await self._pending.get_by_phone(phone)
+        if existing is not None or (other_pending is not None and other_pending.id != pending.id):
+            raise ConflictError("An account or signup already uses this phone number")
+        pending.phone = phone
+        pending.phone_verified_at = None
+        await self._session.commit()
+        return self._build_signup_start_response(pending, message="Phone number added")
+
     async def _complete_pending_signup(self, pending: PendingSignup, signup_kind: SignupKind) -> TokenResponse:
         self._assert_signup_kind(pending, signup_kind)
         if pending.completed_user_id is not None:
@@ -441,6 +466,10 @@ class AuthService:
             await self._session.flush()
         except IntegrityError:
             await self._session.rollback()
+            if pending.oauth_provider:
+                # A concurrent user creation must never turn a Google-pending
+                # identity into an implicitly linked account.
+                raise ConflictError("An account already exists with this email or phone") from None
             user = await self._users.get_by_email(pending.email)
             if user is None and pending.phone:
                 user = await self._users.get_by_phone(pending.phone)
@@ -454,6 +483,20 @@ class AuthService:
         else:
             pending.completed_user_id = user.id
             pending.completed_at = now
+            if pending.oauth_provider and pending.oauth_provider_user_id:
+                await self._social.create(
+                    UserSocialAccount(
+                        user_id=user.id,
+                        provider=pending.oauth_provider,
+                        provider_user_id=pending.oauth_provider_user_id,
+                        provider_email=pending.oauth_provider_email or pending.email,
+                    )
+                )
+                # Pending signup rows retain no durable third-party identifier after completion.
+                pending.oauth_provider = None
+                pending.oauth_provider_user_id = None
+                pending.oauth_provider_email = None
+                pending.oauth_validated_at = None
 
         if pending.completed_user_id is None:
             pending.completed_user_id = user.id
@@ -643,9 +686,129 @@ class AuthService:
     def get_oauth_url(self, provider_name: str) -> OAuthAuthUrlResponse:
         """Return the OAuth2 authorization URL for any supported provider."""
 
+        if provider_name == "google":
+            raise ValidationAppError("Google authorization must use the state-bound flow")
         provider = get_provider(provider_name)
         url = provider.get_auth_url(self._settings)
         return OAuthAuthUrlResponse(provider=provider_name, auth_url=url)
+
+    @property
+    def google_app_handoff_uri(self) -> str | None:
+        return self._settings.google_app_handoff_uri
+
+    async def start_google_oauth(self) -> OAuthAuthUrlResponse:
+        """Create the server-owned state/PKCE transaction before redirecting to Google."""
+
+        transaction = await self._oauth_transactions.create()
+        provider = get_provider("google")
+        auth_url = provider.get_auth_url(
+            self._settings,
+            state=transaction.state,
+            code_challenge=self._oauth_transactions.code_challenge(transaction.code_verifier),
+        )
+        return OAuthAuthUrlResponse(provider="google", auth_url=auth_url)
+
+    async def complete_google_callback(
+        self, *, code: str | None, state: str | None, error: str | None = None
+    ) -> str:
+        """Resolve Google result server-side and return an opaque App Link handoff code."""
+
+        if error or not code or not state:
+            return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
+        try:
+            transaction = await self._oauth_transactions.consume(state)
+            profile = await get_provider("google").exchange_code(
+                code, self._settings, code_verifier=transaction.code_verifier
+            )
+        except Exception as exc:
+            logger.warning("google_oauth_callback_failed", extra={"error_type": type(exc).__name__})
+            return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
+
+        email = normalize_email(profile.email)
+        social = await self._social.get_by_provider("google", profile.provider_user_id)
+        if social is not None:
+            user = await self._users.get_by_id(social.user_id)
+            if user is None or not user.is_active or user.deleted_at is not None:
+                return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
+            tokens = await self._issue_tokens(user)
+            await self._session.commit()
+            return await self._create_google_handoff(GoogleAuthOutcome.LOGIN_COMPLETE, tokens=tokens)
+
+        if await self._users.get_by_email(email) is not None:
+            return await self._create_google_handoff(GoogleAuthOutcome.ACCOUNT_LINKING_REQUIRED)
+
+        pending = await self._get_or_prepare_google_pending_signup(profile, email)
+        await self._session.commit()
+        return await self._create_google_handoff(
+            GoogleAuthOutcome.PHONE_VERIFICATION_REQUIRED,
+            pending=self._build_signup_start_response(pending, message="Phone verification required"),
+        )
+
+    async def exchange_google_handoff(self, code: str) -> GoogleHandoffExchangeResponse:
+        try:
+            payload = await self._oauth_handoffs.consume(code)
+            outcome = GoogleAuthOutcome(str(payload["outcome"]))
+        except Exception:
+            return GoogleHandoffExchangeResponse(
+                outcome=GoogleAuthOutcome.AUTH_FAILED, message="Google sign-in could not be completed. Please try again."
+            )
+        tokens = TokenResponse.model_validate(payload["tokens"]) if "tokens" in payload else None
+        signup = SignupStartResponse.model_validate(payload["signup"]) if "signup" in payload else None
+        messages = {
+            GoogleAuthOutcome.LOGIN_COMPLETE: "Signed in successfully.",
+            GoogleAuthOutcome.PHONE_VERIFICATION_REQUIRED: "Verify your phone number to finish signup.",
+            GoogleAuthOutcome.ACCOUNT_LINKING_REQUIRED: "Sign in to your existing account to link Google.",
+            GoogleAuthOutcome.AUTH_FAILED: "Google sign-in could not be completed. Please try again.",
+        }
+        return GoogleHandoffExchangeResponse(outcome=outcome, message=messages[outcome], tokens=tokens, signup=signup)
+
+    async def _create_google_handoff(
+        self,
+        outcome: GoogleAuthOutcome,
+        *,
+        tokens: TokenResponse | None = None,
+        pending: SignupStartResponse | None = None,
+    ) -> str:
+        payload: dict[str, object] = {"outcome": outcome.value}
+        if tokens is not None:
+            payload["tokens"] = tokens.model_dump()
+        if pending is not None:
+            payload["signup"] = pending.model_dump(mode="json")
+        return await self._oauth_handoffs.create(payload)
+
+    async def _get_or_prepare_google_pending_signup(self, profile, email: str) -> PendingSignup:
+        existing = await self._pending.get_by_email(email)
+        now = datetime.now(tz=UTC)
+        if existing is not None and not await self._pending.is_expired(existing):
+            if existing.oauth_provider == "google" and existing.oauth_provider_user_id == profile.provider_user_id:
+                return existing
+            raise ConflictError("An account signup is already pending for this email")
+        if existing is not None:
+            await self._pending.delete_by_id(existing.id)
+            await self._session.flush()
+        pending = PendingSignup(
+            email=email,
+            phone=None,
+            password_hash=None,
+            full_name=profile.full_name,
+            expires_at=now + timedelta(hours=self._settings.signup_pending_ttl_hours),
+            email_verified_at=now,
+            phone_verified_at=None,
+            email_otp_sent_count=0,
+            email_verify_attempt_count=0,
+            email_last_otp_sent_at=None,
+            phone_otp_sent_count=0,
+            phone_verify_attempt_count=0,
+            phone_last_otp_sent_at=None,
+            signup_kind=SignupKind.CANDIDATE,
+            oauth_provider="google",
+            oauth_provider_user_id=profile.provider_user_id,
+            oauth_provider_email=email,
+            oauth_validated_at=now,
+        )
+        self._session.add(pending)
+        await self._session.flush()
+        return pending
 
     async def oauth_callback(self, provider_name: str, data: OAuthCallbackRequest) -> TokenResponse:
         """Exchange auth code for app JWT tokens — works for any provider.
@@ -758,6 +921,12 @@ class AuthService:
 
     async def link_provider(self, user_id: UUID, provider_name: str, data: LinkProviderRequest) -> LinkProviderResponse:
         """Link any OAuth provider to an existing account."""
+
+        if provider_name == "google":
+            # Google linking must use the state-bound PKCE transaction rather than this
+            # legacy provider-code endpoint. A dedicated authenticated linker can be
+            # introduced later without weakening the login callback contract.
+            raise ForbiddenError("Google account linking is not available through this endpoint")
 
         user = await self._users.get_by_id(user_id)
         if user is None:
@@ -1085,6 +1254,33 @@ class AuthService:
             expires_in_seconds=self._settings.signup_otp_ttl_seconds,
             email_masked=mask_email(pending.email),
             phone_masked=mask_phone(pending.phone or ""),
+            message=message,
+        )
+
+    def _build_signup_start_response(
+        self,
+        pending: PendingSignup,
+        *,
+        message: str,
+    ) -> SignupStartResponse:
+        """Return the existing privacy-safe Candidate signup projection."""
+
+        return SignupStartResponse(
+            signup_session_id=pending.id,
+            email_masked=mask_email(pending.email),
+            phone_masked=mask_phone(pending.phone or ""),
+            email_verified=pending.email_verified_at is not None,
+            phone_verified=pending.phone_verified_at is not None,
+            email_resend_after_seconds=self._otp.seconds_until_resend_allowed(
+                pending.email_last_otp_sent_at
+            ),
+            phone_resend_after_seconds=self._otp.seconds_until_resend_allowed(
+                pending.phone_last_otp_sent_at
+            ),
+            expires_in_seconds=max(
+                0,
+                int((pending.expires_at - datetime.now(tz=UTC)).total_seconds()),
+            ),
             message=message,
         )
 

@@ -27,11 +27,15 @@ class PendingSignup(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     phone: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    oauth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    oauth_provider_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    oauth_provider_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    oauth_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     email_otp_sent_count: Mapped[int] = mapped_column("otp_sent_count", Integer, nullable=False, default=0)
     email_verify_attempt_count: Mapped[int] = mapped_column(
         "verify_attempt_count",
