@@ -10,6 +10,7 @@ import pytest
 
 from app.models.education import Education
 from app.models.employment import Employment
+from app.models.internship import Internship
 from app.schemas.passport_share import PassportSharePermissions
 from app.services.public_passport_service import PublicPassportService
 
@@ -31,9 +32,10 @@ class _ExecuteResult:
 
 
 class _FakeSession:
-    def __init__(self, *, employments=None, educations=None):
+    def __init__(self, *, employments=None, educations=None, internships=None):
         self._employments = list(employments or [])
         self._educations = list(educations or [])
+        self._internships = list(internships or [])
 
     async def execute(self, statement):
         entity = statement.column_descriptions[0].get("entity")
@@ -65,6 +67,8 @@ class _FakeSession:
                     )
                     rows = [row for row in rows if row.verification_status in allowed]
             return _ExecuteResult(rows)
+        if entity is Internship:
+            return _ExecuteResult(self._internships)
         raise AssertionError(f"Unexpected entity query: {entity}")
 
 
@@ -96,6 +100,18 @@ def _education(*, status: str, institution: str) -> Education:
         end_date=date(2024, 5, 31),
         is_currently_studying=False,
         verification_status=status,
+    )
+
+
+def _internship_without_start_date() -> Internship:
+    return Internship(
+        id=uuid4(),
+        user_id=uuid4(),
+        company_name="Legacy Internship",
+        role="Intern",
+        start_date=None,
+        is_ongoing=False,
+        verification_status="pending",
     )
 
 
@@ -242,3 +258,30 @@ async def test_owner_vault_keeps_full_career_history() -> None:
         "Pending Employer",
     ]
     assert [row.verification_status for row in vault.educations] == ["verified", "draft", "pending"]
+
+
+@pytest.mark.asyncio
+async def test_owner_vault_allows_legacy_internship_without_start_date() -> None:
+    service = _service(_FakeSession(internships=[_internship_without_start_date()]))
+
+    vault = await service.build_vault_for_user(
+        uuid4(),
+        PassportSharePermissions(
+            include_employments=False,
+            include_educations=False,
+            include_internships=True,
+            include_freelance=False,
+            include_gig_platforms=False,
+            include_portfolio=False,
+            include_certifications=False,
+            include_skills=False,
+            include_projects=False,
+            include_user_documents=False,
+            show_employer_names=False,
+            show_documents=False,
+        ),
+        public_only=False,
+    )
+
+    assert len(vault.internships) == 1
+    assert vault.internships[0].start_date is None
