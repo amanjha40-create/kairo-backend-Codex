@@ -242,7 +242,7 @@ async def test_add_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_for_review() -> None:
+async def test_submit_for_review_requires_authoritative_consent_payload() -> None:
     app.dependency_overrides[get_current_user] = _override_current_user
     app.dependency_overrides[get_verification_request_service] = lambda: FakeSubjectVerificationRequestService()
 
@@ -252,8 +252,7 @@ async def test_submit_for_review() -> None:
         response = await client.post(f"/api/v1/verification-requests/{request_public_id}/submit-for-review")
 
     app.dependency_overrides.clear()
-    assert response.status_code == 200
-    assert response.json()["status"] == "pending_admin_review"
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -287,7 +286,14 @@ async def test_submit_for_review_requires_evidence() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/verification-requests/00000000-0000-0000-0000-00000000cccc/submit-for-review")
+        response = await client.post(
+            "/api/v1/verification-requests/00000000-0000-0000-0000-00000000cccc/submit-for-review",
+            json={
+                "consented_fields": ["employment.role"],
+                "consented_evidence_scope": ["employment_letter"],
+                "consent_version": "v1",
+            },
+        )
 
     app.dependency_overrides.clear()
     assert response.status_code == 409
