@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfReader
 
+from app.resumes.extraction import normalize_extracted_payload
 from app.resumes.providers import DeterministicDocxExtractor
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "resume_golden"
@@ -94,3 +95,12 @@ def test_postfix_quality_metrics_meet_7g_thresholds() -> None:
     assert overall["catastrophic_failure_rate_pct"] <= 2
     assert overall["invalid_import_rate_pct"] == 0
     assert overall["banned_value_leaks"] == 0
+
+
+def test_narrative_fixture_retains_only_its_explicitly_labelled_skills() -> None:
+    corpus = load_json("corpus.json")
+    narrative = next(fixture for fixture in corpus if fixture["id"] == "narrative_resume")
+
+    result = normalize_extracted_payload({"skills": []}, narrative["text"])
+
+    assert [item["name"] for item in result["skills"]] == narrative["expected"]["skills"]

@@ -6,6 +6,7 @@ import pytest
 
 from app.resumes.extraction import (
     enrich_employment_claims,
+    enrich_explicit_skills,
     normalize_extracted_payload,
     parse_resume_date,
 )
@@ -126,3 +127,47 @@ def test_skill_names_are_bounded_to_review_schema_limit() -> None:
     result = normalize_extracted_payload({"skills": [{"name": "x" * 200}]})
     assert len(result["skills"][0]["name"]) == 128
     assert "skill_name_truncated" in result["warnings"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("SKILLS\nPython, FastAPI, PostgreSQL", ["Python", "FastAPI", "PostgreSQL"]),
+        (
+            "My core skills are Customer Onboarding, Account Management, and Salesforce.",
+            ["Customer Onboarding", "Account Management", "Salesforce"],
+        ),
+        (
+            "Technical Skills: Machine Learning; Data Analysis • Cloud Security | Python",
+            ["Machine Learning", "Data Analysis", "Cloud Security", "Python"],
+        ),
+    ],
+)
+def test_explicit_section_and_narrative_skill_lists_are_preserved(
+    text: str,
+    expected: list[str],
+) -> None:
+    result = enrich_explicit_skills({"skills": []}, text)
+
+    assert [item["name"] for item in result["skills"]] == expected
+
+
+def test_explicit_skills_are_case_insensitively_deduplicated() -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": "python"}]},
+        "Skills: Python, PYTHON, FastAPI",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["python", "FastAPI"]
+
+
+def test_unlabelled_prose_employers_and_titles_do_not_become_skills() -> None:
+    result = enrich_explicit_skills(
+        {"skills": []},
+        (
+            "Skills matter in every role and should be developed over time. "
+            "I worked at Skills Cloud as a Skills Engineer."
+        ),
+    )
+
+    assert result["skills"] == []
