@@ -338,10 +338,23 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
     service._commit_reload_subject_response = commit_reload_subject_response
     service._notifications = Notifications()
 
-    result = await service.submit_for_review(actor_id, "candidate@example.com", request.public_id)
+    result = await service.submit_for_review(
+        actor_id,
+        "candidate@example.com",
+        request.public_id,
+        VerificationRequestSubmitForReviewRequest(
+            consented_fields=["education.degree", "education_dates"],
+            consented_evidence_scope=["transcript"],
+            consent_version="v1",
+        ),
+    )
 
     assert result.status == VerificationRequestStatus.PENDING_ADMIN_REVIEW
     assert [call.event_type for call in admin_role_calls] == ["admin_verification_review_required"]
+    assert request.consented_fields == ["education.degree", "education_dates"]
+    assert request.consented_evidence_scope == ["transcript"]
+    assert request.consented_at is not None
+    assert request.consent_version == "v1"
 
 
 @pytest.mark.asyncio

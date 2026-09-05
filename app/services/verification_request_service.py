@@ -827,7 +827,7 @@ class VerificationRequestService:
         actor_user_id: UUID,
         actor_email: str,
         verification_request_public_id: UUID,
-        payload: VerificationRequestSubmitForReviewRequest | None = None,
+        payload: VerificationRequestSubmitForReviewRequest,
     ) -> VerificationRequestResponse:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
         if request.status not in {
@@ -854,8 +854,7 @@ class VerificationRequestService:
                 raise ConflictError("Add completed education evidence before submitting for review")
         submitted_at = datetime.now(tz=UTC)
         request.submitted_for_admin_review_at = submitted_at
-        if payload is not None:
-            self._apply_submission_consent(request, payload, submitted_at)
+        self._apply_submission_consent(request, payload, submitted_at)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
