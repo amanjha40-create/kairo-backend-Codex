@@ -56,6 +56,23 @@ _MODEL_COLLECTION_FIELDS = (
     "portfolio_links",
 )
 
+_SKILL_SECTION_HEADING = re.compile(
+    r"^(?:(?:core|technical|professional)\s+)?skills"
+    r"(?:\s+(?:&|and)\s+technologies)?\s*$",
+    re.IGNORECASE,
+)
+_EXPLICIT_SKILL_LIST = re.compile(
+    r"(?:"
+    r"\bmy\s+(?:core\s+)?skills\s+(?:are|include)"
+    r"|\b(?:core|technical|professional)\s+skills\s+(?:are|include)"
+    r"|\b(?:core\s+|technical\s+|professional\s+)?skills\s*[:\-–—]"
+    r")\s*(?P<items>[^.\n]+)",
+    re.IGNORECASE,
+)
+_SKILL_LIST_SEPARATOR = re.compile(
+    r"\s*(?:,|;|\||•|·)\s*(?:(?i:and)\s+)?|\s+(?i:and)\s+"
+)
+
 
 def parse_resume_date(value: Any) -> tuple[date | None, str | None, DatePrecision | None, bool]:
     """Return exact date, display value, precision, and current-role marker."""
@@ -148,6 +165,60 @@ def _normalize_link_fields(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _skill_list_items(value: str, *, require_list: bool) -> list[str]:
+    items = [item.strip(" \t\r\n-–—•·|,;:.") for item in _SKILL_LIST_SEPARATOR.split(value)]
+    items = [item for item in items if item]
+    if require_list and len(items) < 2:
+        return []
+    return [item for item in items if len(item) <= 128 and len(item.split()) <= 6]
+
+
+def _explicit_skill_names(extracted_text: str) -> list[str]:
+    """Return only skills from high-confidence, explicitly labelled resume lists."""
+    candidates: list[str] = []
+    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if _SKILL_SECTION_HEADING.fullmatch(line) and index + 1 < len(lines):
+            candidates.extend(_skill_list_items(lines[index + 1], require_list=False))
+        for match in _EXPLICIT_SKILL_LIST.finditer(line):
+            candidates.extend(_skill_list_items(match.group("items"), require_list=True))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = " ".join(candidate.casefold().split())
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(" ".join(candidate.split()))
+    return unique
+
+
+def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict[str, Any]:
+    """Merge explicit labelled skills without inferring from employers, titles, or prose."""
+    value = dict(payload)
+    skills: list[Any] = []
+    seen: set[str] = set()
+    for skill in value.get("skills") or []:
+        if not isinstance(skill, dict) or not isinstance(skill.get("name"), str):
+            skills.append(skill)
+            continue
+        item = dict(skill)
+        item["name"] = " ".join(item["name"].split())
+        key = item["name"].casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        skills.append(item)
+    for name in _explicit_skill_names(extracted_text):
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        skills.append({"name": name})
+    value["skills"] = skills
+    return value
+
+
 def _nearby_lines(claim: dict[str, Any], lines: list[str]) -> list[str]:
     needles = [claim.get("company_name"), claim.get("role_title")]
     needles = [str(item).casefold() for item in needles if item]
@@ -224,6 +295,8 @@ def normalize_extracted_payload(payload: dict[str, Any], extracted_text: str = "
     for collection in _MODEL_COLLECTION_FIELDS:
         if value.get(collection) is None:
             value[collection] = []
+    value = enrich_explicit_skills(value, extracted_text)
+    for collection in _MODEL_COLLECTION_FIELDS:
         if collection == "portfolio_links" or not isinstance(value.get(collection), list):
             continue
         for claim in value[collection]:
