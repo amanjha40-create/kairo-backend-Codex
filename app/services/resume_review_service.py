@@ -35,9 +35,9 @@ from app.resumes.normalization import normalize_review_date, payload_hash, stabl
 from app.resumes.review_enums import ResumeImportAction, ResumeReviewStatus
 from app.resumes.review_schemas import (
     ImportBatchResponse,
+    ImportEntitySummary,
     ImportResultResponse,
     ReviewImportRequest,
-    ImportEntitySummary,
     ReviewItemResponse,
     ReviewItemUpdateRequest,
     ReviewPlanItem,
@@ -47,6 +47,7 @@ from app.resumes.review_schemas import (
     ReviewValidateRequest,
     review_claim_adapter,
 )
+from app.resumes.review_validation import required_claim_blockers
 from app.resumes.schemas import ParsedResumeResult
 from app.services.resume_duplicate_service import ResumeDuplicateService
 
@@ -495,43 +496,26 @@ class ResumeReviewService:
         if claim_type not in {"employment", "education"}:
             return payload
         for field, is_end in (("start_date", False), ("end_date", True)):
+            raw_value = payload.get(field) or payload.get(f"{field}_display")
             normalized_date, precision = normalize_review_date(
                 payload.get(field), payload.get(f"{field}_display"), is_end=is_end
             )
             if normalized_date:
-                payload[field] = normalized_date
-                if payload.get(f"{field}_precision") is None and precision:
+                if claim_type == "employment" and precision in {"month", "year"}:
+                    payload[field] = None
+                    payload[f"{field}_display"] = str(raw_value)
+                else:
+                    payload[field] = normalized_date
+                if precision:
                     payload[f"{field}_precision"] = precision
             elif field == "end_date" and payload.get("is_current"):
                 payload[field] = None
+                payload["end_date_precision"] = None
         return payload
 
     @staticmethod
     def _required_blockers(claim_type: str, p: dict[str, Any]) -> list[str]:
-        required = {
-            "employment": (),
-            "education": ("institution_name",),
-            "internship": (),
-            "freelance": (),
-            "gig_platform": (),
-            "certification": ("title",),
-            "portfolio": ("title",),
-            "project": ("title",),
-            "skill": ("name",),
-        }
-        blockers = [f"missing_{field}" for field in required.get(claim_type, ()) if not p.get(field)]
-        if claim_type == "education" and not any(p.get(field) for field in ("degree", "field_of_study")):
-            blockers.append("missing_education_qualification")
-        if claim_type == "internship" and not any(p.get(field) for field in ("company_name", "role")):
-            blockers.append("missing_internship_identity")
-        if claim_type == "freelance" and not any(p.get(field) for field in ("client_name", "project_title")):
-            blockers.append("missing_freelance_identity")
-        if claim_type == "gig_platform" and not any(p.get(field) for field in ("platform_name", "partner_role")):
-            blockers.append("missing_gig_identity")
-        if claim_type == "employment":
-            if not p.get("company_name") and not p.get("role_title"):
-                blockers.append("missing_employment_identity")
-        return blockers
+        return required_claim_blockers(claim_type, p)
 
     @staticmethod
     def _completion_warnings(claim_type: str, payload: dict[str, Any]) -> list[str]:

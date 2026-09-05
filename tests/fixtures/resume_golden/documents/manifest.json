@@ -1,0 +1,280 @@
+{
+  "document_count": 39,
+  "files": [
+    {
+      "byte_size": 2067,
+      "fixture_id": "standard_software_engineer",
+      "format": "pdf",
+      "path": "standard_software_engineer.pdf",
+      "sha256": "4524dfd78ae58d86f5cac2cb6cda1aa6c0dd5f97b3ead216cf20222b78141263"
+    },
+    {
+      "byte_size": 1385,
+      "fixture_id": "standard_software_engineer",
+      "format": "docx",
+      "path": "standard_software_engineer.docx",
+      "sha256": "607a7baa462e050dcf6234c6e944c3c07f722925d0c8a25c42583f29cc22ad59"
+    },
+    {
+      "byte_size": 1661,
+      "fixture_id": "month_year_dates",
+      "format": "pdf",
+      "path": "month_year_dates.pdf",
+      "sha256": "e9a992135bc4312c44b2990743289ac258e20371023824dc710ab90331a17af2"
+    },
+    {
+      "byte_size": 1110,
+      "fixture_id": "month_year_dates",
+      "format": "docx",
+      "path": "month_year_dates.docx",
+      "sha256": "950ad70c5fd96e5c1dc43bc439c9f33a932ad60654e70597cde3d56c10f5b46f"
+    },
+    {
+      "byte_size": 1623,
+      "fixture_id": "year_only_dates",
+      "format": "pdf",
+      "path": "year_only_dates.pdf",
+      "sha256": "77ae15904ad4cba2658fa83f7628ef879c385d2f3ad4568052da5f2f934b6b72"
+    },
+    {
+      "byte_size": 1034,
+      "fixture_id": "current_role_variants",
+      "format": "docx",
+      "path": "current_role_variants.docx",
+      "sha256": "9056e0cd2f5626395c560c198dd4b4c3c403e0ea74919d87522bfaf24fd7fc1a"
+    },
+    {
+      "byte_size": 1606,
+      "fixture_id": "missing_dates",
+      "format": "pdf",
+      "path": "missing_dates.pdf",
+      "sha256": "1e0547599e3e6e551d14ab04bfb1a5e2318aebc75b5a83e5dd3d01465da8eb62"
+    },
+    {
+      "byte_size": 1064,
+      "fixture_id": "missing_dates",
+      "format": "docx",
+      "path": "missing_dates.docx",
+      "sha256": "b38d24873ebde63121712901daec1b28559fc48431939c7386e89271bcb0b17b"
+    },
+    {
+      "byte_size": 3028,
+      "fixture_id": "multi_page_long",
+      "format": "pdf",
+      "path": "multi_page_long.pdf",
+      "sha256": "fb056e68775f00512c6111fbb5ba18519b4c6f6dc3619d83910dea6cd5adf97e"
+    },
+    {
+      "byte_size": 1655,
+      "fixture_id": "two_column_simulated",
+      "format": "pdf",
+      "path": "two_column_simulated.pdf",
+      "sha256": "62e9a9514b86186f4b999ea1194a507cfdb1e9a2eae4e0ac8de9ff638c996cf9"
+    },
+    {
+      "byte_size": 1140,
+      "fixture_id": "narrative_resume",
+      "format": "docx",
+      "path": "narrative_resume.docx",
+      "sha256": "23861b02077c2e264563cd4f5912abc99597875ad399aa94965053ae233cc854"
+    },
+    {
+      "byte_size": 1620,
+      "fixture_id": "unusual_headings",
+      "format": "pdf",
+      "path": "unusual_headings.pdf",
+      "sha256": "355f69109280e990ad1f234e108a9096d77dd4dc40f7bf2a5978ad791e60ade3"
+    },
+    {
+      "byte_size": 1079,
+      "fixture_id": "unusual_headings",
+      "format": "docx",
+      "path": "unusual_headings.docx",
+      "sha256": "a7f89a7c9a9bf106da5e712bf89c695c7321b217bb38043193631a19388d132d"
+    },
+    {
+      "byte_size": 1747,
+      "fixture_id": "format_noise_headers",
+      "format": "pdf",
+      "path": "format_noise_headers.pdf",
+      "sha256": "c6d6ec4b04ff718395b92f86ab3facb0ddd62cc609ce2a38de59e66dc4c675d1"
+    },
+    {
+      "byte_size": 1616,
+      "fixture_id": "day_month_dates_india",
+      "format": "pdf",
+      "path": "day_month_dates_india.pdf",
+      "sha256": "7c10c627a5e96e2f4e5fe57d60ba50aa189e81d645b9018e6640598140abd0d3"
+    },
+    {
+      "byte_size": 1073,
+      "fixture_id": "day_month_dates_india",
+      "format": "docx",
+      "path": "day_month_dates_india.docx",
+      "sha256": "4a074cc884e0ea51a5c725e19021a49a525b4f824ad0582024ca33a235df77a2"
+    },
+    {
+      "byte_size": 1638,
+      "fixture_id": "mixed_date_styles",
+      "format": "pdf",
+      "path": "mixed_date_styles.pdf",
+      "sha256": "90bcf8acfdc0c968be4d0d0a6f5d639e8fcf7683dc5e1d83f4b2a66b008b998f"
+    },
+    {
+      "byte_size": 1139,
+      "fixture_id": "certification_dense",
+      "format": "docx",
+      "path": "certification_dense.docx",
+      "sha256": "dab74dd44e67b0d8ee204e6e8206372743b020a9fd68305dcf0fe88bf5ac0ac6"
+    },
+    {
+      "byte_size": 1668,
+      "fixture_id": "projects_and_portfolio",
+      "format": "pdf",
+      "path": "projects_and_portfolio.pdf",
+      "sha256": "1cb1dd3211b168b1bc5dc86c1ebfa9e3f26c3fa9a6a2ca94cf584d4ae286c749"
+    },
+    {
+      "byte_size": 1100,
+      "fixture_id": "projects_and_portfolio",
+      "format": "docx",
+      "path": "projects_and_portfolio.docx",
+      "sha256": "37cb7508407a6e8494417c86d1b583a1966c546337f86647ebedc1015acf90bf"
+    },
+    {
+      "byte_size": 1628,
+      "fixture_id": "skills_precision_negative",
+      "format": "pdf",
+      "path": "skills_precision_negative.pdf",
+      "sha256": "ef916dcb9a119c523af64491582b79c1bd049eb8a829e5a7faf4e649451f591a"
+    },
+    {
+      "byte_size": 1104,
+      "fixture_id": "candidate_and_references",
+      "format": "docx",
+      "path": "candidate_and_references.docx",
+      "sha256": "16561c233c154b93c219e66014c33fa464ff0855d7742601d7e66ac349f75e32"
+    },
+    {
+      "byte_size": 1573,
+      "fixture_id": "minimal_no_career",
+      "format": "pdf",
+      "path": "minimal_no_career.pdf",
+      "sha256": "b4f7df6cb7899292a6ad528b51a5d1d77d388f69dbc06e73027bd6f79d2f198f"
+    },
+    {
+      "byte_size": 1668,
+      "fixture_id": "employment_gap",
+      "format": "pdf",
+      "path": "employment_gap.pdf",
+      "sha256": "0ade84a20ae938d6dc6088918802345bed7d3d260e842ebbbd172b510dbed3c4"
+    },
+    {
+      "byte_size": 1112,
+      "fixture_id": "employment_gap",
+      "format": "docx",
+      "path": "employment_gap.docx",
+      "sha256": "c51dd3bfdd7a4c98c449b76f6d2e0f2086e2157f37381a4e4ea78a02a131ca35"
+    },
+    {
+      "byte_size": 1078,
+      "fixture_id": "promotion_same_employer",
+      "format": "docx",
+      "path": "promotion_same_employer.docx",
+      "sha256": "f6bcf48b2bbff6a8d8549dc456b54f94b6d9008301babf7df324e998f024c712"
+    },
+    {
+      "byte_size": 1667,
+      "fixture_id": "repeated_section_duplicate",
+      "format": "pdf",
+      "path": "repeated_section_duplicate.pdf",
+      "sha256": "94bfaab4434b4f013795a54cf17e9331d8bc374c5b10c4580c147b4615f0e90e"
+    },
+    {
+      "byte_size": 1662,
+      "fixture_id": "adversarial_resume_instructions",
+      "format": "pdf",
+      "path": "adversarial_resume_instructions.pdf",
+      "sha256": "5f9cd8e9356620b2b5ad18ec8e27601a693921cf61222b8f9f031e277ef8fd6e"
+    },
+    {
+      "byte_size": 1171,
+      "fixture_id": "adversarial_resume_instructions",
+      "format": "docx",
+      "path": "adversarial_resume_instructions.docx",
+      "sha256": "42e4629d4c17c13b570e69475f23903f7899843a8981246855c62d4a4f861485"
+    },
+    {
+      "byte_size": 1647,
+      "fixture_id": "ocr_noise",
+      "format": "pdf",
+      "path": "ocr_noise.pdf",
+      "sha256": "6eaa21a225279b4e51dbd6ab68a958a4a094ecb5ce1e8297b810ea2a765ac036"
+    },
+    {
+      "byte_size": 1060,
+      "fixture_id": "current_education",
+      "format": "docx",
+      "path": "current_education.docx",
+      "sha256": "4c18354e24509debbdd0c440bb36582fadd156a3b03000cccd8e6984c33595f9"
+    },
+    {
+      "byte_size": 1702,
+      "fixture_id": "internship_freelance_gig",
+      "format": "pdf",
+      "path": "internship_freelance_gig.pdf",
+      "sha256": "1afbe3bebdf8f2d759835bd2a53298aed20ebc1e9c690949047c30fac54cdaea"
+    },
+    {
+      "byte_size": 1663,
+      "fixture_id": "international_unicode",
+      "format": "pdf",
+      "path": "international_unicode.pdf",
+      "sha256": "98ca9958ebe994371850d1de0218f5642aca23419dc0572129372f55340c6821"
+    },
+    {
+      "byte_size": 1111,
+      "fixture_id": "international_unicode",
+      "format": "docx",
+      "path": "international_unicode.docx",
+      "sha256": "1fabd49dba8925aa5bbbb715aab486d035d473781a2ac309317b80a57b69216f"
+    },
+    {
+      "byte_size": 1100,
+      "fixture_id": "title_company_order",
+      "format": "docx",
+      "path": "title_company_order.docx",
+      "sha256": "8a8e1b31ccfa0812d1e84f9a15264929ff2983f980ccf438a31de2ef1b3222d7"
+    },
+    {
+      "byte_size": 1707,
+      "fixture_id": "table_like_records",
+      "format": "pdf",
+      "path": "table_like_records.pdf",
+      "sha256": "e28d5832b42c30bbe63d5e52abe3f98419c528bd576cd984871e18f6334677dc"
+    },
+    {
+      "byte_size": 1687,
+      "fixture_id": "malformed_urls_and_contact",
+      "format": "pdf",
+      "path": "malformed_urls_and_contact.pdf",
+      "sha256": "74c2c4ede16df75f2e887c39e0d25c57b73f2b6c13e7ee9ab9dc47f652d7c1ff"
+    },
+    {
+      "byte_size": 1035,
+      "fixture_id": "role_without_employer",
+      "format": "docx",
+      "path": "role_without_employer.docx",
+      "sha256": "fc555cbeb4bbd5222f3be328856680733c8934394990cbd8d2cff1a0c14de4de"
+    },
+    {
+      "byte_size": 1595,
+      "fixture_id": "empty_and_decorative",
+      "format": "pdf",
+      "path": "empty_and_decorative.pdf",
+      "sha256": "93648e7d9c07fe8609169e799feba71911c4b62100939de9aec6a3306c147491"
+    }
+  ],
+  "fixture_count": 30,
+  "synthetic_only": true
+}

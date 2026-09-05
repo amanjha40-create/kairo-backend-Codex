@@ -587,6 +587,18 @@ class Settings(BaseSettings):
         default="1",
         validation_alias=AliasChoices("RESUME_PARSER_SCHEMA_VERSION", "BEDROCK_SCHEMA_VERSION"),
     )
+    resume_max_extracted_characters: int = Field(
+        default=120_000,
+        ge=10_000,
+        le=1_000_000,
+        validation_alias=AliasChoices("RESUME_MAX_EXTRACTED_CHARACTERS"),
+    )
+    resume_processing_stale_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=7_200,
+        validation_alias=AliasChoices("RESUME_PROCESSING_STALE_SECONDS"),
+    )
 
     # --- Google OAuth ---
     google_client_id: str | None = Field(
