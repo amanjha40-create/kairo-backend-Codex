@@ -6,13 +6,14 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.admin_review.enums import (
     VerificationRequestReviewStatus,
     VerificationReviewNoteType,
     VerificationReviewNoteVisibility,
 )
+from app.organization.enums import OrganizationType
 from app.schemas.education import EducationResponse
 from app.schemas.employment.responses import EmploymentResponse
 from app.schemas.verification_request import (
@@ -83,6 +84,11 @@ class AdminRegistryResolutionResponse(BaseModel):
     resolution_method: str | None
     resolution_confidence: float | None
     resolution_metadata: dict[str, object]
+    organization_type: str | None = None
+    country: str | None = None
+    state_province: str | None = None
+    website: str | None = None
+    primary_domain: str | None = None
 
 
 class AdminReviewQueueItemResponse(VerificationRequestResponse):
@@ -156,6 +162,37 @@ class AdminReviewPriorityRequest(VerificationRequestPriorityRequest):
 
 class AdminReviewOrganizationResolutionRequest(BaseModel):
     organization_public_id: UUID
+
+
+class AdminReviewCanonicalOrganizationCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=255)
+    organization_type: OrganizationType
+    country: str = Field(min_length=2, max_length=2)
+    state_province: str | None = Field(default=None, max_length=128)
+    website: str | None = Field(default=None, max_length=512)
+    domain: str | None = Field(default=None, max_length=255)
+    registry_record_public_id: UUID | None = None
+
+    @field_validator("country")
+    @classmethod
+    def normalize_country(cls, value: str) -> str:
+        if not value.isalpha():
+            raise ValueError("country must be a two-letter code")
+        return value.upper()
+
+    @field_validator("domain")
+    @classmethod
+    def normalize_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower().removeprefix("@")
+        if not normalized:
+            return None
+        if "://" in normalized or "/" in normalized:
+            raise ValueError("domain must be a hostname without a scheme or path")
+        return normalized
 
 
 class AdminReviewNoteResponse(BaseModel):

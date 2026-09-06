@@ -68,6 +68,11 @@ async def test_detail_projects_registry_link_from_resolved_org() -> None:
         registry_code="KR-ORG-KDTU",
         display_name="KDTU",
         legal_name="KDTU",
+        organization_type="university",
+        country="IN",
+        state_province="Karnataka",
+        website="https://kdtu.example",
+        domains=[],
     )
     request = _request(organization_id=uuid4(), registry_record_id=None)
 
@@ -93,6 +98,11 @@ async def test_detail_projects_registry_link_from_resolved_org() -> None:
     assert detail.registry_resolution.status == "resolved"
     assert detail.registry_resolution.registry_record_public_id == registry_record.public_id
     assert detail.registry_resolution.registry_name == "KDTU"
+    assert detail.registry_resolution.organization_type == "university"
+    assert detail.registry_resolution.country == "IN"
+    assert detail.registry_resolution.state_province == "Karnataka"
+    assert detail.registry_resolution.website == "https://kdtu.example"
+    assert detail.registry_resolution.primary_domain is None
     service._registry.get_by_id.assert_awaited_once_with(organization.registry_record_id)
 
 

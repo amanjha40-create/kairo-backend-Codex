@@ -24,6 +24,7 @@ from app.api.dependencies.verification_admin import (
 from app.schemas.admin_review_workflow import (
     AdminEvidenceDownloadResponse,
     AdminReviewAssignRequest,
+    AdminReviewCanonicalOrganizationCreateRequest,
     AdminReviewClarificationResponseRequest,
     AdminReviewCorrectionRequest,
     AdminReviewDecisionRequest,
@@ -211,6 +212,26 @@ async def resolve_admin_review_organization(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> VerificationRequestResponse:
     return await svc.resolve_organization(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/create-canonical-organization",
+    response_model=VerificationRequestResponse,
+)
+async def create_admin_review_canonical_organization(
+    verification_request_public_id: UUID,
+    payload: AdminReviewCanonicalOrganizationCreateRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_dispatch)],
+    svc: Annotated[
+        VerificationRequestAdminReviewService,
+        Depends(get_verification_request_admin_review_service),
+    ],
+) -> VerificationRequestResponse:
+    return await svc.create_canonical_organization(
+        reviewer.id,
+        verification_request_public_id,
+        payload,
+    )
 
 
 @router.post(

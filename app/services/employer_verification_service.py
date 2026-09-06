@@ -138,6 +138,7 @@ class EmployerVerificationService:
         payload: EmployerVerificationRequestBody,
         *,
         verification_request_id: UUID | None = None,
+        commit: bool = True,
     ) -> EmployerVerificationRequestResponse:
         row = await self._employment.get_owned_active(employment_id, owner_user_id)
         if row is None:
@@ -224,7 +225,10 @@ class EmployerVerificationService:
             },
         )
 
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
+        else:
+            await self._session.flush()
 
         expires_at = now + ttl
         logger.info(
@@ -260,6 +264,7 @@ class EmployerVerificationService:
             verification_request.employment_id,
             payload,
             verification_request_id=verification_request.id,
+            commit=False,
         )
         await self._workflow.record_action(
             verification_request,
@@ -268,7 +273,6 @@ class EmployerVerificationService:
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"verifier_email_masked": response.verifier_email_masked},
         )
-        await self._session.commit()
         return response
 
     async def get_admin_summary(self, public_id: UUID) -> AdminEmployerVerificationResponse:

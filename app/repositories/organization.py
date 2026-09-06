@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
+from app.models.trust_registry_alias import TrustRegistryAlias
+from app.models.trust_registry_domain import TrustRegistryDomain
+from app.models.trust_registry_identifier import TrustRegistryIdentifier
+from app.models.trust_registry_record import TrustRegistryRecord
 from app.organization.enums import OrganizationRole
 
 
@@ -25,6 +29,13 @@ class OrganizationRepository:
         await self._session.flush()
         return organization
 
+    async def create_canonical(self, organization: Organization) -> Organization:
+        """Create an Admin-owned canonical organization without tenant membership."""
+
+        self._session.add(organization)
+        await self._session.flush()
+        return organization
+
     async def get_by_public_id(self, public_id: UUID) -> Organization | None:
         stmt = select(Organization).where(Organization.public_id == public_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
@@ -32,6 +43,27 @@ class OrganizationRepository:
     async def get_by_id(self, organization_id: UUID) -> Organization | None:
         stmt = select(Organization).where(Organization.id == organization_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_registry_record_id(self, registry_record_id: UUID) -> Organization | None:
+        stmt = (
+            select(Organization)
+            .options(joinedload(Organization.registry_record))
+            .where(Organization.registry_record_id == registry_record_id)
+            .order_by(Organization.created_at.asc())
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
+    async def find_exact(self, *, name: str, domain: str | None) -> Organization | None:
+        filters = [func.lower(Organization.name) == name.strip().lower()]
+        if domain:
+            filters.append(func.lower(Organization.domain) == domain.strip().lower())
+        stmt = (
+            select(Organization)
+            .options(joinedload(Organization.registry_record))
+            .where(or_(*filters))
+            .order_by(Organization.created_at.asc())
+        )
+        return (await self._session.execute(stmt)).scalars().first()
 
     async def list_for_user(self, user_id: UUID) -> list[tuple[Organization, OrganizationMember]]:
         stmt = (
@@ -117,7 +149,55 @@ class OrganizationRepository:
         offset: int,
         limit: int,
     ) -> tuple[list[Organization], int]:
-        filters = [Organization.name.ilike(f"%{search.strip()}%")] if search else []
+        filters = []
+        if search:
+            needle = f"%{search.strip().lower()}%"
+            filters.append(
+                or_(
+                    func.lower(Organization.name).like(needle),
+                    func.lower(func.coalesce(Organization.domain, "")).like(needle),
+                    func.lower(func.coalesce(Organization.website, "")).like(needle),
+                    exists(
+                        select(1).where(
+                            TrustRegistryRecord.id == Organization.registry_record_id,
+                            TrustRegistryRecord.deleted_at.is_(None),
+                            or_(
+                                func.lower(TrustRegistryRecord.legal_name).like(needle),
+                                func.lower(
+                                    func.coalesce(TrustRegistryRecord.display_name, "")
+                                ).like(needle),
+                            ),
+                        )
+                    ),
+                    exists(
+                        select(1).where(
+                            TrustRegistryAlias.registry_record_id
+                            == Organization.registry_record_id,
+                            TrustRegistryAlias.deleted_at.is_(None),
+                            func.lower(TrustRegistryAlias.alias_name).like(needle),
+                        )
+                    ),
+                    exists(
+                        select(1).where(
+                            TrustRegistryDomain.registry_record_id
+                            == Organization.registry_record_id,
+                            TrustRegistryDomain.deleted_at.is_(None),
+                            func.lower(TrustRegistryDomain.domain).like(needle),
+                        )
+                    ),
+                    exists(
+                        select(1).where(
+                            TrustRegistryIdentifier.registry_record_id
+                            == Organization.registry_record_id,
+                            TrustRegistryIdentifier.deleted_at.is_(None),
+                            or_(
+                                func.lower(TrustRegistryIdentifier.identifier_value).like(needle),
+                                func.lower(TrustRegistryIdentifier.identifier_type).like(needle),
+                            ),
+                        )
+                    ),
+                )
+            )
         count = await self._session.scalar(
             select(func.count()).select_from(Organization).where(*filters)
         )

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,10 +21,14 @@ from app.education.enums import EducationVerificationStatus
 from app.employment.enums import VerificationStatus
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.infrastructure.s3.presign import generate_presigned_get_url
+from app.models.organization import Organization
+from app.models.trust_registry_domain import TrustRegistryDomain
+from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.verification_request_review import VerificationRequestReview
 from app.models.verification_review_correction import VerificationReviewCorrection
 from app.models.verification_review_note import VerificationReviewNote
 from app.notifications.contracts import NotificationRequest
+from app.organization.enums import OrganizationType
 from app.repositories.education import EducationRepository
 from app.repositories.employer_verification import EmployerVerificationRepository
 from app.repositories.employment import EmploymentRepository
@@ -40,6 +45,7 @@ from app.schemas.admin_review_workflow import (
     AdminOrganizationResolutionResponse,
     AdminRegistryResolutionResponse,
     AdminReviewAssignRequest,
+    AdminReviewCanonicalOrganizationCreateRequest,
     AdminReviewClarificationResponseRequest,
     AdminReviewCorrectionRequest,
     AdminReviewCycleResponse,
@@ -77,7 +83,14 @@ from app.services.organization_registry_sync_service import OrganizationRegistry
 from app.services.public_institution_verification_service import (
     PublicInstitutionVerificationService,
 )
+from app.services.trust_registry_service import TrustRegistryCodeService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.trust_registry.enums import (
+    TrustRegistryLifecycleStatus,
+    TrustRegistryResolutionMethod,
+    TrustRegistrySourceType,
+    TrustRegistryTrustStatus,
+)
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -92,6 +105,14 @@ _DEFAULT_QUEUE_STATUS_VALUES = (
     VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW.value,
     VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW.value,
 )
+_PRE_DISPATCH_ORGANIZATION_STATUSES = {
+    VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+    VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+}
+_POST_APPROVAL_ORGANIZATION_STATUSES = {
+    VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
+    VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
+}
 
 
 def normalize_contact_review_status(
@@ -125,6 +146,7 @@ class VerificationRequestAdminReviewService:
         self._reviews = VerificationRequestReviewRepository(session)
         self._contacts = VerificationContactRepository(session)
         self._registry_sync = OrganizationRegistrySyncService(session)
+        self._registry_codes = TrustRegistryCodeService()
         self._settings = settings or get_settings()
         self._employer_outreach = EmployerVerificationService(session, self._settings)
         self._institution_outreach = PublicInstitutionVerificationService(session, self._settings)
@@ -325,6 +347,15 @@ class VerificationRequestAdminReviewService:
                 resolution_method=request.registry_resolution_method,
                 resolution_confidence=request.registry_resolution_confidence,
                 resolution_metadata=dict(request.registry_resolution_metadata or {}),
+                organization_type=registry_record.organization_type
+                if registry_record is not None
+                else None,
+                country=registry_record.country if registry_record is not None else None,
+                state_province=registry_record.state_province
+                if registry_record is not None
+                else None,
+                website=registry_record.website if registry_record is not None else None,
+                primary_domain=self._primary_registry_domain(registry_record),
             ),
         )
 
@@ -745,32 +776,149 @@ class VerificationRequestAdminReviewService:
         verification_request_public_id: UUID,
         payload: AdminReviewOrganizationResolutionRequest,
     ) -> VerificationRequestResponse:
-        request = await self._get_required_request(verification_request_public_id)
-        pre_dispatch_statuses = {
-            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
-            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
-        }
-        post_approval_resolution_statuses = {
-            VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
-            VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
-        }
-        if request.status not in pre_dispatch_statuses | post_approval_resolution_statuses:
-            raise ConflictError("Verification request is not awaiting organization resolution")
-
+        request = await self._get_required_request_for_update(verification_request_public_id)
         organization = await self._organizations.get_by_public_id(payload.organization_public_id)
         if organization is None:
             raise NotFoundError("Organization not found")
 
         if request.organization_id is not None:
             if request.organization_id == organization.id:
-                await self._registry_sync.sync_organization(
-                    organization,
-                    actor_user_id=actor_user_id,
+                if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+                    return await self._to_request_response(request)
+                if request.status in _POST_APPROVAL_ORGANIZATION_STATUSES:
+                    await self._advance_to_organization_stage(
+                        request,
+                        actor_user_id=actor_user_id,
+                        resolved_organization_public_id=organization.public_id,
+                    )
+                    await self._session.commit()
+                    return await self._to_request_response(request)
+                if request.status in _PRE_DISPATCH_ORGANIZATION_STATUSES:
+                    return await self._to_request_response(request)
+                raise ConflictError(
+                    "Verification request is not awaiting organization resolution"
                 )
-                await self._session.commit()
-                return await self._to_request_response(request)
             raise ConflictError("Verification request organization is already resolved")
 
+        self._require_organization_resolution_state(request)
+        await self._attach_organization_and_continue(
+            request,
+            organization,
+            actor_user_id=actor_user_id,
+            canonical_organization_created=False,
+        )
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return await self._to_request_response(refreshed)
+
+    async def create_canonical_organization(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewCanonicalOrganizationCreateRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request_for_update(verification_request_public_id)
+        if request.organization_id is not None:
+            organization = await self._organizations.get_by_id(request.organization_id)
+            marker = str(
+                dict(request.registry_resolution_metadata or {}).get(
+                    "admin_created_organization_public_id"
+                )
+                or ""
+            )
+            if organization is not None and marker == str(organization.public_id):
+                if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+                    return await self._to_request_response(request)
+                if request.status in _POST_APPROVAL_ORGANIZATION_STATUSES:
+                    await self._advance_to_organization_stage(
+                        request,
+                        actor_user_id=actor_user_id,
+                        resolved_organization_public_id=organization.public_id,
+                    )
+                    await self._session.commit()
+                    return await self._to_request_response(request)
+                if request.status in _PRE_DISPATCH_ORGANIZATION_STATUSES:
+                    return await self._to_request_response(request)
+                raise ConflictError(
+                    "Verification request is not awaiting organization resolution"
+                )
+            raise ConflictError("Verification request organization is already resolved")
+
+        self._require_organization_resolution_state(request)
+        self._require_canonical_organization_type(request, payload.organization_type)
+        if request.status in _POST_APPROVAL_ORGANIZATION_STATUSES:
+            await self._require_outreach_contact(request)
+
+        registry_record = await self._resolve_creation_registry_record(request, payload)
+        existing = None
+        if registry_record is not None:
+            existing = await self._organizations.get_by_registry_record_id(registry_record.id)
+        if existing is None:
+            existing = await self._organizations.find_exact(
+                name=payload.name,
+                domain=payload.domain,
+            )
+        if existing is not None:
+            raise ConflictError(
+                "A matching canonical organization already exists; select it from search"
+            )
+
+        if registry_record is None:
+            registry_record = await self._create_registry_record_for_canonical_organization(
+                actor_user_id,
+                request,
+                payload,
+            )
+
+        now = datetime.now(tz=UTC)
+        organization = Organization(
+            created_by_user_id=actor_user_id,
+            name=payload.name,
+            organization_type=payload.organization_type,
+            website=payload.website,
+            location=self._canonical_location(payload.state_province, payload.country),
+            domain=payload.domain,
+            verification_capabilities=[
+                "education" if request.education_id is not None else "employment"
+            ],
+            registry_record_id=registry_record.id if registry_record is not None else None,
+            registry_resolution_method=(
+                TrustRegistryResolutionMethod.MANUAL.value
+                if registry_record is not None
+                else None
+            ),
+            registry_resolution_confidence=100.0 if registry_record is not None else None,
+            registry_resolution_metadata={
+                "source": "admin_canonical_organization_creation",
+                "verification_request_public_id": str(request.public_id),
+            },
+            registry_resolved_at=now if registry_record is not None else None,
+            registry_resolved_by_user_id=actor_user_id if registry_record is not None else None,
+        )
+        await self._organizations.create_canonical(organization)
+        await self._attach_organization_and_continue(
+            request,
+            organization,
+            actor_user_id=actor_user_id,
+            canonical_organization_created=True,
+        )
+
+        await self._session.commit()
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return await self._to_request_response(refreshed)
+
+    async def _attach_organization_and_continue(
+        self,
+        request,
+        organization: Organization,
+        *,
+        actor_user_id: UUID,
+        canonical_organization_created: bool,
+    ) -> None:
         sync_result = await self._registry_sync.sync_organization(
             organization,
             actor_user_id=actor_user_id,
@@ -785,35 +933,38 @@ class VerificationRequestAdminReviewService:
             **dict(request.registry_resolution_metadata or {}),
             "source": "organization_registry_sync",
             "organization_public_id": str(organization.public_id),
+            "admin_created_organization_public_id": (
+                str(organization.public_id) if canonical_organization_created else None
+            ),
         }
         request.registry_resolved_at = organization.registry_resolved_at
         request.registry_resolved_by_user_id = actor_user_id
-        if request.status in pre_dispatch_statuses:
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type=(
+                "verification_request_canonical_organization_created_and_attached"
+                if canonical_organization_created
+                else "verification_request_organization_resolved"
+            ),
+            event_source=VerificationRequestEventSource.ADMIN,
+            metadata={
+                "previous_organization_public_id": None,
+                "organization_public_id": str(organization.public_id),
+                "registry_record_public_id": str(sync_result.registry_record_public_id),
+                "canonical_organization_created": canonical_organization_created,
+            },
+        )
+        if request.status in _PRE_DISPATCH_ORGANIZATION_STATUSES:
             # Resolution selects the eventual verifier; dispatch stays an explicit
             # admin approval so no outreach or canonical-claim mutation happens here.
-            await self._workflow.record_action(
-                request,
-                actor_user_id=actor_user_id,
-                event_type="verification_request_organization_resolved",
-                event_source=VerificationRequestEventSource.ADMIN,
-                metadata={"organization_public_id": str(organization.public_id)},
-            )
-            await self._session.commit()
-            refreshed = await self._requests.get_by_public_id(request.public_id)
-            if refreshed is None:
-                raise NotFoundError("Verification request not found")
-            return await self._to_request_response(refreshed)
+            return
 
         await self._advance_to_organization_stage(
             request,
             actor_user_id=actor_user_id,
             resolved_organization_public_id=organization.public_id,
         )
-        await self._session.commit()
-        refreshed = await self._requests.get_by_public_id(request.public_id)
-        if refreshed is None:
-            raise NotFoundError("Verification request not found")
-        return await self._to_request_response(refreshed)
 
     async def get_timeline(
         self,
@@ -1073,6 +1224,185 @@ class VerificationRequestAdminReviewService:
             raise NotFoundError("Verification request not found")
         return request
 
+    async def _get_required_request_for_update(self, verification_request_public_id: UUID):
+        request = await self._requests.get_by_public_id_for_update(
+            verification_request_public_id
+        )
+        if request is None:
+            raise NotFoundError("Verification request not found")
+        return request
+
+    @staticmethod
+    def _require_organization_resolution_state(request) -> None:  # noqa: ANN001
+        if request.status not in (
+            _PRE_DISPATCH_ORGANIZATION_STATUSES | _POST_APPROVAL_ORGANIZATION_STATUSES
+        ):
+            raise ConflictError("Verification request is not awaiting organization resolution")
+
+    @staticmethod
+    def _require_canonical_organization_type(
+        request,  # noqa: ANN001
+        organization_type: OrganizationType,
+    ) -> None:
+        linked_count = int(request.employment_id is not None) + int(
+            request.education_id is not None
+        )
+        if linked_count != 1:
+            raise ConflictError(
+                "Canonical organization resolution requires one linked Career claim"
+            )
+        expected = (
+            OrganizationType.EMPLOYER
+            if request.employment_id is not None
+            else OrganizationType.UNIVERSITY
+        )
+        if organization_type != expected:
+            raise ConflictError(
+                f"{expected.value} is required for this verification request"
+            )
+
+    async def _require_outreach_contact(self, request) -> None:  # noqa: ANN001
+        if request.employment_id is None:
+            return
+        contact = await self._contacts.get_current(request.id)
+        if (
+            contact is None
+            or contact.review_status != VerificationContactReviewStatus.APPROVED
+            or not contact.contact_email.strip()
+        ):
+            raise ConflictError(
+                "An approved verification contact with an email is required for employer outreach"
+            )
+
+    async def _resolve_creation_registry_record(
+        self,
+        request,  # noqa: ANN001
+        payload: AdminReviewCanonicalOrganizationCreateRequest,
+    ):
+        payload_record = (
+            await self._registry.get_by_public_id(payload.registry_record_public_id)
+            if payload.registry_record_public_id is not None
+            else None
+        )
+        if payload.registry_record_public_id is not None and payload_record is None:
+            raise NotFoundError("Trust Registry record not found")
+
+        request_record = (
+            await self._registry.get_by_id(request.registry_record_id)
+            if request.registry_record_id is not None
+            else None
+        )
+        if request.registry_record_id is not None and request_record is None:
+            raise ConflictError("Resolved Trust Registry record is no longer available")
+        if (
+            payload_record is not None
+            and request_record is not None
+            and payload_record.id != request_record.id
+        ):
+            raise ConflictError(
+                "Canonical organization must use the request's resolved Registry record"
+            )
+
+        record = request_record or payload_record
+        if record is None:
+            exact_matches = await self._registry.find_exact_entity_matches(
+                name=payload.name,
+                domain=payload.domain,
+            )
+            if len(exact_matches) > 1:
+                raise ConflictError(
+                    "Multiple Trust Registry records match this organization; select one explicitly"
+                )
+            record = exact_matches[0] if exact_matches else None
+        if record is not None and not self._registry_record_matches_creation(record, payload):
+            raise ConflictError(
+                "Canonical organization does not match the selected Registry record"
+            )
+        return record
+
+    async def _create_registry_record_for_canonical_organization(
+        self,
+        actor_user_id: UUID,
+        request,  # noqa: ANN001
+        payload: AdminReviewCanonicalOrganizationCreateRequest,
+    ) -> TrustRegistryRecord:
+        public_id = uuid4()
+        organization_type = payload.organization_type.value
+        record = TrustRegistryRecord(
+            public_id=public_id,
+            registry_code=self._registry_codes.generate(
+                public_id=public_id,
+                organization_type=organization_type,
+            ),
+            legal_name=payload.name,
+            display_name=payload.name,
+            organization_type=organization_type,
+            country=payload.country,
+            state_province=payload.state_province,
+            website=payload.website,
+            lifecycle_status=TrustRegistryLifecycleStatus.DRAFT.value,
+            trust_status=TrustRegistryTrustStatus.UNREVIEWED.value,
+            registry_confidence_score=Decimal("0"),
+            trust_metadata={
+                "source": "admin_canonical_organization_creation",
+                "verification_request_public_id": str(request.public_id),
+            },
+            created_by_user_id=actor_user_id,
+            updated_by_user_id=actor_user_id,
+        )
+        await self._registry.create(record)
+        if payload.domain:
+            self._session.add(
+                TrustRegistryDomain(
+                    registry_record_id=record.id,
+                    domain=payload.domain,
+                    is_primary=True,
+                    is_verified=False,
+                    source_type=TrustRegistrySourceType.MANUAL.value,
+                    source_metadata={
+                        "source": "admin_canonical_organization_creation",
+                        "verification_request_public_id": str(request.public_id),
+                    },
+                )
+            )
+            await self._session.flush()
+        return record
+
+    @staticmethod
+    def _registry_record_matches_creation(
+        record,  # noqa: ANN001
+        payload: AdminReviewCanonicalOrganizationCreateRequest,
+    ) -> bool:
+        normalized_name = payload.name.strip().casefold()
+        names = {
+            record.legal_name.strip().casefold(),
+            (record.display_name or "").strip().casefold(),
+            *{
+                alias.alias_name.strip().casefold()
+                for alias in record.aliases
+                if alias.deleted_at is None
+            },
+        }
+        if normalized_name in names:
+            return True
+        normalized_domain = (payload.domain or "").strip().casefold()
+        return bool(normalized_domain) and any(
+            domain.deleted_at is None and domain.domain.strip().casefold() == normalized_domain
+            for domain in record.domains
+        )
+
+    @staticmethod
+    def _canonical_location(state_province: str | None, country: str) -> str:
+        return ", ".join(value for value in (state_province, country) if value)
+
+    @staticmethod
+    def _primary_registry_domain(record) -> str | None:  # noqa: ANN001
+        if record is None:
+            return None
+        active = [domain for domain in record.domains if domain.deleted_at is None]
+        primary = next((domain for domain in active if domain.is_primary), None)
+        return (primary or (active[0] if active else None)).domain if active else None
+
     async def _get_or_create_review(
         self,
         request,
@@ -1114,6 +1444,19 @@ class VerificationRequestAdminReviewService:
         actor_user_id: UUID,
         resolved_organization_public_id: UUID | None = None,
     ) -> None:
+        if request.status == VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+            return
+        if getattr(request, "organization_outreach_sent_at", None) is not None:
+            await self._workflow.transition(
+                request,
+                target_status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
+                actor_user_id=actor_user_id,
+                event_type="organization_resolved",
+                event_source=VerificationRequestEventSource.SYSTEM,
+                metadata={"outreach_replay_prevented": "true"},
+            )
+            return
+
         metadata: dict[str, str] = {}
         if resolved_organization_public_id is not None:
             metadata["organization_public_id"] = str(resolved_organization_public_id)
@@ -1130,6 +1473,7 @@ class VerificationRequestAdminReviewService:
             return
 
         contact = await self._contacts.get_current(request.id)
+        request.organization_outreach_sent_at = datetime.now(tz=UTC)
         if request.employment_id is not None:
             if contact is None or contact.review_status != VerificationContactReviewStatus.APPROVED:
                 raise ConflictError(
@@ -1152,7 +1496,6 @@ class VerificationRequestAdminReviewService:
                 actor_user_id=actor_user_id,
                 verification_request=request,
             )
-        request.organization_outreach_sent_at = datetime.now(tz=UTC)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,

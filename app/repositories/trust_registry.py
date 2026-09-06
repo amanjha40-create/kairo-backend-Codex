@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -48,9 +48,17 @@ class TrustRegistryRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id(self, record_id: UUID) -> TrustRegistryRecord | None:
-        stmt = select(TrustRegistryRecord).where(
-            TrustRegistryRecord.id == record_id,
-            TrustRegistryRecord.deleted_at.is_(None),
+        stmt = (
+            select(TrustRegistryRecord)
+            .options(
+                selectinload(TrustRegistryRecord.domains),
+                selectinload(TrustRegistryRecord.aliases),
+                selectinload(TrustRegistryRecord.identifiers),
+            )
+            .where(
+                TrustRegistryRecord.id == record_id,
+                TrustRegistryRecord.deleted_at.is_(None),
+            )
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
@@ -60,6 +68,51 @@ class TrustRegistryRepository:
             TrustRegistryRecord.deleted_at.is_(None),
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def find_exact_entity_matches(
+        self,
+        *,
+        name: str,
+        domain: str | None,
+    ) -> list[TrustRegistryRecord]:
+        normalized_name = name.strip().lower()
+        matchers = [
+            func.lower(TrustRegistryRecord.legal_name) == normalized_name,
+            func.lower(func.coalesce(TrustRegistryRecord.display_name, ""))
+            == normalized_name,
+            exists(
+                select(1).where(
+                    TrustRegistryAlias.registry_record_id == TrustRegistryRecord.id,
+                    TrustRegistryAlias.deleted_at.is_(None),
+                    func.lower(TrustRegistryAlias.alias_name) == normalized_name,
+                )
+            ),
+        ]
+        if domain:
+            matchers.append(
+                exists(
+                    select(1).where(
+                        TrustRegistryDomain.registry_record_id == TrustRegistryRecord.id,
+                        TrustRegistryDomain.deleted_at.is_(None),
+                        func.lower(TrustRegistryDomain.domain) == domain.strip().lower(),
+                    )
+                )
+            )
+        stmt = (
+            select(TrustRegistryRecord)
+            .options(
+                selectinload(TrustRegistryRecord.domains),
+                selectinload(TrustRegistryRecord.aliases),
+                selectinload(TrustRegistryRecord.identifiers),
+            )
+            .where(
+                TrustRegistryRecord.deleted_at.is_(None),
+                or_(*matchers),
+            )
+            .order_by(TrustRegistryRecord.created_at.asc())
+            .limit(2)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
 
     async def count(self) -> int:
         stmt = select(func.count()).select_from(TrustRegistryRecord).where(

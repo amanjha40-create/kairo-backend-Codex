@@ -24,6 +24,9 @@ class AdminOrganizationSearchItem(BaseModel):
     verification_capabilities: list[str]
     registry_record_public_id: UUID | None
     registry_resolution_status: str
+    domain: str | None = None
+    website: str | None = None
+    location: str | None = None
 
 
 class AdminUserDirectoryItem(BaseModel):
