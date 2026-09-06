@@ -19,6 +19,14 @@ _JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 _ISSUERS = {"https://accounts.google.com", "accounts.google.com"}
 
 
+class GoogleIdentityValidationError(ValueError):
+    """A safe, non-sensitive reason for a rejected Google identity."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("Google identity validation failed")
+        self.safe_reason = reason
+
+
 class GoogleOAuthProvider(OAuthProvider):
     provider_name = "google"
 
@@ -56,7 +64,7 @@ class GoogleOAuthProvider(OAuthProvider):
             token_resp.raise_for_status()
             id_token = token_resp.json().get("id_token")
             if not id_token or not settings.google_client_id:
-                raise ValueError("Google identity token is unavailable")
+                raise GoogleIdentityValidationError("identity_token_unavailable")
             try:
                 signing_key = PyJWKClient(_JWKS_URL).get_signing_key_from_jwt(id_token)
                 data = jwt.decode(
@@ -68,14 +76,14 @@ class GoogleOAuthProvider(OAuthProvider):
                     options={"require": ["exp", "iss", "aud", "sub", "email", "email_verified"]},
                 )
             except InvalidTokenError as exc:
-                raise ValueError("Google identity token is invalid") from exc
+                raise GoogleIdentityValidationError("identity_token_invalid") from exc
 
         if data.get("email_verified") is not True:
-            raise ValueError("Google email is not verified")
+            raise GoogleIdentityValidationError("email_not_verified")
         if not isinstance(data.get("sub"), str) or not data["sub"].strip():
-            raise ValueError("Google identity subject is invalid")
+            raise GoogleIdentityValidationError("subject_invalid")
         if not isinstance(data.get("email"), str) or not data["email"].strip():
-            raise ValueError("Google identity email is invalid")
+            raise GoogleIdentityValidationError("email_invalid")
 
         return OAuthProfile(
             provider_user_id=data["sub"],

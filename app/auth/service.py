@@ -721,7 +721,14 @@ class AuthService:
                 code, self._settings, code_verifier=transaction.code_verifier
             )
         except Exception as exc:
-            logger.warning("google_oauth_callback_failed", extra={"error_type": type(exc).__name__})
+            logger.warning(
+                "google_oauth_callback_failed",
+                extra={
+                    "error_type": type(exc).__name__,
+                    # Never log provider codes, tokens, claims, or user details.
+                    "failure_reason": getattr(exc, "safe_reason", type(exc).__name__),
+                },
+            )
             return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
 
         email = normalize_email(profile.email)
