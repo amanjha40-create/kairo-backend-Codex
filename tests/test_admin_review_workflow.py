@@ -424,6 +424,13 @@ class FakeVerificationRequestAdminReviewService:
     async def resolve_organization(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE)
 
+    async def create_canonical_organization(
+        self, actor_user_id, verification_request_public_id, payload  # noqa: ANN001
+    ):
+        return self._request_response(
+            status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE
+        )
+
     async def get_timeline(self, verification_request_public_id, params=None):  # noqa: ANN001
         return AdminReviewTimelineResponse(
             timeline=VerificationRequestTimelineResponse(
@@ -672,6 +679,53 @@ async def test_resolve_organization_returns_pending_organization_acceptance() ->
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "pending_organization_acceptance"
+
+
+@pytest.mark.asyncio
+async def test_create_canonical_organization_route_uses_dispatch_permission() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{request_public_id}/create-canonical-organization",
+            json={
+                "name": "Verifier Organization",
+                "organization_type": "employer",
+                "country": "IN",
+                "domain": "verifier.example",
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending_organization_acceptance"
+
+
+@pytest.mark.asyncio
+async def test_hr_cannot_create_admin_canonical_organization() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{uuid4()}/create-canonical-organization",
+            json={
+                "name": "Verifier Organization",
+                "organization_type": "employer",
+                "country": "IN",
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

@@ -387,6 +387,9 @@ class AdminDirectoryService:
                     registry_resolution_status=(
                         "resolved" if organization.registry_record_id else "unresolved"
                     ),
+                    domain=organization.domain,
+                    website=organization.website,
+                    location=organization.location,
                 )
                 for organization in organizations
             ],

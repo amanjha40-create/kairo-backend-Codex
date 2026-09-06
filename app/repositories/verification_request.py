@@ -6,16 +6,20 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
-
 
 _DETAIL_OPTIONS = (
     joinedload(VerificationRequest.organization),
     joinedload(VerificationRequest.registry_record),
     joinedload(VerificationRequest.trust_invitation),
+)
+_LOCK_DETAIL_OPTIONS = (
+    selectinload(VerificationRequest.organization),
+    selectinload(VerificationRequest.registry_record),
+    selectinload(VerificationRequest.trust_invitation),
 )
 _TERMINAL_STATUSES = (
     "verified",
@@ -40,6 +44,18 @@ class VerificationRequestRepository:
             select(VerificationRequest)
             .options(*_DETAIL_OPTIONS)
             .where(VerificationRequest.public_id == request_public_id)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_public_id_for_update(
+        self,
+        request_public_id: UUID,
+    ) -> VerificationRequest | None:
+        stmt = (
+            select(VerificationRequest)
+            .options(*_LOCK_DETAIL_OPTIONS)
+            .where(VerificationRequest.public_id == request_public_id)
+            .with_for_update()
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 

@@ -546,8 +546,9 @@ async def test_employer_outreach_allows_admin_approved_request_after_organizatio
     )
 
     service.request_verification.assert_awaited_once()
+    assert service.request_verification.await_args.kwargs["commit"] is False
     service._workflow.record_action.assert_awaited_once()
-    service._session.commit.assert_awaited_once()
+    service._session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
