@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.auth.providers.google import GoogleOAuthProvider
+from app.auth.providers.google import GoogleIdentityValidationError, GoogleOAuthProvider
 from app.config import Settings
 
 
@@ -39,5 +39,5 @@ async def test_google_signed_claims_are_validated(monkeypatch, claims, valid) ->
     if valid:
         assert (await provider.exchange_code("code", _settings())).provider_user_id == "google-sub"
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(GoogleIdentityValidationError):
             await provider.exchange_code("code", _settings())
