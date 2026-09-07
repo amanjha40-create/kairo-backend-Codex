@@ -375,7 +375,7 @@ class EmployerVerificationService:
                 employer_name=employment.employer_trade_name or employment.employer_legal_name,
                 job_title=employment.job_title,
                 employment_type=employment.employment_type,
-                start_date=employment.start_date.isoformat(),
+                start_date=employment.start_date.isoformat() if employment.start_date else None,
                 end_date=employment.end_date.isoformat() if employment.end_date else None,
                 country=employment.work_location_country,
                 region=employment.work_location_region,

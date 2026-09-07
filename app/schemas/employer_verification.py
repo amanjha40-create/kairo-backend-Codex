@@ -68,7 +68,8 @@ class EmployerPortalEmployment(BaseModel):
     employer_name: str
     job_title: str
     employment_type: str
-    start_date: str
+    # Resume-imported legacy claims may not have complete chronology yet.
+    start_date: str | None = None
     end_date: str | None = None
     country: str | None
     region: str | None = None
