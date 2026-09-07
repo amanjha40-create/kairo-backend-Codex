@@ -83,6 +83,24 @@ def test_review_claim_does_not_accept_candidate_email_or_phone() -> None:
         review_claim_adapter.validate_python({"claim_type": "profile", "phone": "+10000000000"})
 
 
+def test_project_review_contract_accepts_only_canonical_title_and_url_fields() -> None:
+    claim = review_claim_adapter.validate_python({
+        "claim_type": "project",
+        "title": "Synthetic Project",
+        "url": "https://example.test/project/",
+    })
+
+    assert claim.title == "Synthetic Project"
+    assert str(claim.url) == "https://example.test/project/"
+
+    with pytest.raises(ValidationError):
+        review_claim_adapter.validate_python({
+            "claim_type": "project",
+            "project_title": "Synthetic Project",
+            "portfolio_url": "https://example.test/project/",
+        })
+
+
 def test_import_confirmation_and_idempotency_key_are_mandatory() -> None:
     with pytest.raises(ValidationError):
         ReviewImportRequest(expected_version=1, idempotency_key="short", confirmed=True)
@@ -176,6 +194,75 @@ def test_current_employment_with_missing_end_date_is_not_incomplete() -> None:
         "company_name": "Synthetic", "role_title": "Engineer", "start_date": None,
         "end_date": None, "is_current": True,
     }) == ["needs_completion_in_career", "missing_start_date"]
+
+
+def test_employment_display_dates_are_not_reported_as_missing() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+
+    assert service._completion_warnings("employment", {
+        "company_name": "Northstar Logic Labs",
+        "role_title": "Senior Software Engineer",
+        "start_date": None,
+        "start_date_display": "Jan 2022",
+        "end_date": None,
+        "end_date_display": "Present",
+        "is_current": True,
+    }) == []
+
+
+@pytest.mark.asyncio
+async def test_employment_import_projects_review_months_into_career_contract_dates() -> None:
+    user = SimpleNamespace(
+        full_name="Synthetic Candidate",
+        email="candidate@example.invalid",
+    )
+
+    class FakeSession:
+        async def get(self, _model: object, _user_id: object) -> SimpleNamespace:
+            return user
+
+    service = ResumeReviewService(FakeSession())
+    current = await service._create_record(uuid4(), "employment", {
+        "company_name": "Northstar Logic Labs",
+        "role_title": "Senior Software Engineer",
+        "start_date": None,
+        "start_date_display": "Jan 2022",
+        "start_date_precision": "month",
+        "end_date": None,
+        "end_date_display": "Present",
+        "end_date_precision": None,
+        "is_current": True,
+    })
+    historical = await service._create_record(uuid4(), "employment", {
+        "company_name": "Juniper Byte Works",
+        "role_title": "Software Engineer",
+        "start_date": None,
+        "start_date_display": "Jun 2019",
+        "start_date_precision": "month",
+        "end_date": None,
+        "end_date_display": "Dec 2021",
+        "end_date_precision": "month",
+        "is_current": False,
+    })
+
+    assert current.start_date == date(2022, 1, 1)
+    assert current.end_date is None
+    assert historical.start_date == date(2019, 6, 1)
+    assert historical.end_date == date(2021, 12, 31)
+
+
+@pytest.mark.asyncio
+async def test_project_import_retains_canonical_edited_title_and_url() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+
+    record = await service._create_record(uuid4(), "project", {
+        "title": "Edited Synthetic Project",
+        "description": "Synthetic review edit",
+        "url": "https://example.test/project/",
+    })
+
+    assert record.title == "Edited Synthetic Project"
+    assert record.project_url == "https://example.test/project/"
 
 
 def test_projects_and_skills_are_importable_when_their_identity_is_present() -> None:
