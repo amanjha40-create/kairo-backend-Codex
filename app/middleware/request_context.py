@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.core.constants import HttpHeader
 from app.logging import get_logger
 from app.logging.context import bind_request_context, reset_request_context
+from app.logging.request_redaction import redact_request_credentials
 
 _access_logger = get_logger("http.access")
 
@@ -50,7 +51,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     extra={
                         "event": "http_access",
                         "http_method": request.method,
-                        "http_path": request.url.path,
+                        "http_path": redact_request_credentials(request.url.path),
                         "http_route": route_path,
                         "status_code": status_code,
                         "duration_ms": round(duration_ms, 3),
