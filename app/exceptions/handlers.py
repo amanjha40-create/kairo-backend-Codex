@@ -23,6 +23,7 @@ from app.exceptions import (
     ServiceUnavailableError,
     UnauthorizedError,
 )
+from app.logging.request_redaction import redact_request_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -132,4 +133,4 @@ async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespons
 
 def _redacted_traceback(exc: Exception) -> str:
     formatted = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    return redact_connection_secrets(formatted)
+    return redact_request_credentials(redact_connection_secrets(formatted))
