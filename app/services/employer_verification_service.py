@@ -473,6 +473,16 @@ class EmployerVerificationService:
             raise ExpiredLinkError("This verification link has expired")
         return req
 
+    async def _load_portal_token_for_update(self, raw_token: str) -> EmployerVerificationRequest:
+        if not raw_token or len(raw_token) < 16:
+            raise NotFoundError("This verification link is invalid or has expired")
+        req = await self._requests.get_by_token_hash_for_update(hash_refresh_token(raw_token))
+        if req is None or req.revoked_at is not None:
+            raise NotFoundError("This verification link is invalid or has expired")
+        if datetime.now(tz=UTC) > req.expires_at:
+            raise ExpiredLinkError("This verification link has expired")
+        return req
+
     async def _respond_portal(
         self,
         raw_token: str,
@@ -481,81 +491,85 @@ class EmployerVerificationService:
         remarks: str | None,
         metadata: dict,
     ) -> EmployerPortalActionResponse:
-        req = await self._load_portal_token(raw_token)
-        employment = req.employment
-        request = (
-            await self._verification_requests.get_by_id(req.verification_request_id)
-            if req.verification_request_id is not None
-            else None
-        )
-        if req.response != EmployerVerificationDecision.PENDING.value:
-            if req.response != decision.value:
-                raise ConflictError("This verification link has already been used")
-            return self._portal_action_response(req, employment, request, idempotent=True)
-        if request is None or request.status != VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
-            raise ConflictError("This verification request is not awaiting an employer response")
+        try:
+            req = await self._load_portal_token_for_update(raw_token)
+            employment = req.employment
+            request = (
+                await self._verification_requests.get_by_id(req.verification_request_id)
+                if req.verification_request_id is not None
+                else None
+            )
+            if req.response != EmployerVerificationDecision.PENDING.value:
+                if req.response != decision.value:
+                    raise ConflictError("This verification link has already been used")
+                return self._portal_action_response(req, employment, request, idempotent=True)
+            if request is None or request.status != VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE:
+                raise ConflictError("This verification request is not awaiting an employer response")
 
-        now = datetime.now(tz=UTC)
-        req.response = decision.value
-        req.responded_at = now
-        req.remarks = remarks
-        req.response_metadata = metadata
+            now = datetime.now(tz=UTC)
+            req.response = decision.value
+            req.responded_at = now
+            req.remarks = remarks
+            req.response_metadata = metadata
 
-        if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.IN_PROGRESS,
-                actor_user_id=None,
-                event_type="hr_verified",
-                event_source=VerificationRequestEventSource.ORGANIZATION,
-                metadata=metadata,
-            )
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
-                actor_user_id=None,
-                event_type="verification_response_received",
-                event_source=VerificationRequestEventSource.ORGANIZATION,
-                metadata={
-                    **metadata,
-                    "verifier_outcome": "confirmed"
-                    if decision == EmployerVerificationDecision.CONFIRMED
-                    else "discrepancy",
-                },
-            )
-            await self._notify_admin_quality_review_needed(request)
-        else:
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.IN_PROGRESS,
-                actor_user_id=None,
-                event_type="hr_requested_clarification",
-                event_source=VerificationRequestEventSource.ORGANIZATION,
-                metadata=metadata,
-            )
-            await self._workflow.transition(
-                request,
-                target_status=VerificationRequestStatus.AWAITING_INFORMATION,
-                actor_user_id=None,
-                event_type="awaiting_subject_information",
-                event_source=VerificationRequestEventSource.SYSTEM,
-                metadata={},
-            )
+            if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.IN_PROGRESS,
+                    actor_user_id=None,
+                    event_type="hr_verified",
+                    event_source=VerificationRequestEventSource.ORGANIZATION,
+                    metadata=metadata,
+                )
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+                    actor_user_id=None,
+                    event_type="verification_response_received",
+                    event_source=VerificationRequestEventSource.ORGANIZATION,
+                    metadata={
+                        **metadata,
+                        "verifier_outcome": "confirmed"
+                        if decision == EmployerVerificationDecision.CONFIRMED
+                        else "discrepancy",
+                    },
+                )
+                await self._notify_admin_quality_review_needed(request)
+            else:
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.IN_PROGRESS,
+                    actor_user_id=None,
+                    event_type="hr_requested_clarification",
+                    event_source=VerificationRequestEventSource.ORGANIZATION,
+                    metadata=metadata,
+                )
+                await self._workflow.transition(
+                    request,
+                    target_status=VerificationRequestStatus.AWAITING_INFORMATION,
+                    actor_user_id=None,
+                    event_type="awaiting_subject_information",
+                    event_source=VerificationRequestEventSource.SYSTEM,
+                    metadata={},
+                )
 
-        await self._emit_audit(
-            employment_id=employment.id,
-            actor_user_id=None,
-            action={
-                EmployerVerificationDecision.CONFIRMED: VerificationAuditAction.EMPLOYER_VERIFICATION_CONFIRMED,
-                EmployerVerificationDecision.DECLINED: VerificationAuditAction.EMPLOYER_VERIFICATION_DECLINED,
-                EmployerVerificationDecision.ON_HOLD: VerificationAuditAction.EMPLOYER_VERIFICATION_HELD,
-            }[decision],
-            previous_status=None,
-            new_status=employment.verification_status,
-            metadata_payload={"decision": decision.value},
-        )
-        await self._session.commit()
-        return self._portal_action_response(req, employment, request)
+            await self._emit_audit(
+                employment_id=employment.id,
+                actor_user_id=None,
+                action={
+                    EmployerVerificationDecision.CONFIRMED: VerificationAuditAction.EMPLOYER_VERIFICATION_CONFIRMED,
+                    EmployerVerificationDecision.DECLINED: VerificationAuditAction.EMPLOYER_VERIFICATION_DECLINED,
+                    EmployerVerificationDecision.ON_HOLD: VerificationAuditAction.EMPLOYER_VERIFICATION_HELD,
+                }[decision],
+                previous_status=None,
+                new_status=employment.verification_status,
+                metadata_payload={"decision": decision.value},
+            )
+            await self._session.commit()
+            return self._portal_action_response(req, employment, request)
+        except Exception:
+            await self._session.rollback()
+            raise
 
     async def _notify_verification_completed(self, request, organization_name: str) -> None:
         try:

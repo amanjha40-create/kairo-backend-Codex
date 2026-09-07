@@ -56,6 +56,18 @@ class EmployerVerificationRepository(BaseRepository[EmployerVerificationRequest]
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_token_hash_for_update(self, token_hash: str) -> EmployerVerificationRequest | None:
+        """Lock one outreach while its one-time verifier response is recorded."""
+
+        stmt = (
+            select(EmployerVerificationRequest)
+            .where(EmployerVerificationRequest.token_hash == token_hash)
+            .options(selectinload(EmployerVerificationRequest.employment))
+            .with_for_update()
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_with_employment_owned(
         self,
         employment_id: UUID,
