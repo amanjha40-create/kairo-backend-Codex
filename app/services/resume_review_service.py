@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -351,7 +351,24 @@ class ResumeReviewService:
             if not user or not user.full_name:
                 raise ValidationAppError("Complete the candidate profile before importing employment", code="candidate_profile_incomplete")
             location = p.get("location") or {}
-            return Employment(created_by_user_id=user_id, subject_full_name=user.full_name, subject_email=user.email, employer_legal_name=p["company_name"], job_title=p["role_title"], employment_type=p.get("employment_type") if p.get("employment_type") in {v.value for v in EmploymentType} else EmploymentType.OTHER.value, start_date=p.get("start_date"), end_date=p.get("end_date"), work_location_country=location.get("country", "").upper() or None, work_location_region=location.get("region"), verification_method=VerificationMethod.DOCUMENT.value, verification_status=VerificationStatus.DRAFT.value)
+            return Employment(
+                created_by_user_id=user_id,
+                subject_full_name=user.full_name,
+                subject_email=user.email,
+                employer_legal_name=p["company_name"],
+                job_title=p["role_title"],
+                employment_type=(
+                    p.get("employment_type")
+                    if p.get("employment_type") in {value.value for value in EmploymentType}
+                    else EmploymentType.OTHER.value
+                ),
+                start_date=self._employment_contract_date(p, "start_date"),
+                end_date=self._employment_contract_date(p, "end_date", is_end=True),
+                work_location_country=location.get("country", "").upper() or None,
+                work_location_region=location.get("region"),
+                verification_method=VerificationMethod.DOCUMENT.value,
+                verification_status=VerificationStatus.DRAFT.value,
+            )
         if claim_type == "education":
             return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree") or p.get("field_of_study"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), start_date_precision=p.get("start_date_precision"), end_date=p.get("end_date"), end_date_precision=p.get("end_date_precision"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
@@ -389,6 +406,10 @@ class ResumeReviewService:
             if p.get("summary"): record.bio = p["summary"][:500]
             if p.get("location"): record.location = self._location_text(p["location"])
             return
+        if claim_type == "employment":
+            p = dict(p)
+            p["start_date"] = self._employment_contract_date(p, "start_date")
+            p["end_date"] = self._employment_contract_date(p, "end_date", is_end=True)
         for source, target in mappings[claim_type].items():
             if source in p:
                 value = p[source]
@@ -521,9 +542,13 @@ class ResumeReviewService:
     def _completion_warnings(claim_type: str, payload: dict[str, Any]) -> list[str]:
         missing: list[str] = []
         if claim_type in {"employment", "education", "internship", "freelance", "gig_platform"}:
-            if not payload.get("start_date"):
+            if not payload.get("start_date") and not payload.get("start_date_display"):
                 missing.append("missing_start_date")
-            if not payload.get("end_date") and not payload.get("is_current"):
+            if (
+                not payload.get("end_date")
+                and not payload.get("end_date_display")
+                and not payload.get("is_current")
+            ):
                 missing.append("missing_end_date")
         if claim_type == "education":
             missing.extend(field for field in ("education_level",) if not payload.get(field))
@@ -534,6 +559,21 @@ class ResumeReviewService:
         if claim_type == "project" and not payload.get("url"):
             missing.append("missing_url")
         return ["needs_completion_in_career", *missing] if missing else []
+
+    @staticmethod
+    def _employment_contract_date(
+        payload: dict[str, Any],
+        field: str,
+        *,
+        is_end: bool = False,
+    ) -> date | None:
+        """Project reviewed date truth into the existing Career date contract."""
+        normalized, _ = normalize_review_date(
+            payload.get(field),
+            payload.get(f"{field}_display"),
+            is_end=is_end,
+        )
+        return date.fromisoformat(normalized) if normalized else None
 
     @classmethod
     def _action_blockers(
