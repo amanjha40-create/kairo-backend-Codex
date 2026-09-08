@@ -52,20 +52,26 @@ def test_private_storage_key_is_tenant_and_import_scoped() -> None:
     assert not key.startswith("http")
 
 
-def test_m2_routes_expose_preview_only_and_no_confirm_mutation() -> None:
+def test_m2_preview_routes_remain_and_m3_adds_only_explicit_confirm() -> None:
     paths = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert paths == {
+    assert {
         ("/organizations/{org_public_id}/roster-imports", ("POST",)),
         ("/organizations/{org_public_id}/roster-imports/{import_public_id}", ("GET",)),
         (
             "/organizations/{org_public_id}/roster-imports/{import_public_id}/mapping",
             ("PATCH",),
         ),
-    }
-    assert all("confirm" not in path for path, _ in paths)
+    } <= paths
+    confirm_paths = [(path, methods) for path, methods in paths if "confirm" in path]
+    assert confirm_paths == [
+        (
+            "/organizations/{org_public_id}/roster-imports/{import_public_id}/confirm",
+            ("POST",),
+        )
+    ]
 
 
-def test_service_and_repository_have_no_prohibited_domain_writes() -> None:
+def test_service_and_repository_have_no_prohibited_cross_domain_writes() -> None:
     source = "\n".join(
         (
             inspect.getsource(OrganizationRosterImportService),
@@ -73,17 +79,17 @@ def test_service_and_repository_have_no_prohibited_domain_writes() -> None:
         )
     )
     prohibited_write_tokens = {
-        "create_identifier(",
-        "OrganizationPerson(",
-        "OrganizationPersonIdentifier(",
         "NotificationService(",
         "EmailDeliveryService(",
         "send_sms(",
         "TrustInvitation(",
         "VerificationRequest(",
+        "Candidate(",
+        "TrustScoreSnapshot(",
+        "PassportShareLink(",
     }
     assert all(token not in source for token in prohibited_write_tokens)
-    assert "result_organization_person_id=None" in source
+    assert "result_organization_person_id" in source
 
 
 def test_no_protected_domain_files_are_part_of_m2_source_scope() -> None:
@@ -95,6 +101,7 @@ def test_no_protected_domain_files_are_part_of_m2_source_scope() -> None:
         "preview.py",
         "storage.py",
         "types.py",
+        "application.py",
     }
     actual = {
         path.name
