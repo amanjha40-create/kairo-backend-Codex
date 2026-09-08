@@ -27,6 +27,22 @@ class OrganizationRosterRowDisposition(StrEnum):
     SKIPPED = "skipped"
 
 
+class OrganizationRosterRowApplicationStatus(StrEnum):
+    PENDING = "pending"
+    IGNORED = "ignored"
+    CREATED = "created"
+    UPDATED = "updated"
+    FAILED = "failed"
+
+
+class OrganizationRosterAuditAction(StrEnum):
+    IMPORT_CONFIRMED = "roster_import_confirmed"
+    PERSON_CREATED = "roster_person_created"
+    PERSON_UPDATED = "roster_person_updated"
+    IMPORT_COMPLETED = "roster_import_completed"
+    IMPORT_FAILED = "roster_import_failed"
+
+
 class OrganizationRosterDatePrecision(StrEnum):
     YEAR = "year"
     MONTH = "month"
