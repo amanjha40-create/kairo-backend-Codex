@@ -255,7 +255,9 @@ class VerificationRequestResponse(BaseModel):
     organization_public_id: UUID | None = None
     trust_invitation_public_id: UUID | None
     subject_name: str
-    subject_email: EmailStr
+    # Retained requests may belong to a deleted Candidate. Their tombstone email
+    # is not a deliverable address and must not be presented as one.
+    subject_email: EmailStr | None
     target_organization_name: str | None = None
     target_organization_email: EmailStr | None = None
     request_type: VerificationRequestType
