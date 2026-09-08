@@ -309,6 +309,71 @@ def test_resume_review_date_normalization(value, display, is_end, expected) -> N
     assert normalize_review_date(value, display, is_end=is_end) == expected
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {
+                "claim_type": "education",
+                "institution_name": "Synthetic University",
+                "start_date_display": "2015",
+                "end_date_display": "2019",
+                "is_current": False,
+            },
+            ("2015-01-01", "year", "2019-12-31", "year", False),
+        ),
+        (
+            {
+                "claim_type": "education",
+                "institution_name": "Synthetic University",
+                "start_date_display": "Sep 2015",
+                "end_date_display": "May 2019",
+                "is_current": False,
+            },
+            ("2015-09-01", "month", "2019-05-31", "month", False),
+        ),
+        (
+            {
+                "claim_type": "education",
+                "institution_name": "Synthetic University",
+                "end_date_display": "2019",
+                "is_current": False,
+            },
+            (None, None, "2019-12-31", "year", False),
+        ),
+        (
+            {
+                "claim_type": "education",
+                "institution_name": "Synthetic University",
+                "start_date_display": "2015",
+                "is_current": False,
+            },
+            ("2015-01-01", "year", None, None, False),
+        ),
+        (
+            {
+                "claim_type": "education",
+                "institution_name": "Synthetic University",
+                "start_date_display": "2015",
+                "end_date_display": "Present",
+                "is_current": True,
+            },
+            ("2015-01-01", "year", None, None, True),
+        ),
+    ],
+)
+def test_education_review_date_matrix_preserves_partial_date_truth(payload, expected) -> None:
+    normalized = ResumeReviewService._normalize_review_payload("education", payload)
+
+    assert (
+        normalized.get("start_date"),
+        normalized.get("start_date_precision"),
+        normalized.get("end_date"),
+        normalized.get("end_date_precision"),
+        normalized.get("is_current"),
+    ) == expected
+
+
 def test_edited_employment_dates_preserve_partial_precision_without_inventing_days() -> None:
     payload = ResumeReviewService._normalize_review_payload("employment", {
         "claim_type": "employment", "company_name": "Synthetic", "role_title": "Engineer",
@@ -586,6 +651,11 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                 "education": [{
                     "institution_name": "Synthetic University",
                     "degree": "Synthetic Degree",
+                    "start_date_display": "2015",
+                    "start_date_precision": "year",
+                    "end_date_display": "2019",
+                    "end_date_precision": "year",
+                    "is_current": False,
                 }],
             },
             parser_metadata={},
@@ -597,6 +667,12 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         review = await service.create(user.id, document.id)
         assert review.status == "draft"
         assert len(review.items) == 2
+        unedited_education = next(item for item in review.items if item.claim_type == "education")
+        assert unedited_education.edited_payload["start_date"] == "2015-01-01"
+        assert unedited_education.edited_payload["start_date_precision"] == "year"
+        assert unedited_education.edited_payload["end_date"] == "2019-12-31"
+        assert unedited_education.edited_payload["end_date_precision"] == "year"
+        assert unedited_education.edited_payload["is_current"] is False
         plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
         assert plan.ready
         assert [item.claim_type for item in plan.items] == ["employment", "education"]
@@ -614,6 +690,11 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert employment.verification_status == "draft"
         assert education is not None
         assert education.verification_status == "draft"
+        assert education.start_date == date(2015, 1, 1)
+        assert education.start_date_precision == "year"
+        assert education.end_date == date(2019, 12, 31)
+        assert education.end_date_precision == "year"
+        assert education.is_currently_studying is False
         duplicate = await ResumeDuplicateService(session).assess(user.id, "employment", {
             "claim_type": "employment",
             "company_name": "Synthetic Company",

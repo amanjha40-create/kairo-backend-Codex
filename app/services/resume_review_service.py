@@ -90,7 +90,10 @@ class ResumeReviewService:
         self.session.add(review)
         await self.session.flush()
         for ordinal, (claim_type, raw) in enumerate(self._claims(validated)):
-            payload = self._review_payload(claim_type, raw)
+            payload = self._normalize_review_payload(
+                claim_type,
+                self._review_payload(claim_type, raw),
+            )
             assessment = await self.duplicates.assess(user_id, claim_type, payload)
             source_claim_id = stable_claim_id(parsed.id, claim_type, ordinal, payload)
             exact = next((candidate for candidate in assessment.candidates if candidate["classification"] == "exact_match"), None)
