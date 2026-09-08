@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
@@ -93,8 +93,10 @@ class FakePassportEngineService:
                         field_of_study="CS",
                         education_level="bachelors",
                         grade=None,
-                        start_date=now.date(),
-                        end_date=None,
+                        start_date=date(2015, 1, 1),
+                        start_date_precision="year",
+                        end_date=date(2019, 12, 31),
+                        end_date_precision="year",
                         is_currently_studying=False,
                         verification_status="verified",
                     )
@@ -222,3 +224,9 @@ async def test_get_my_passport_returns_canonical_owner_payload() -> None:
     assert body["trust_score"]["overall"] == 80
     assert body["sharing_summary"]["total_links"] == 2
     assert body["verification_summary"]["overall"]["total"] == 8
+    education = body["vault"]["educations"][0]
+    assert education["start_date"] == "2015-01-01"
+    assert education["start_date_precision"] == "year"
+    assert education["end_date"] == "2019-12-31"
+    assert education["end_date_precision"] == "year"
+    assert education["is_currently_studying"] is False
