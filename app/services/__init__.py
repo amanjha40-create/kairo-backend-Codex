@@ -25,12 +25,15 @@ from app.services.notification_preference_service import NotificationPreferenceS
 from app.services.notification_service import NotificationService
 from app.services.notification_template_resolver import NotificationTemplateResolver
 from app.services.organization_person_service import OrganizationPersonService
+from app.services.organization_roster_import_service import OrganizationRosterImportService
 from app.services.organization_service import OrganizationService
 from app.services.passport_engine_service import PassportEngineService
 from app.services.passport_pdf_service import PassportPDFService
 from app.services.passport_share_service import PassportShareService
 from app.services.passport_share_view_service import PassportShareViewService
-from app.services.public_institution_verification_service import PublicInstitutionVerificationService
+from app.services.public_institution_verification_service import (
+    PublicInstitutionVerificationService,
+)
 from app.services.public_passport_service import PublicPassportService
 from app.services.resume_service import ResumeService
 from app.services.trust_invitation_service import TrustInvitationService
@@ -77,6 +80,7 @@ __all__ = [
     "NotificationService",
     "NotificationTemplateResolver",
     "OrganizationPersonService",
+    "OrganizationRosterImportService",
     "OrganizationService",
     "PassportEngineService",
     "PassportPDFService",
