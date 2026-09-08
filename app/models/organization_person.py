@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from app.models.organization_person_identifier import OrganizationPersonIdentifier
     from app.models.organization_person_note import OrganizationPersonNote
     from app.models.organization_person_passport_access import OrganizationPersonPassportAccess
+    from app.models.organization_person_roster_profile import OrganizationPersonRosterProfile
+    from app.models.organization_roster_import import OrganizationRosterImportRow
     from app.models.trust_invitation import TrustInvitation
     from app.models.user import User
     from app.models.verification_request import VerificationRequest
@@ -168,6 +170,22 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     employments: Mapped[list["Employment"]] = orm_relationship(
         "Employment",
         back_populates="organization_person",
+    )
+    roster_profile: Mapped["OrganizationPersonRosterProfile | None"] = orm_relationship(
+        "OrganizationPersonRosterProfile",
+        back_populates="organization_person",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    matched_roster_import_rows: Mapped[list["OrganizationRosterImportRow"]] = orm_relationship(
+        "OrganizationRosterImportRow",
+        foreign_keys="OrganizationRosterImportRow.matched_organization_person_id",
+        back_populates="matched_organization_person",
+    )
+    result_roster_import_rows: Mapped[list["OrganizationRosterImportRow"]] = orm_relationship(
+        "OrganizationRosterImportRow",
+        foreign_keys="OrganizationRosterImportRow.result_organization_person_id",
+        back_populates="result_organization_person",
     )
 
     def __repr__(self) -> str:

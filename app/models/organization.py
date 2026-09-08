@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from app.models.organization_invitation import OrganizationInvitation
     from app.models.organization_member import OrganizationMember
     from app.models.organization_person import OrganizationPerson
+    from app.models.organization_person_roster_profile import OrganizationPersonRosterProfile
+    from app.models.organization_roster_import import OrganizationRosterImport
     from app.models.trust_invitation import TrustInvitation
     from app.models.trust_registry_record import TrustRegistryRecord
     from app.models.verification_request import VerificationRequest
@@ -100,6 +102,16 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     people: Mapped[list["OrganizationPerson"]] = relationship(
         "OrganizationPerson",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    roster_imports: Mapped[list["OrganizationRosterImport"]] = relationship(
+        "OrganizationRosterImport",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    roster_profiles: Mapped[list["OrganizationPersonRosterProfile"]] = relationship(
+        "OrganizationPersonRosterProfile",
         back_populates="organization",
         cascade="all, delete-orphan",
     )
