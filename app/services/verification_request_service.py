@@ -23,6 +23,7 @@ from app.models.user import User
 from app.models.verification_contact import VerificationContact
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_evidence import VerificationRequestEvidence
+from app.notifications.contracts import NotificationRequest
 from app.repositories.education import EducationDocumentRepository, EducationRepository
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
@@ -61,7 +62,6 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineResponse,
     VerificationReviewerSummary,
 )
-from app.notifications.contracts import NotificationRequest
 from app.services.connector_execution_service import ConnectorExecutionService
 from app.services.connector_registry_service import ConnectorRegistryService
 from app.services.connector_result_normalizer import ConnectorResultNormalizer
@@ -76,6 +76,13 @@ from app.verification_requests.enums import (
     VerificationRequestStatus,
     VerificationRequestType,
 )
+
+
+def _public_subject_email(email: str | None) -> str | None:
+    """Hide deletion tombstones from user-facing/admin response projections."""
+    if email and email.endswith("@deleted.kairoid.invalid"):
+        return None
+    return email
 
 
 def is_internal_admin_note_event(event_type: str, metadata: dict | None) -> bool:
@@ -1608,7 +1615,7 @@ class VerificationRequestService:
             organization_public_id=request.organization.public_id if request.organization is not None else None,
             trust_invitation_public_id=request.trust_invitation.public_id if request.trust_invitation is not None else None,
             subject_name=request.subject_name,
-            subject_email=request.subject_email,
+            subject_email=_public_subject_email(request.subject_email),
             target_organization_name=request.target_organization_name,
             target_organization_email=request.target_organization_email,
             request_type=request.request_type,

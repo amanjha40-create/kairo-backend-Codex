@@ -42,7 +42,10 @@ from app.services.verification_request_admin_review_service import (
     normalize_contact_review_status,
     normalize_contact_type,
 )
-from app.services.verification_request_service import VerificationRequestService
+from app.services.verification_request_service import (
+    VerificationRequestService,
+    _public_subject_email,
+)
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
     VerificationContactType,
@@ -92,6 +95,28 @@ def _verification_request_response(*, public_id: UUID | None = None) -> Verifica
         created_at=now,
         updated_at=now,
     )
+
+
+def test_admin_response_allows_absent_email_for_deleted_candidate() -> None:
+    response = _verification_request_response()
+    response.subject_email = None
+
+    assert response.subject_email is None
+
+
+def test_deleted_candidate_tombstone_is_not_emitted_as_an_email() -> None:
+    assert _public_subject_email("deleted-candidate+abc@deleted.kairoid.invalid") is None
+    assert _public_subject_email("candidate@example.com") == "candidate@example.com"
+
+
+def test_admin_response_keeps_strict_validation_for_non_null_email() -> None:
+    with pytest.raises(ValueError):
+        VerificationRequestResponse(
+            **{
+                **_verification_request_response().model_dump(),
+                "subject_email": "deleted-candidate@example.invalid",
+            }
+        )
 
 
 @pytest.mark.asyncio
