@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.organization_roster_import.enums import (
+    OrganizationRosterAuditAction,
     OrganizationRosterImportState,
+    OrganizationRosterRowApplicationStatus,
+    OrganizationRosterRowDisposition,
     OrganizationRosterType,
 )
+from app.schemas.pagination import PageParams
 
 
 class RosterMappingAssignment(BaseModel):
@@ -56,6 +60,10 @@ class RosterPreviewRowResponse(BaseModel):
     validation_errors: list[RosterRowIssueResponse]
     primary_identifier: str | None = None
     matched_organization_person_id: UUID | None = None
+    result_organization_person_id: UUID | None = None
+    application_status: OrganizationRosterRowApplicationStatus
+    application_errors: list[RosterRowIssueResponse]
+    applied_at: datetime | None = None
 
 
 class RosterPreviewCountsResponse(BaseModel):
@@ -67,6 +75,22 @@ class RosterPreviewCountsResponse(BaseModel):
     skipped: int
     created: int
     updated: int
+    failed: int
+
+
+class RosterUploaderResponse(BaseModel):
+    user_id: UUID
+    display_name: str
+    email: str
+
+
+class RosterAuditEventResponse(BaseModel):
+    event_id: UUID
+    action: OrganizationRosterAuditAction
+    organization_person_id: UUID | None = None
+    row_id: UUID | None = None
+    metadata: dict[str, Any]
+    created_at: datetime
 
 
 class OrganizationRosterPreviewResponse(BaseModel):
@@ -80,5 +104,84 @@ class OrganizationRosterPreviewResponse(BaseModel):
     mapping: RosterMappingResponse
     counts: RosterPreviewCountsResponse
     rows: list[RosterPreviewRowResponse]
+    uploader: RosterUploaderResponse | None = None
+    audit_events: list[RosterAuditEventResponse] = Field(default_factory=list)
+    confirmed_at: datetime | None = None
+    completed_at: datetime | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
     parsed_at: datetime | None = None
     created_at: datetime
+
+
+class RosterImportListQueryParams(PageParams):
+    state: OrganizationRosterImportState | None = None
+    roster_type: OrganizationRosterType | None = None
+
+
+class RosterImportSummaryResponse(BaseModel):
+    import_id: UUID
+    roster_type: OrganizationRosterType
+    source_format: str
+    original_filename: str
+    state: OrganizationRosterImportState
+    counts: RosterPreviewCountsResponse
+    uploader: RosterUploaderResponse
+    parsed_at: datetime | None = None
+    confirmed_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
+class RosterImportListResponse(BaseModel):
+    items: list[RosterImportSummaryResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    offset: int
+    limit: int
+
+
+class RosterRowListQueryParams(PageParams):
+    disposition: OrganizationRosterRowDisposition | None = None
+    application_status: OrganizationRosterRowApplicationStatus | None = None
+
+
+class RosterRowListResponse(BaseModel):
+    items: list[RosterPreviewRowResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    offset: int
+    limit: int
+
+
+class OrganizationRosterListQueryParams(PageParams):
+    search: str | None = Field(default=None, max_length=255)
+
+
+class OrganizationRosterPersonResponse(BaseModel):
+    organization_person_id: UUID
+    roster_type: OrganizationRosterType
+    full_name: str
+    email: str | None = None
+    phone: str | None = None
+    roster_data: dict[str, Any]
+    source_status: Literal["organization_provided"] = "organization_provided"
+    verified: Literal[False] = False
+    source_import_id: UUID | None = None
+    source_row_number: int | None = None
+    imported_by_user_id: UUID | None = None
+    imported_at: datetime
+
+
+class OrganizationRosterListResponse(BaseModel):
+    items: list[OrganizationRosterPersonResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    offset: int
+    limit: int

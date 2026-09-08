@@ -37,6 +37,7 @@ from app.models.organization_person_passport_access import OrganizationPersonPas
 from app.models.organization_person_roster_profile import OrganizationPersonRosterProfile
 from app.models.organization_roster_import import (
     OrganizationRosterImport,
+    OrganizationRosterImportAuditEvent,
     OrganizationRosterImportRow,
 )
 from app.models.passport_share_link import PassportShareLink
@@ -126,6 +127,7 @@ __all__ = [
     "OrganizationPersonPassportAccess",
     "OrganizationPersonRosterProfile",
     "OrganizationRosterImport",
+    "OrganizationRosterImportAuditEvent",
     "OrganizationRosterImportRow",
     "PassportShareLink",
     "PassportShareView",

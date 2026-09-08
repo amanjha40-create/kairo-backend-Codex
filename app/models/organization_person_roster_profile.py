@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -58,9 +59,27 @@ class OrganizationPersonRosterProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base)
             name="ck_roster_profile_graduation_precision",
         ),
         Index("ix_roster_profile_org_type", "organization_id", "roster_type"),
-        Index("ix_roster_profile_org_employee_id", "organization_id", "employee_id"),
-        Index("ix_roster_profile_org_student_id", "organization_id", "student_id"),
-        Index("ix_roster_profile_org_roll_number", "organization_id", "roll_number"),
+        Index(
+            "ix_roster_profile_org_employee_id",
+            "organization_id",
+            "employee_id",
+            unique=True,
+            postgresql_where=text("employee_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_roster_profile_org_student_id",
+            "organization_id",
+            "student_id",
+            unique=True,
+            postgresql_where=text("student_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_roster_profile_org_roll_number",
+            "organization_id",
+            "roll_number",
+            unique=True,
+            postgresql_where=text("roll_number IS NOT NULL"),
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
