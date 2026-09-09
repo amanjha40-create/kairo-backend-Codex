@@ -11,6 +11,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_organization_roster_import_service
 from app.organization_roster_import.constants import MAX_UPLOAD_BYTES
 from app.organization_roster_import.enums import OrganizationRosterType
+from app.organization_roster_import.templates import build_roster_template
 from app.schemas.organization_roster_import import (
     OrganizationRosterListQueryParams,
     OrganizationRosterListResponse,
@@ -31,6 +32,14 @@ roster_router = APIRouter(
     prefix="/organizations/{org_public_id}/roster",
     tags=["organization-roster"],
 )
+
+
+def _csv_download(filename: str, content: str) -> Response:
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("", response_model=RosterImportListResponse)
@@ -152,11 +161,7 @@ async def download_roster_import_errors(
         org_public_id=org_public_id,
         import_public_id=import_public_id,
     )
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return _csv_download(filename, content)
 
 
 @router.patch("/{import_public_id}/mapping", response_model=OrganizationRosterPreviewResponse)
@@ -194,6 +199,38 @@ async def list_employee_roster(
         roster_type=OrganizationRosterType.EMPLOYEE,
         params=params,
     )
+
+
+@roster_router.get("/templates/employee.csv", response_class=Response)
+async def download_employee_roster_template(
+    org_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    service: Annotated[
+        OrganizationRosterImportService,
+        Depends(get_organization_roster_import_service),
+    ],
+) -> Response:
+    await service.authorize_template_download(
+        actor_user_id=current.id,
+        org_public_id=org_public_id,
+    )
+    return _csv_download(*build_roster_template(OrganizationRosterType.EMPLOYEE))
+
+
+@roster_router.get("/templates/student.csv", response_class=Response)
+async def download_student_roster_template(
+    org_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    service: Annotated[
+        OrganizationRosterImportService,
+        Depends(get_organization_roster_import_service),
+    ],
+) -> Response:
+    await service.authorize_template_download(
+        actor_user_id=current.id,
+        org_public_id=org_public_id,
+    )
+    return _csv_download(*build_roster_template(OrganizationRosterType.STUDENT))
 
 
 @roster_router.get("/students", response_model=OrganizationRosterListResponse)

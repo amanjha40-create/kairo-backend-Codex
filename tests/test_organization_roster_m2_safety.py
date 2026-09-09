@@ -100,6 +100,7 @@ def test_no_protected_domain_files_are_part_of_m2_source_scope() -> None:
         "parsing.py",
         "preview.py",
         "storage.py",
+        "templates.py",
         "types.py",
         "application.py",
     }

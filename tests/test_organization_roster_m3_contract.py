@@ -53,6 +53,14 @@ def test_m3_routes_are_explicit_and_use_organization_scoping() -> None:
     assert roster_routes == {
         ("/organizations/{org_public_id}/roster/employees", frozenset({"GET"})),
         ("/organizations/{org_public_id}/roster/students", frozenset({"GET"})),
+        (
+            "/organizations/{org_public_id}/roster/templates/employee.csv",
+            frozenset({"GET"}),
+        ),
+        (
+            "/organizations/{org_public_id}/roster/templates/student.csv",
+            frozenset({"GET"}),
+        ),
     }
 
 

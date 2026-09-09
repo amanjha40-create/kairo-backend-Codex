@@ -186,6 +186,13 @@ class OrganizationRosterImportService:
 
         await self._require_manager(actor_user_id, org_public_id)
 
+    async def authorize_template_download(
+        self, *, actor_user_id: UUID, org_public_id: UUID
+    ) -> None:
+        """Apply roster-management authorization to a non-mutating template download."""
+
+        await self._require_manager(actor_user_id, org_public_id)
+
     async def get_preview(
         self,
         *,
