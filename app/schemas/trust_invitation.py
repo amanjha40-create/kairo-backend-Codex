@@ -62,7 +62,9 @@ class TrustInvitationResponse(BaseModel):
     public_id: UUID
     organization_public_id: UUID
     subject_name: str
-    subject_email: EmailStr
+    # Retained invitations may belong to a deleted Candidate. Tombstone email
+    # addresses are internal identifiers and must not be exposed to clients.
+    subject_email: EmailStr | None
     subject_phone: str | None
     purpose: str | None
     requested_verification_types: list[TrustInvitationVerificationType]
