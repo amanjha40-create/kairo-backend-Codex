@@ -37,6 +37,7 @@ from app.services import (
     NotificationService,
     NotificationTemplateResolver,
     OrganizationPersonService,
+    OrganizationRosterImportService,
     OrganizationService,
     PassportEngineService,
     PassportPDFService,
@@ -223,6 +224,13 @@ def get_organization_person_service(
     settings: Settings = Depends(get_settings),
 ) -> OrganizationPersonService:
     return OrganizationPersonService(session, settings)
+
+
+def get_organization_roster_import_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OrganizationRosterImportService:
+    return OrganizationRosterImportService(session, settings)
 
 
 def get_institution_people_service(

@@ -34,6 +34,12 @@ from app.models.organization_person import OrganizationPerson
 from app.models.organization_person_identifier import OrganizationPersonIdentifier
 from app.models.organization_person_note import OrganizationPersonNote
 from app.models.organization_person_passport_access import OrganizationPersonPassportAccess
+from app.models.organization_person_roster_profile import OrganizationPersonRosterProfile
+from app.models.organization_roster_import import (
+    OrganizationRosterImport,
+    OrganizationRosterImportAuditEvent,
+    OrganizationRosterImportRow,
+)
 from app.models.passport_share_link import PassportShareLink
 from app.models.passport_share_view import PassportShareView
 from app.models.password_reset_token import PasswordResetToken
@@ -119,6 +125,10 @@ __all__ = [
     "OrganizationPersonIdentifier",
     "OrganizationPersonNote",
     "OrganizationPersonPassportAccess",
+    "OrganizationPersonRosterProfile",
+    "OrganizationRosterImport",
+    "OrganizationRosterImportAuditEvent",
+    "OrganizationRosterImportRow",
     "PassportShareLink",
     "PassportShareView",
     "PasswordResetToken",

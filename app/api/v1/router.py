@@ -31,6 +31,7 @@ from app.api.v1.routes import (
     notifications,
     onboarding,
     organization_people,
+    organization_roster_imports,
     organizations,
     passport,
     passport_shares,
@@ -72,6 +73,8 @@ api_router.include_router(dashboard.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
 api_router.include_router(organization_people.router)
+api_router.include_router(organization_roster_imports.router)
+api_router.include_router(organization_roster_imports.roster_router)
 api_router.include_router(institution_people.router)
 api_router.include_router(institution_workspace.router)
 api_router.include_router(workspace.router)

@@ -17,6 +17,8 @@ from app.db.mixins import SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from app.models.admin_access_audit_event import AdminAccessAuditEvent
     from app.models.admin_access_invitation import AdminAccessInvitation
+    from app.models.organization_person_roster_profile import OrganizationPersonRosterProfile
+    from app.models.organization_roster_import import OrganizationRosterImport
     from app.models.refresh_token import RefreshToken
     from app.models.user_account_event import UserAccountEvent
     from app.models.user_admin_note import UserAdminNote
@@ -133,6 +135,16 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         "AdminAccessAuditEvent",
         foreign_keys="AdminAccessAuditEvent.subject_user_id",
         back_populates="subject_user",
+    )
+    uploaded_roster_imports: Mapped[list["OrganizationRosterImport"]] = relationship(
+        "OrganizationRosterImport",
+        foreign_keys="OrganizationRosterImport.uploaded_by_user_id",
+        back_populates="uploaded_by",
+    )
+    imported_roster_profiles: Mapped[list["OrganizationPersonRosterProfile"]] = relationship(
+        "OrganizationPersonRosterProfile",
+        foreign_keys="OrganizationPersonRosterProfile.imported_by_user_id",
+        back_populates="imported_by",
     )
 
     def __repr__(self) -> str:

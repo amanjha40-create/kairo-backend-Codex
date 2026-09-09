@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,7 +13,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_trust_invitation_service
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.main import app
-from app.schemas.pagination import filter_sort_paginate
+from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
     TrustInvitationCreateResponse,
@@ -21,6 +22,10 @@ from app.schemas.trust_invitation import (
     TrustInvitationResponse,
     TrustInvitationSummaryResponse,
     TrustInvitationTimelineEventResponse,
+)
+from app.services.trust_invitation_service import (
+    TrustInvitationService,
+    _public_subject_email,
 )
 from app.trust_invitations.enums import (
     TrustInvitationDeliveryMethod,
@@ -64,6 +69,7 @@ class FakeTrustInvitationService:
         status: TrustInvitationStatus = TrustInvitationStatus.PENDING,
         *,
         delivery_state: TrustInvitationDeliveryState = TrustInvitationDeliveryState.DELIVERED,
+        subject_email: str | None = "aman3@test.com",
     ) -> TrustInvitationResponse:
         accepted_at = self._now if status == TrustInvitationStatus.ACCEPTED else None
         cancelled_at = self._now if status == TrustInvitationStatus.CANCELLED else None
@@ -73,7 +79,7 @@ class FakeTrustInvitationService:
             public_id=self._invitation_public_id,
             organization_public_id=self._org_public_id,
             subject_name="Aman Jha",
-            subject_email="aman3@test.com",
+            subject_email=subject_email,
             subject_phone="+919999999999",
             purpose="Software Engineer Hiring",
             requested_verification_types=[
@@ -211,6 +217,101 @@ class FakeTrustInvitationService:
         return self._response(TrustInvitationStatus.CANCELLED)
 
 
+def _service_invitation(subject_email: str) -> SimpleNamespace:
+    now = datetime.now(tz=UTC)
+    return SimpleNamespace(
+        public_id=uuid4(),
+        organization=SimpleNamespace(public_id=uuid4()),
+        subject_name="Deleted Candidate",
+        subject_email=subject_email,
+        subject_phone=None,
+        purpose="Employment verification",
+        requested_verification_types=[TrustInvitationVerificationType.EMPLOYMENT.value],
+        message=None,
+        status=TrustInvitationStatus.ACCEPTED,
+        delivery_method=TrustInvitationDeliveryMethod.EMAIL,
+        delivery_state=TrustInvitationDeliveryState.DELIVERED,
+        created_by_user=SimpleNamespace(email="owner@example.com", full_name="Owner User"),
+        expires_at=now + timedelta(days=1),
+        sent_at=now - timedelta(days=1),
+        opened_at=now - timedelta(hours=12),
+        accepted_at=now - timedelta(hours=11),
+        cancelled_at=None,
+        verification_requests=[],
+        created_at=now - timedelta(days=2),
+        updated_at=now,
+        events=[],
+    )
+
+
+def test_deleted_candidate_tombstone_is_hidden_from_trust_invitation_projection() -> None:
+    tombstone = "deleted-candidate+abc@deleted.kairoid.invalid"
+    invitation = _service_invitation(tombstone)
+    service = TrustInvitationService.__new__(TrustInvitationService)
+    service._settings = SimpleNamespace(
+        candidate_portal_base_url="https://candidate.example.com",
+        jwt_secret_key="test-secret",
+    )
+
+    response = service._to_response(invitation)
+    detail = service._to_detail_response(invitation)
+
+    assert response.subject_email is None
+    assert detail.subject_email is None
+    assert tombstone not in response.model_dump_json()
+    assert tombstone not in detail.model_dump_json()
+    assert invitation.subject_email == tombstone
+
+
+def test_trust_invitation_projection_preserves_valid_subject_email() -> None:
+    invitation = _service_invitation("candidate@example.com")
+    service = TrustInvitationService.__new__(TrustInvitationService)
+
+    assert service._to_response(invitation).subject_email == "candidate@example.com"
+    assert _public_subject_email("candidate@example.com") == "candidate@example.com"
+
+
+def test_trust_invitation_response_keeps_strict_validation_for_non_null_email() -> None:
+    with pytest.raises(ValueError):
+        FakeTrustInvitationService()._response(subject_email="not-an-email")
+
+
+@pytest.mark.asyncio
+async def test_deleted_subject_list_remains_searchable_sortable_and_paginated() -> None:
+    invitation = _service_invitation("deleted-candidate+abc@deleted.kairoid.invalid")
+    organization_id = uuid4()
+
+    class Organizations:
+        async def require_org_member(self, actor_user_id, org_public_id):  # noqa: ANN001
+            return SimpleNamespace(id=organization_id), SimpleNamespace()
+
+    class Repository:
+        async def list_for_organization(self, requested_organization_id):  # noqa: ANN001
+            assert requested_organization_id == organization_id
+            return [invitation]
+
+    service = TrustInvitationService.__new__(TrustInvitationService)
+    service._organizations = Organizations()
+    service._repo = Repository()
+
+    result = await service.list_for_organization(
+        uuid4(),
+        invitation.organization.public_id,
+        ListQueryParams(
+            search="Deleted Candidate",
+            sort_by="subject_email",
+            paginate=True,
+            page=1,
+            page_size=10,
+        ),
+    )
+
+    assert isinstance(result, Page)
+    assert result.total == 1
+    assert result.items[0].subject_email is None
+    assert invitation.subject_email.endswith("@deleted.kairoid.invalid")
+
+
 def _override_current_user_factory(email: str):
     async def _override_current_user() -> CurrentUser:
         return CurrentUser(id=uuid4(), email=email, role="user")
@@ -265,6 +366,26 @@ async def test_list_trust_invitations_omits_url() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_trust_invitations_allows_deleted_subject_email_to_be_absent() -> None:
+    service = FakeTrustInvitationService()
+
+    async def list_deleted_subject(*args, **kwargs):  # noqa: ANN002, ANN003
+        return [service._response(subject_email=None)]
+
+    service.list_for_organization = list_deleted_subject
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: service
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/organizations/{uuid4()}/trust-invitations")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()[0]["subject_email"] is None
+
+
+@pytest.mark.asyncio
 async def test_list_trust_invitations_supports_paginated_mode() -> None:
     app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
     app.dependency_overrides[get_trust_invitation_service] = lambda: FakeTrustInvitationService()
@@ -312,6 +433,30 @@ async def test_authenticated_detail_returns_timeline_and_url() -> None:
     body = response.json()
     assert body["invitation_url"] == "https://candidate.example.com/trust-invitations/v2.token.signature"
     assert body["timeline"][0]["event_type"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_detail_allows_deleted_subject_email_to_be_absent() -> None:
+    service = FakeTrustInvitationService()
+
+    async def get_deleted_subject_detail(*args, **kwargs):  # noqa: ANN002, ANN003
+        return TrustInvitationDetailResponse(
+            **service._response(subject_email=None).model_dump(),
+            invitation_url="https://candidate.example.com/trust-invitations/v2.token.signature",
+            timeline=service._timeline(),
+        )
+
+    service.get_detail = get_deleted_subject_detail
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("member@example.com")
+    app.dependency_overrides[get_trust_invitation_service] = lambda: service
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/trust-invitations/by-id/{uuid4()}")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["subject_email"] is None
 
 
 @pytest.mark.asyncio
