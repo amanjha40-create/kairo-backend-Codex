@@ -15,6 +15,36 @@ from app.organization_roster_import.types import MappingAnalysis, SourceColumn
 _HEADER_SEPARATOR_RE = re.compile(r"[^\w]+", re.UNICODE)
 _REPEATED_UNDERSCORE_RE = re.compile(r"_+")
 
+EMPLOYEE_TEMPLATE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Employee ID", "employee_id"),
+    ("Full Name", "full_name"),
+    ("Work Email", "work_email"),
+    ("Phone", "phone"),
+    ("Department", "department"),
+    ("Designation", "designation"),
+    ("Employment Type", "employment_type"),
+    ("Joining Date", "joining_date"),
+    ("Exit Date", "exit_date"),
+    ("Employment Status", "employment_status"),
+    ("Location", "location"),
+)
+
+STUDENT_TEMPLATE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Student ID", "student_id"),
+    ("Full Name", "full_name"),
+    ("Institution Email", "institutional_email"),
+    ("Phone", "phone"),
+    ("Degree", "degree"),
+    ("Program", "program"),
+    ("Specialization", "specialization"),
+    ("Department", "department"),
+    ("Admission Date", "admission_date"),
+    ("Graduation Date", "graduation_date"),
+    ("Enrollment Status", "enrollment_status"),
+    ("Campus", "campus"),
+    ("Cohort", "cohort"),
+)
+
 
 def normalize_header(value: str) -> str:
     """Return a stable, punctuation-insensitive source key."""
@@ -89,6 +119,17 @@ def allowed_fields(roster_type: OrganizationRosterType | str) -> frozenset[str]:
     return EMPLOYEE_FIELDS if parsed is OrganizationRosterType.EMPLOYEE else STUDENT_FIELDS
 
 
+def template_columns(
+    roster_type: OrganizationRosterType | str,
+) -> tuple[tuple[str, str], ...]:
+    parsed = OrganizationRosterType(roster_type)
+    return (
+        EMPLOYEE_TEMPLATE_COLUMNS
+        if parsed is OrganizationRosterType.EMPLOYEE
+        else STUDENT_TEMPLATE_COLUMNS
+    )
+
+
 def alias_dictionary(roster_type: OrganizationRosterType | str) -> dict[str, str]:
     aliases = (
         _EMPLOYEE_ALIASES
@@ -103,6 +144,12 @@ def alias_dictionary(roster_type: OrganizationRosterType | str) -> dict[str, str
             if existing is not None and existing != canonical:
                 raise RuntimeError(f"Ambiguous roster alias configuration: {normalized}")
             result[normalized] = canonical
+    for display_name, canonical in template_columns(roster_type):
+        normalized = normalize_header(display_name)
+        existing = result.get(normalized)
+        if existing is not None and existing != canonical:
+            raise RuntimeError(f"Ambiguous roster template header: {normalized}")
+        result[normalized] = canonical
     return result
 
 
