@@ -58,7 +58,9 @@ from app.organization.enums import OrganizationRole, OrganizationType, Organizat
 from app.organization_people.enums import OrganizationPersonPassportStatusSummary
 from app.schemas.account_deletion import AccountDeletionRequest
 from app.schemas.auth import RegisterRequest
+from app.schemas.pagination import ListQueryParams, Page
 from app.services.account_deletion_service import AccountDeletionService
+from app.services.trust_invitation_service import TrustInvitationService
 from app.trust_invitations.enums import (
     TrustInvitationDeliveryMethod,
     TrustInvitationDeliveryState,
@@ -254,7 +256,9 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
 ) -> None:
     settings = get_settings()
     original_bucket = settings.s3_documents_bucket
+    original_candidate_portal_base_url = settings.candidate_portal_base_url
     settings.s3_documents_bucket = "test-private-bucket"
+    settings.candidate_portal_base_url = "https://candidate.example.com"
     s3_client = _RecordingS3Client()
     monkeypatch.setattr(
         "app.services.account_deletion_service.get_s3_client", lambda _settings: s3_client
@@ -264,6 +268,7 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
     actor_id = None
     org_user_id = None
     org_id = None
+    org_public_id = None
     expected_deleted_keys: set[str] = set()
     purgeable_request_id = None
     retained_request_id = None
@@ -271,7 +276,7 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
     try:
         async with async_session_factory() as session:
             org_user = User(
-                email=f"deleter-org-{uuid4()}@example.invalid",
+                email=f"deleter-org-{uuid4()}@example.com",
                 password_hash=_hash_password("OrgOwnerPass123!"),
                 full_name="Org Owner",
                 role=Role.HR.value,
@@ -308,6 +313,15 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
             session.add(organization)
             await session.flush()
             org_id = organization.id
+            org_public_id = organization.public_id
+
+            session.add(
+                OrganizationMember(
+                    organization_id=organization.id,
+                    user_id=org_user.id,
+                    role=OrganizationRole.OWNER,
+                )
+            )
 
             person = OrganizationPerson(
                 organization_id=organization.id,
@@ -895,6 +909,27 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
             assert invitation.subject_phone is None
             assert invitation.expires_at <= datetime.now(tz=UTC)
 
+            invitation_service = TrustInvitationService(assert_session, settings)
+            invitation_page = await invitation_service.list_for_organization(
+                org_user_id,
+                org_public_id,
+                ListQueryParams(
+                    search="Deleted Candidate",
+                    sort_by="subject_email",
+                    paginate=True,
+                ),
+            )
+            assert isinstance(invitation_page, Page)
+            assert invitation_page.total == 1
+            assert invitation_page.items[0].subject_email is None
+
+            invitation_detail = await invitation_service.get_detail(
+                org_user_id,
+                invitation.public_id,
+            )
+            assert invitation_detail.subject_email is None
+            assert "deleted.kairoid.invalid" not in invitation_detail.model_dump_json()
+
             person = await assert_session.scalar(
                 select(OrganizationPerson).where(OrganizationPerson.organization_id == org_id)
             )
@@ -913,6 +948,7 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
         assert expected_deleted_keys.issubset(deleted_keys)
     finally:
         settings.s3_documents_bucket = original_bucket
+        settings.candidate_portal_base_url = original_candidate_portal_base_url
         async with async_session_factory() as cleanup:
             if actor_id is not None:
                 await cleanup.execute(

@@ -43,6 +43,13 @@ from app.trust_invitations.enums import (
 logger = logging.getLogger(__name__)
 
 
+def _public_subject_email(email: str | None) -> str | None:
+    """Hide Candidate deletion tombstones from Trust Invitation projections."""
+    if email and email.endswith("@deleted.kairoid.invalid"):
+        return None
+    return email
+
+
 class TrustInvitationService:
     """Organization-issued trust invitations with public token resolution."""
 
@@ -636,7 +643,7 @@ class TrustInvitationService:
             public_id=invitation.public_id,
             organization_public_id=invitation.organization.public_id,
             subject_name=invitation.subject_name,
-            subject_email=invitation.subject_email,
+            subject_email=_public_subject_email(invitation.subject_email),
             subject_phone=invitation.subject_phone,
             purpose=invitation.purpose,
             requested_verification_types=self._deserialize_verification_types(invitation.requested_verification_types),
