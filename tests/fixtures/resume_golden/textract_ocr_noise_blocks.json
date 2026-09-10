@@ -1,0 +1,39 @@
+{
+  "description": "Synthetic identifiers and sanitized text reproducing the live Textract OCR line, geometry, and missing-bullet conditions.",
+  "blocks": [
+    {"BlockType": "LINE", "Text": "SKlLLS", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.35, "Left": 0.08, "Width": 0.09}}},
+    {"BlockType": "WORD", "Id": "skill-word-2", "Text": "Spark", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.37, "Left": 0.22, "Width": 0.06}}},
+    {"BlockType": "LINE", "Text": "YASMIN HADDAD", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.05, "Left": 0.08, "Width": 0.18}}},
+    {"BlockType": "LINE", "Text": "Python Spark SQL", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.37, "Left": 0.08, "Width": 0.27}}, "Relationships": [{"Type": "CHILD", "Ids": ["skill-word-1", "skill-word-2", "skill-word-3"]}]},
+    {"BlockType": "LINE", "Text": "EDUCATlON", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.25, "Left": 0.08, "Width": 0.12}}},
+    {"BlockType": "LINE", "Text": "East Valley University", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.27, "Left": 0.08, "Width": 0.22}}},
+    {"BlockType": "WORD", "Id": "skill-word-1", "Text": "Python", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.37, "Left": 0.08, "Width": 0.07}}},
+    {"BlockType": "LINE", "Text": "DATA ENG1NEER", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.07, "Left": 0.08, "Width": 0.17}}},
+    {"BlockType": "LINE", "Text": "EXPERlENCE", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.12, "Left": 0.08, "Width": 0.14}}},
+    {"BlockType": "LINE", "Text": "Moonlit R1ver Data", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.14, "Left": 0.08, "Width": 0.2}}},
+    {"BlockType": "LINE", "Text": "Data Engineer", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.16, "Left": 0.08, "Width": 0.14}}},
+    {"BlockType": "LINE", "Text": "0ct 2021 - Present", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.18, "Left": 0.08, "Width": 0.2}}},
+    {"BlockType": "LINE", "Text": "Built batch and streaming pipelines.", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.2, "Left": 0.08, "Width": 0.31}}},
+    {"BlockType": "LINE", "Text": "BSc Informatics", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.29, "Left": 0.08, "Width": 0.16}}},
+    {"BlockType": "LINE", "Text": "2017-2021", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.31, "Left": 0.08, "Width": 0.11}}},
+    {"BlockType": "WORD", "Id": "skill-word-3", "Text": "SQL", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.37, "Left": 0.35, "Width": 0.04}}}
+  ],
+  "model_payload": {
+    "candidate_profile": {"full_name": "Yasmin Haddad", "professional_headline": "Data Eng1neer"},
+    "employments": [{"company_name": "Moonlit R1ver Data", "role_title": "Data Engineer", "start_date": null, "end_date": null, "is_current": true}],
+    "education": [{"institution_name": "East Valley University", "degree": "BSc Informatics", "start_date": "2017", "end_date": "2021"}],
+    "certifications": [],
+    "projects": [],
+    "skills": [{"name": "Python Spark SQL"}]
+  },
+  "expected": {
+    "profile_name": "Yasmin Haddad",
+    "profile_headline": "Data Engineer",
+    "employer": "Moonlit River Data",
+    "role_title": "Data Engineer",
+    "employment_start": "2021-10",
+    "employment_current": true,
+    "education_count": 1,
+    "skills": ["Python", "Spark", "SQL"]
+  }
+}
