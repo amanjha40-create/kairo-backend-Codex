@@ -220,6 +220,83 @@ def test_collapsed_model_skill_is_replaced_by_source_backed_explicit_items() -> 
     assert "collapsed_explicit_skill_list_reconciled" in result["warnings"]
 
 
+@pytest.mark.parametrize(
+    ("model_skill", "source", "expected"),
+    [
+        (
+            "Spark SQL Python",
+            "SKILLS\nPython | Spark | SQL",
+            ["Python", "Spark", "SQL"],
+        ),
+        (
+            "Python SQL Spark",
+            "SKILLS\nPython, SQL, Spark",
+            ["Python", "SQL", "Spark"],
+        ),
+    ],
+)
+def test_reordered_model_skill_compositions_are_replaced_by_source_backed_items(
+    model_skill: str,
+    source: str,
+    expected: list[str],
+) -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": model_skill}], "warnings": []},
+        source,
+    )
+
+    assert [item["name"] for item in result["skills"]] == expected
+    assert "collapsed_explicit_skill_list_reconciled" in result["warnings"]
+
+
+@pytest.mark.parametrize("skill", ["Machine Learning", "React Native", "Data Analysis"])
+def test_source_backed_multi_word_skills_are_preserved(skill: str) -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": skill}], "warnings": []},
+        f"SKILLS\n{skill}\n\nEDUCATION",
+    )
+
+    assert [item["name"] for item in result["skills"]] == [skill]
+    assert "collapsed_explicit_skill_list_reconciled" not in result["warnings"]
+
+
+def test_source_backed_multi_word_skill_survives_alongside_component_skill() -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": "Machine Learning"}, {"name": "Learning"}], "warnings": []},
+        "SKILLS\nMachine Learning\nLearning\n\nEDUCATION",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["Machine Learning", "Learning"]
+
+
+def test_skill_case_and_benign_punctuation_variants_are_deduplicated() -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": "python"}, {"name": "SQL;"}]},
+        "Skills: Python, SQL",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["python", "SQL"]
+
+
+def test_explicitly_supported_combined_skill_is_preserved() -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": "Spark SQL Python"}], "warnings": []},
+        "SKILLS\nSpark SQL Python\n\nEDUCATION",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["Spark SQL Python"]
+    assert "collapsed_explicit_skill_list_reconciled" not in result["warnings"]
+
+
+def test_unsupported_combined_skill_is_not_split_without_source_evidence() -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": "Spark SQL Python"}], "warnings": []},
+        "Built reliable data platforms.",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["Spark SQL Python"]
+
+
 def test_ocr_text_repairs_are_source_backed_and_do_not_rewrite_alphanumeric_brands() -> None:
     result = normalize_extracted_payload(
         {
