@@ -214,6 +214,42 @@ def _is_explicit_skill_heading(value: str) -> bool:
     return _SKILL_SECTION_HEADING.fullmatch(value.strip()) is not None
 
 
+def _skill_comparison_key(value: str) -> str:
+    """Normalize benign list punctuation without erasing meaningful skill symbols."""
+    normalized = re.sub(r"\s*(?:,|;|\||•|·)\s*", " ", value.strip())
+    return " ".join(normalized.casefold().split())
+
+
+def _is_redundant_composite_skill(candidate: str, explicit_names: list[str]) -> bool:
+    """Return true when source-backed skills completely compose a model-only candidate."""
+    candidate_key = _skill_comparison_key(candidate)
+    explicit_keys = {key for name in explicit_names if (key := _skill_comparison_key(name))}
+    if not candidate_key or candidate_key in explicit_keys:
+        return False
+
+    candidate_tokens = tuple(candidate_key.split())
+    supported = {
+        tuple(key.split()): key
+        for key in explicit_keys
+        if key != candidate_key and len(key.split()) <= len(candidate_tokens)
+    }
+    if len(supported) < 2:
+        return False
+
+    def composed_from(index: int, used: frozenset[str]) -> bool:
+        if index == len(candidate_tokens):
+            return len(used) >= 2
+        for tokens, key in supported.items():
+            if key in used:
+                continue
+            end = index + len(tokens)
+            if candidate_tokens[index:end] == tokens and composed_from(end, used | {key}):
+                return True
+        return False
+
+    return composed_from(0, frozenset())
+
+
 def _explicit_skill_names(extracted_text: str) -> list[str]:
     """Return only skills from high-confidence, explicitly labelled resume lists."""
     candidates: list[str] = []
@@ -243,9 +279,6 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
     """Merge explicit labelled skills without inferring from employers, titles, or prose."""
     value = dict(payload)
     explicit_names = _explicit_skill_names(extracted_text)
-    explicit_signature = "".join(
-        character.casefold() for character in " ".join(explicit_names) if character.isalnum()
-    )
     skills: list[Any] = []
     seen: set[str] = set()
     for skill in value.get("skills") or []:
@@ -253,20 +286,17 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
             skills.append(skill)
             continue
         item = dict(skill)
-        item["name"] = " ".join(item["name"].split())
-        item_signature = "".join(
-            character.casefold() for character in item["name"] if character.isalnum()
-        )
-        if len(explicit_names) > 1 and item_signature == explicit_signature:
+        item["name"] = " ".join(item["name"].strip(" \t\r\n,;|•·:").split())
+        if _is_redundant_composite_skill(item["name"], explicit_names):
             value.setdefault("warnings", []).append("collapsed_explicit_skill_list_reconciled")
             continue
-        key = item["name"].casefold()
+        key = _skill_comparison_key(item["name"])
         if not key or key in seen:
             continue
         seen.add(key)
         skills.append(item)
     for name in explicit_names:
-        key = name.casefold()
+        key = _skill_comparison_key(name)
         if key in seen:
             continue
         seen.add(key)
