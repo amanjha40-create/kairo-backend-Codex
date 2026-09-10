@@ -24,7 +24,7 @@
     "education": [{"institution_name": "East Valley University", "degree": "BSc Informatics", "start_date": "2017", "end_date": "2021"}],
     "certifications": [],
     "projects": [],
-    "skills": [{"name": "Python Spark SQL"}]
+    "skills": [{"name": "Spark SQL Python"}]
   },
   "expected": {
     "profile_name": "Yasmin Haddad",
