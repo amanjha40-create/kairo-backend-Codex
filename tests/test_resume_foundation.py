@@ -21,6 +21,7 @@ from app.resumes.providers import (
     _bedrock_client,
     _log_model_usage,
     _parse_model_json,
+    _PdfExtractedText,
     _sanitized_resume_text,
     _validate_parser_input,
 )
@@ -272,6 +273,51 @@ async def test_nova_parser_validates_structured_response(monkeypatch: pytest.Mon
     )
     result = await NovaResumeParser(settings).parse("synthetic resume")
     assert result.schema_version == "1"
+
+
+@pytest.mark.asyncio
+async def test_nova_parser_uses_embedded_pdf_text_only_for_post_parse_date_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Body:
+        def read(self) -> bytes:
+            structured = {
+                "employments": [
+                    {
+                        "company_name": "Northwind Labs",
+                        "role_title": "Engineer",
+                        "start_date": "2020-01-01",
+                        "is_current": True,
+                    }
+                ]
+            }
+            return json.dumps(
+                {"output": {"message": {"content": [{"text": json.dumps(structured)}]}}}
+            ).encode()
+
+    class Client:
+        def invoke_model(self, **kwargs: object) -> dict[str, Body]:
+            request = json.loads(str(kwargs["body"]))
+            user_text = request["messages"][0]["content"][0]["text"]
+            assert "Oct 2021" not in user_text
+            return {"body": Body()}
+
+    monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: Client())
+    settings = SimpleNamespace(
+        aws_region="us-east-1", bedrock_model_id="us.amazon.nova-2-lite-v1:0"
+    )
+    evidence = _PdfExtractedText(
+        "Northwind Labs\nEngineer\nBuilt systems.",
+        "Northwind Labs\nEngineer\nOct 2021 - Present",
+    )
+
+    result = await NovaResumeParser(settings).parse(evidence)
+
+    employment = result.employments[0]
+    assert employment.start_date is None
+    assert employment.start_date_display == "2021-10"
+    assert employment.start_date_precision == "month"
+    assert employment.is_current is True
 
 
 def test_nova_parser_rejects_malformed_structured_output() -> None:

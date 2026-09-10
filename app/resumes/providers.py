@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import statistics
 import time
 import zipfile
 from abc import ABC, abstractmethod
@@ -12,9 +13,14 @@ from xml.etree import ElementTree
 
 import boto3
 from botocore.config import Config
+from pypdf import PdfReader
 
 from app.config import Settings
-from app.resumes.extraction import normalize_extracted_payload
+from app.resumes.extraction import (
+    _is_explicit_skill_heading,
+    normalize_extracted_payload,
+    reconcile_pdf_employment_dates,
+)
 from app.resumes.schemas import ParsedResumeResult
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,26 @@ _UNTRUSTED_DIRECTIVE_MARKERS = (
     "mark every claim verified",
     "assign a trust score",
 )
+
+
+def extract_pdf_embedded_text(content: bytes, *, max_characters: int = 120_000) -> str:
+    """Return bounded deterministic PDF text without making it the primary extractor."""
+    try:
+        reader = PdfReader(io.BytesIO(content), strict=False)
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception:
+        logger.warning("resume.pdf.embedded_text_unavailable")
+        return ""
+    return text[:max_characters]
+
+
+class _PdfExtractedText(str):
+    embedded_text: str
+
+    def __new__(cls, primary_text: str, embedded_text: str) -> _PdfExtractedText:
+        value = super().__new__(cls, primary_text)
+        value.embedded_text = embedded_text
+        return value
 
 
 class DocumentExtractor(ABC):
@@ -84,13 +110,19 @@ class TextractDocumentExtractor(DocumentExtractor):
     ) -> str:
         if content_type != "application/pdf":
             raise ValueError("Textract provider supports PDF only")
+        embedded_text = await asyncio.to_thread(
+            extract_pdf_embedded_text,
+            content,
+            max_characters=getattr(self._settings, "resume_max_extracted_characters", 120_000),
+        )
         client = boto3.client("textract", region_name=self._settings.aws_region)
         if storage_bucket and storage_key:
-            return await asyncio.to_thread(
+            primary_text = await asyncio.to_thread(
                 self._extract_from_s3, client, storage_bucket, storage_key
             )
+            return _PdfExtractedText(primary_text, embedded_text)
         response = await asyncio.to_thread(client.detect_document_text, Document={"Bytes": content})
-        return self._lines(response)
+        return _PdfExtractedText(self._lines(response), embedded_text)
 
     def _extract_from_s3(self, client: Any, bucket: str, key: str) -> str:
         response = client.start_document_text_detection(
@@ -119,11 +151,74 @@ class TextractDocumentExtractor(DocumentExtractor):
 
     @staticmethod
     def _lines(response: dict[str, Any]) -> str:
-        return "\n".join(
-            block.get("Text", "")
-            for block in response.get("Blocks", [])
-            if block.get("BlockType") == "LINE"
+        blocks = response.get("Blocks", [])
+        words = {
+            block.get("Id"): block
+            for block in blocks
+            if block.get("BlockType") == "WORD" and block.get("Id")
+        }
+
+        def geometry_key(block: dict[str, Any]) -> tuple[int, float, float]:
+            bounds = block.get("Geometry", {}).get("BoundingBox", {})
+            return (
+                int(block.get("Page", 1)),
+                round(float(bounds.get("Top", 0)), 4),
+                round(float(bounds.get("Left", 0)), 4),
+            )
+
+        def child_words(line: dict[str, Any]) -> list[dict[str, Any]]:
+            child_ids = [
+                identifier
+                for relationship in line.get("Relationships", [])
+                if relationship.get("Type") == "CHILD"
+                for identifier in relationship.get("Ids", [])
+            ]
+            return sorted(
+                (words[identifier] for identifier in child_ids if identifier in words),
+                key=geometry_key,
+            )
+
+        def reconstruct_visual_list(line: dict[str, Any]) -> str:
+            original = " ".join(str(line.get("Text", "")).split())
+            if any(separator in original for separator in (",", ";", "|", "•", "·")):
+                return original
+            ordered_words = child_words(line)
+            if len(ordered_words) < 2:
+                return original
+            character_widths = []
+            for word in ordered_words:
+                text = str(word.get("Text", ""))
+                width = float(word.get("Geometry", {}).get("BoundingBox", {}).get("Width", 0))
+                if text and width > 0:
+                    character_widths.append(width / len(text))
+            if not character_widths:
+                return original
+            gap_threshold = max(0.015, statistics.median(character_widths) * 2.75)
+            parts = [str(ordered_words[0].get("Text", "")).strip()]
+            previous = ordered_words[0].get("Geometry", {}).get("BoundingBox", {})
+            for word in ordered_words[1:]:
+                bounds = word.get("Geometry", {}).get("BoundingBox", {})
+                gap = float(bounds.get("Left", 0)) - (
+                    float(previous.get("Left", 0)) + float(previous.get("Width", 0))
+                )
+                parts.append(" | " if gap >= gap_threshold else " ")
+                parts.append(str(word.get("Text", "")).strip())
+                previous = bounds
+            return "".join(parts).strip()
+
+        rendered: list[str] = []
+        lines = sorted(
+            (block for block in blocks if block.get("BlockType") == "LINE"),
+            key=geometry_key,
         )
+        previous_was_skills_heading = False
+        for line in lines:
+            text = " ".join(str(line.get("Text", "")).split())
+            if previous_was_skills_heading:
+                text = reconstruct_visual_list(line)
+            rendered.append(text)
+            previous_was_skills_heading = _is_explicit_skill_heading(text)
+        return "\n".join(rendered)
 
 
 class ResumeParser(ABC):
@@ -250,6 +345,14 @@ class NovaResumeParser(ResumeParser):
             model_id=self._settings.bedrock_model_id,
         )
         result = _parse_model_json(payload, sanitized_text)
+        if isinstance(extracted_text, _PdfExtractedText):
+            result = ParsedResumeResult.model_validate(
+                reconcile_pdf_employment_dates(
+                    result.model_dump(mode="json"),
+                    sanitized_text,
+                    extracted_text.embedded_text,
+                )
+            )
         if removed_directive:
             result.warnings.append("untrusted_instruction_text_removed")
         return result
@@ -295,6 +398,14 @@ class BedrockResumeParser(ResumeParser):
         result = ParsedResumeResult.model_validate(
             normalize_extracted_payload(payload, sanitized_text)
         )
+        if isinstance(extracted_text, _PdfExtractedText):
+            result = ParsedResumeResult.model_validate(
+                reconcile_pdf_employment_dates(
+                    result.model_dump(mode="json"),
+                    sanitized_text,
+                    extracted_text.embedded_text,
+                )
+            )
         if removed_directive:
             result.warnings.append("untrusted_instruction_text_removed")
         return result
