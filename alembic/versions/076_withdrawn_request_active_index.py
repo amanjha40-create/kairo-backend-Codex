@@ -18,8 +18,7 @@ depends_on = None
 
 _ORIGINAL_TERMINAL_STATUSES = "('verified', 'rejected', 'cancelled', 'expired')"
 _CURRENT_TERMINAL_STATUSES = (
-    "('verified', 'rejected', 'unable_to_verify', 'cancelled', "
-    "'withdrawn_by_candidate', 'expired')"
+    "('verified', 'rejected', 'unable_to_verify', 'cancelled', 'withdrawn_by_candidate', 'expired')"
 )
 
 
