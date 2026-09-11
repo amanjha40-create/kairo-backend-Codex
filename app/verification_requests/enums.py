@@ -59,6 +59,7 @@ class VerificationRequestStatus(StrEnum):
     REJECTED = "rejected"
     UNABLE_TO_VERIFY = "unable_to_verify"
     CANCELLED = "cancelled"
+    WITHDRAWN_BY_CANDIDATE = "withdrawn_by_candidate"
     EXPIRED = "expired"
 
 

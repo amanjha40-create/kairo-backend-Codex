@@ -28,6 +28,18 @@ class EducationRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_owned_for_update(self, education_id: UUID, user_id: UUID) -> Education | None:
+        stmt = (
+            select(Education)
+            .where(
+                Education.id == education_id,
+                Education.user_id == user_id,
+                Education.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def get_active_by_id(self, education_id: UUID) -> Education | None:
         stmt = select(Education).where(
             Education.id == education_id,

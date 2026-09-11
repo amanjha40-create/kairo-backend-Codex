@@ -216,6 +216,20 @@ async def resubmit_verification_request(
     return await svc.resubmit(current.id, current.email, verification_request_public_id)
 
 
+@router.post(
+    "/verification-requests/{verification_request_public_id}/withdraw",
+    response_model=VerificationRequestResponse,
+)
+async def withdraw_verification_request(
+    verification_request_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[VerificationRequestService, Depends(get_verification_request_service)],
+) -> VerificationRequestResponse:
+    return await svc.withdraw_by_candidate(
+        current.id, current.email, verification_request_public_id
+    )
+
+
 @router.post("/verification-requests/{verification_request_public_id}/request-information", response_model=VerificationRequestResponse)
 async def request_verification_information(
     verification_request_public_id: UUID,
