@@ -1082,6 +1082,13 @@ class VerificationRequestAdminReviewService:
             event_source=VerificationRequestEventSource.ADMIN,
             metadata={"decision_summary": decision_summary, "pre_dispatch": True},
         )
+        if request.employment_id is not None or request.education_id is not None:
+            await self._apply_canonical_outcome(
+                request,
+                actor_user_id,
+                target_status.value,
+                decision_summary,
+            )
         await self._session.commit()
         refreshed = await self._requests.get_by_public_id(request.public_id)
         if refreshed is None:

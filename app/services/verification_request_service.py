@@ -263,7 +263,15 @@ class VerificationRequestService:
             employment_id=employment_id,
             subject_user_id=actor_user_id,
         )
-        if request is None or request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE:
+        if (
+            request is None
+            or request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE
+            or (
+                request.status == VerificationRequestStatus.REJECTED
+                and employment.verification_status == EmploymentVerificationStatus.DRAFT.value
+                and employment.updated_at > request.updated_at
+            )
+        ):
             raise NotFoundError("Employment verification request not found")
         return await self._to_subject_response(request)
 
@@ -360,7 +368,15 @@ class VerificationRequestService:
             education_id=education_id,
             subject_user_id=actor_user_id,
         )
-        if request is None or request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE:
+        if (
+            request is None
+            or request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE
+            or (
+                request.status == VerificationRequestStatus.REJECTED
+                and education.verification_status == EducationVerificationStatus.DRAFT.value
+                and education.updated_at > request.updated_at
+            )
+        ):
             raise NotFoundError("Education verification request not found")
         return await self._to_subject_response(request)
 
