@@ -93,7 +93,9 @@ _EXPLICIT_SKILL_LIST = re.compile(
     r")\s*(?P<items>[^.\n]+)",
     re.IGNORECASE,
 )
-_SKILL_LIST_SEPARATOR = re.compile(r"\s*(?:,|;|\||•|·)\s*(?:(?i:and)\s+)?|\s+/\s+|\s+(?i:and)\s+")
+_SKILL_LIST_SEPARATOR = re.compile(
+    r"\s*(?:,|;|\||•|·|[\x1c-\x1f\x7f])\s*(?:(?i:and)\s+)?|\s+/\s+|\s+(?i:and)\s+"
+)
 _RESUME_SECTION_HEADING = re.compile(
     r"^(?:candidate\s+profile|profile|summary|objective|experience|employment|work\s+history|"
     r"education|certifications?|projects?|portfolio|languages?|awards?|interests?|references?)\s*$",
@@ -216,38 +218,49 @@ def _is_explicit_skill_heading(value: str) -> bool:
 
 def _skill_comparison_key(value: str) -> str:
     """Normalize benign list punctuation without erasing meaningful skill symbols."""
-    normalized = re.sub(r"\s*(?:,|;|\||•|·)\s*", " ", value.strip())
+    normalized = re.sub(r"\s*(?:,|;|\||•|·|[\x1c-\x1f\x7f])\s*", " ", value.strip())
     return " ".join(normalized.casefold().split())
 
 
-def _is_redundant_composite_skill(candidate: str, explicit_names: list[str]) -> bool:
-    """Return true when source-backed skills completely compose a model-only candidate."""
-    candidate_key = _skill_comparison_key(candidate)
-    explicit_keys = {key for name in explicit_names if (key := _skill_comparison_key(name))}
-    if not candidate_key or candidate_key in explicit_keys:
-        return False
-
+def _is_redundant_merged_skill(
+    candidate_key: str,
+    provenance: dict[str, set[str]],
+) -> bool:
+    """Suppress only composites contradicted by a distinct explicit source representation."""
     candidate_tokens = tuple(candidate_key.split())
+    explicit_origins = {"primary", "corroborating"}
     supported = {
         tuple(key.split()): key
-        for key in explicit_keys
-        if key != candidate_key and len(key.split()) <= len(candidate_tokens)
+        for key, origins in provenance.items()
+        if key != candidate_key
+        and origins.intersection(explicit_origins)
+        and len(key.split()) <= len(candidate_tokens)
     }
     if len(supported) < 2:
         return False
 
-    def composed_from(index: int, used: frozenset[str]) -> bool:
+    def composed_from(index: int, used: frozenset[str]) -> frozenset[str] | None:
         if index == len(candidate_tokens):
-            return len(used) >= 2
+            return used if len(used) >= 2 else None
         for tokens, key in supported.items():
             if key in used:
                 continue
             end = index + len(tokens)
-            if candidate_tokens[index:end] == tokens and composed_from(end, used | {key}):
-                return True
-        return False
+            if candidate_tokens[index:end] != tokens:
+                continue
+            result = composed_from(end, used | {key})
+            if result is not None:
+                return result
+        return None
 
-    return composed_from(0, frozenset())
+    components = composed_from(0, frozenset())
+    if components is None:
+        return False
+    common_component_origins = set.intersection(
+        *(provenance[key].intersection(explicit_origins) for key in components)
+    )
+    candidate_origins = provenance[candidate_key].intersection(explicit_origins)
+    return bool(common_component_origins.difference(candidate_origins))
 
 
 def _explicit_skill_names(extracted_text: str) -> list[str]:
@@ -275,33 +288,61 @@ def _explicit_skill_names(extracted_text: str) -> list[str]:
     return unique
 
 
-def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict[str, Any]:
-    """Merge explicit labelled skills without inferring from employers, titles, or prose."""
+def enrich_explicit_skills(
+    payload: dict[str, Any],
+    extracted_text: str,
+    *,
+    corroborating_text: str = "",
+) -> dict[str, Any]:
+    """Finalize model and explicit skills once, retaining source-representation provenance."""
     value = dict(payload)
-    explicit_names = _explicit_skill_names(extracted_text)
+    primary_names = _explicit_skill_names(extracted_text)
+    corroborating_names = _explicit_skill_names(corroborating_text)
     skills: list[Any] = []
-    seen: set[str] = set()
+    provenance: dict[str, set[str]] = {}
+
+    def add_skill(
+        name: str, origin: str, item: dict[str, Any], *, append_if_new: bool = True
+    ) -> None:
+        normalized_name = " ".join(name.strip(" \t\r\n,;|•·:\x1c\x1d\x1e\x1f\x7f").split())
+        key = _skill_comparison_key(normalized_name)
+        if not key:
+            return
+        if key in provenance:
+            provenance[key].add(origin)
+            return
+        if not append_if_new:
+            return
+        normalized_item = dict(item)
+        normalized_item["name"] = normalized_name
+        provenance[key] = {origin}
+        skills.append(normalized_item)
+
     for skill in value.get("skills") or []:
         if not isinstance(skill, dict) or not isinstance(skill.get("name"), str):
             skills.append(skill)
             continue
-        item = dict(skill)
-        item["name"] = " ".join(item["name"].strip(" \t\r\n,;|•·:").split())
-        if _is_redundant_composite_skill(item["name"], explicit_names):
-            value.setdefault("warnings", []).append("collapsed_explicit_skill_list_reconciled")
+        add_skill(skill["name"], "model", skill)
+    for name in primary_names:
+        add_skill(name, "primary", {"name": name})
+    for name in corroborating_names:
+        # Embedded PDF text may corroborate a model/primary candidate, but never inject one alone.
+        add_skill(name, "corroborating", {"name": name}, append_if_new=False)
+
+    finalized: list[Any] = []
+    reconciled = False
+    for skill in skills:
+        if not isinstance(skill, dict) or not isinstance(skill.get("name"), str):
+            finalized.append(skill)
             continue
-        key = _skill_comparison_key(item["name"])
-        if not key or key in seen:
+        key = _skill_comparison_key(skill["name"])
+        if key and _is_redundant_merged_skill(key, provenance):
+            reconciled = True
             continue
-        seen.add(key)
-        skills.append(item)
-    for name in explicit_names:
-        key = _skill_comparison_key(name)
-        if key in seen:
-            continue
-        seen.add(key)
-        skills.append({"name": name})
-    value["skills"] = skills
+        finalized.append(skill)
+    if reconciled:
+        value.setdefault("warnings", []).append("collapsed_explicit_skill_list_reconciled")
+    value["skills"] = finalized
     return value
 
 
@@ -547,7 +588,10 @@ def enrich_employment_claims(payload: dict[str, Any], extracted_text: str) -> di
 
 
 def normalize_extracted_payload(
-    payload: dict[str, Any], extracted_text: str = ""
+    payload: dict[str, Any],
+    extracted_text: str = "",
+    *,
+    corroborating_skill_text: str = "",
 ) -> dict[str, Any]:
     """Normalize partial dates and high-confidence location/date hints without inventing values."""
     value = dict(payload)
@@ -561,7 +605,11 @@ def normalize_extracted_payload(
     for collection in _MODEL_COLLECTION_FIELDS:
         if value.get(collection) is None:
             value[collection] = []
-    value = enrich_explicit_skills(value, extracted_text)
+    value = enrich_explicit_skills(
+        value,
+        extracted_text,
+        corroborating_text=corroborating_skill_text,
+    )
     value = normalize_ocr_structured_fields(value, extracted_text)
     for collection in _MODEL_COLLECTION_FIELDS:
         if collection == "portfolio_links" or not isinstance(value.get(collection), list):

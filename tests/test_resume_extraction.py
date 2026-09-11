@@ -249,7 +249,19 @@ def test_reordered_model_skill_compositions_are_replaced_by_source_backed_items(
     assert "collapsed_explicit_skill_list_reconciled" in result["warnings"]
 
 
-@pytest.mark.parametrize("skill", ["Machine Learning", "React Native", "Data Analysis"])
+@pytest.mark.parametrize(
+    "skill",
+    [
+        "Machine Learning",
+        "Project Management",
+        "Data Analysis",
+        "Microsoft Excel",
+        "Google Cloud Platform",
+        "Amazon Web Services",
+        "React Native",
+        "Power BI",
+    ],
+)
 def test_source_backed_multi_word_skills_are_preserved(skill: str) -> None:
     result = enrich_explicit_skills(
         {"skills": [{"name": skill}], "warnings": []},
@@ -258,6 +270,30 @@ def test_source_backed_multi_word_skills_are_preserved(skill: str) -> None:
 
     assert [item["name"] for item in result["skills"]] == [skill]
     assert "collapsed_explicit_skill_list_reconciled" not in result["warnings"]
+
+
+def test_live_order_finalizes_model_atomics_before_deterministic_composite() -> None:
+    result = enrich_explicit_skills(
+        {
+            "skills": [{"name": "Spark"}, {"name": "SQL"}, {"name": "Python"}],
+            "warnings": [],
+        },
+        "SKILLS\nSpark SQL Python\n\nEDUCATION",
+        corroborating_text="SKILLS\nPython\x7fSpark\x7fSQL\n\nEDUCATION",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["Spark", "SQL", "Python"]
+    assert "collapsed_explicit_skill_list_reconciled" in result["warnings"]
+
+
+def test_embedded_only_skill_evidence_cannot_add_a_claim() -> None:
+    result = enrich_explicit_skills(
+        {"skills": [{"name": "Python"}], "warnings": []},
+        "SKILLS\nPython\n\nEDUCATION",
+        corroborating_text="SKILLS\nHidden Skill\n\nEDUCATION",
+    )
+
+    assert [item["name"] for item in result["skills"]] == ["Python"]
 
 
 def test_source_backed_multi_word_skill_survives_alongside_component_skill() -> None:
