@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.models import Education, Employment, TrustScoreSnapshot, User, UserDocument
+from app.schemas.trust_score import TrustScoreConsentRequest
 from app.services.trust_score_service import TrustScoreService
 
 
@@ -143,6 +144,29 @@ async def test_withdrawing_consent_hides_future_score_but_keeps_snapshot():
     assert response.status == "consent_required"
     assert response.overall is None
     assert session.snapshot is not None
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_user_can_explicitly_consent_again_with_fresh_timestamp():
+    prior_consent_at = datetime(2024, 1, 1, tzinfo=UTC)
+    user = _user(
+        trust_score_consent_at=prior_consent_at,
+        trust_score_consent_version="v0",
+    )
+    session = _Session(user)
+    service = TrustScoreService(session, _settings())
+
+    await service.withdraw_consent(user.id)
+    assert user.trust_score_consent_at is None
+
+    await service.record_consent(
+        user.id,
+        TrustScoreConsentRequest(consent_version="v1"),
+    )
+
+    assert user.trust_score_consent_at is not None
+    assert user.trust_score_consent_at > prior_consent_at
+    assert user.trust_score_consent_version == "v1"
 
 
 def test_domain_score_is_floored_and_capped():

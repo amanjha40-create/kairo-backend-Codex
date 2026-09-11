@@ -18,6 +18,7 @@ from app.infrastructure.s3.presign import (
 )
 from app.models import Education, EducationDocument
 from app.repositories.education import EducationDocumentRepository, EducationRepository
+from app.repositories.verification_request import VerificationRequestRepository
 from app.resumes.normalization import date_ranges_overlap, normalize_text
 from app.schemas.education import (
     EducationCreateRequest,
@@ -26,6 +27,7 @@ from app.schemas.education import (
     EducationDocumentDownloadUrlResponse,
     EducationUpdateRequest,
 )
+from app.verification_requests.enums import VerificationRequestStatus
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class EducationService:
         self._session = session
         self._educations = EducationRepository(session)
         self._documents = EducationDocumentRepository(session)
+        self._verification_requests = VerificationRequestRepository(session)
         self._settings = settings or get_settings()
 
     # --- Education CRUD ---
@@ -82,6 +85,20 @@ class EducationService:
         self, user_id: UUID, education_id: UUID, payload: EducationUpdateRequest,
     ) -> Education:
         edu = await self.get_owned(user_id, education_id)
+        previous_status = edu.verification_status
+        latest_request = None
+        if previous_status != EducationVerificationStatus.REJECTED.value:
+            latest_request = await self._verification_requests.get_latest_for_subject_education(
+                education_id=education_id,
+                subject_user_id=user_id,
+            )
+        recovering_rejection = (
+            previous_status == EducationVerificationStatus.REJECTED.value
+            or (
+                latest_request is not None
+                and latest_request.status == VerificationRequestStatus.REJECTED
+            )
+        )
         data = payload.model_dump(exclude_unset=True)
         start_date = data.get("start_date", edu.start_date)
         end_date = data.get("end_date", edu.end_date)
@@ -110,6 +127,13 @@ class EducationService:
                 setattr(edu, field, value.value if hasattr(value, "value") else value)
             else:
                 setattr(edu, field, value)
+        if recovering_rejection:
+            edu.verification_status = EducationVerificationStatus.DRAFT.value
+            edu.submitted_at = None
+            edu.reviewed_at = None
+            edu.verified_at = None
+            edu.reviewed_by_user_id = None
+            edu.reviewer_note = None
         await self._session.commit()
         await self._session.refresh(edu)
         return edu

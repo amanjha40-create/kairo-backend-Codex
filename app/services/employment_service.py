@@ -34,7 +34,10 @@ from app.schemas.employment import (
 from app.schemas.pagination import Page, PageParams
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
-from app.verification_requests.enums import VerificationRequestEventSource
+from app.verification_requests.enums import (
+    VerificationRequestEventSource,
+    VerificationRequestStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +118,27 @@ class EmploymentService:
         row = await self._employment.get_owned_active(employment_id, owner_user_id)
         if row is None:
             raise EmploymentCaseNotFoundError()
+        latest_request = None
+        if row.verification_status != VerificationStatus.REJECTED.value:
+            latest_request = await self._verification_requests.get_latest_for_subject_employment(
+                employment_id=employment_id,
+                subject_user_id=owner_user_id,
+            )
+        recovering_rejection = (
+            row.verification_status == VerificationStatus.REJECTED.value
+            or (
+                latest_request is not None
+                and latest_request.status == VerificationRequestStatus.REJECTED
+            )
+        )
         if row.verification_status not in (
             VerificationStatus.DRAFT.value,
             VerificationStatus.ADDITIONAL_INFO_REQUESTED.value,
-        ):
+            VerificationStatus.REJECTED.value,
+        ) and not recovering_rejection:
             raise EmploymentWorkflowError("Employment cannot be edited in the current status")
 
+        previous_status = row.verification_status
         data = payload.model_dump(exclude_unset=True)
         for field, value in data.items():
             if field == "employment_type" and value is not None:
@@ -130,12 +148,20 @@ class EmploymentService:
             setattr(row, field, value)
 
         validate_period_after_patch(row)
+        if recovering_rejection:
+            row.verification_status = VerificationStatus.DRAFT.value
+            row.submitted_at = None
+            row.reviewed_at = None
+            row.verified_at = None
+            row.reviewed_by_user_id = None
+            row.reviewer_summary = None
+            row.pending_info_request = None
 
         await self._emit_audit(
             employment_id=row.id,
             actor_user_id=owner_user_id,
             action=VerificationAuditAction.EMPLOYMENT_UPDATED,
-            previous_status=None,
+            previous_status=previous_status,
             new_status=row.verification_status,
             metadata_payload={"fields": list(data.keys())},
         )
