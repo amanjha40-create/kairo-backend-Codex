@@ -9,7 +9,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.employment.constants import PENDING_UPLOAD_CHECKSUM_HEX
-from app.employment.enums import EmploymentType, VerificationAuditAction, VerificationMethod, VerificationStatus
+from app.employment.enums import (
+    EmploymentType,
+    VerificationAuditAction,
+    VerificationMethod,
+    VerificationStatus,
+    WorkArrangement,
+)
 from app.employment.verification.state_machine import VerificationStatusManager
 from app.employment.validation import validate_period_after_patch
 from app.exceptions import (
@@ -92,8 +98,10 @@ class EmploymentService:
             employment_type=payload.employment_type.value,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            work_location_city=payload.work_location_city,
             work_location_country=payload.work_location_country,
             work_location_region=payload.work_location_region,
+            work_arrangement=payload.work_arrangement.value if payload.work_arrangement else None,
             verification_method=payload.verification_method.value,
             verification_status=VerificationStatus.DRAFT.value,
         )
@@ -143,6 +151,8 @@ class EmploymentService:
         for field, value in data.items():
             if field == "employment_type" and value is not None:
                 value = value.value if isinstance(value, EmploymentType) else EmploymentType(str(value)).value
+            if field == "work_arrangement" and value is not None:
+                value = value.value if isinstance(value, WorkArrangement) else WorkArrangement(str(value)).value
             if field == "subject_email" and value is not None:
                 value = str(value)
             setattr(row, field, value)

@@ -15,6 +15,7 @@ from app.employment.enums import (
     EmploymentType,
     VerificationMethod,
     VerificationStatus,
+    WorkArrangement,
 )
 from app.schemas.employer_verification import EmployerVerificationStatusResponse
 from app.schemas.pagination import Page
@@ -40,8 +41,10 @@ class EmploymentResponse(BaseModel):
     employment_type: EmploymentType
     start_date: date | None
     end_date: date | None
+    work_location_city: str | None = None
     work_location_country: str | None
     work_location_region: str | None
+    work_arrangement: WorkArrangement | None = None
     verification_method: VerificationMethod = VerificationMethod.DOCUMENT
     verification_status: VerificationStatus
     submitted_at: datetime | None

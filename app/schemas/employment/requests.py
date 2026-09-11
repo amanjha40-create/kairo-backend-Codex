@@ -8,7 +8,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.employment.enums import EmploymentDocumentType, EmploymentType, VerificationMethod, VerificationStatus
+from app.employment.enums import (
+    EmploymentDocumentType,
+    EmploymentType,
+    VerificationMethod,
+    VerificationStatus,
+    WorkArrangement,
+)
 
 _ISO3166_ALPHA2 = re.compile(r"^[A-Z]{2}$")
 
@@ -27,12 +33,26 @@ class CreateEmploymentRequest(BaseModel):
     verification_method: VerificationMethod = VerificationMethod.DOCUMENT
     start_date: date
     end_date: date | None = None
-    work_location_country: str = Field(..., min_length=2, max_length=2)
+    work_location_city: str | None = Field(None, max_length=128)
+    work_location_country: str | None = Field(None, min_length=2, max_length=2)
     work_location_region: str | None = Field(None, max_length=128)
+    work_arrangement: WorkArrangement | None = None
+
+    @field_validator("work_location_city", "work_location_region", mode="before")
+    @classmethod
+    def empty_location_text_is_null(cls, v: str | None) -> str | None:
+        return v if v and v.strip() else None
+
+    @field_validator("work_arrangement", mode="before")
+    @classmethod
+    def empty_work_arrangement_is_null(cls, v: str | None) -> str | None:
+        return v if v and v.strip() else None
 
     @field_validator("work_location_country")
     @classmethod
-    def uppercase_country(cls, v: str) -> str:
+    def uppercase_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         u = v.upper()
         if not _ISO3166_ALPHA2.match(u):
             msg = "work_location_country must be ISO 3166-1 alpha-2"
@@ -60,8 +80,20 @@ class UpdateEmploymentRequest(BaseModel):
     employment_type: EmploymentType | None = None
     start_date: date | None = None
     end_date: date | None = None
+    work_location_city: str | None = Field(None, max_length=128)
     work_location_country: str | None = Field(None, min_length=2, max_length=2)
     work_location_region: str | None = Field(None, max_length=128)
+    work_arrangement: WorkArrangement | None = None
+
+    @field_validator("work_location_city", "work_location_region", mode="before")
+    @classmethod
+    def empty_location_text_is_null(cls, v: str | None) -> str | None:
+        return v if v and v.strip() else None
+
+    @field_validator("work_arrangement", mode="before")
+    @classmethod
+    def empty_work_arrangement_is_null(cls, v: str | None) -> str | None:
+        return v if v and v.strip() else None
 
     @field_validator("work_location_country")
     @classmethod

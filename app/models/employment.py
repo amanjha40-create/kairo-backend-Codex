@@ -33,6 +33,10 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
             "end_date IS NULL OR start_date <= end_date",
             name="ck_employments_start_before_end",
         ),
+        CheckConstraint(
+            "work_arrangement IS NULL OR work_arrangement IN ('onsite', 'hybrid', 'remote')",
+            name="ck_employments_work_arrangement",
+        ),
     )
 
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
@@ -61,8 +65,10 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     # Imported resume claims may omit dates; candidates can complete drafts in Career.
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    work_location_city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     work_location_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     work_location_region: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    work_arrangement: Mapped[str | None] = mapped_column(String(16), nullable=True)
     verification_method: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

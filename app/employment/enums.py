@@ -54,6 +54,14 @@ class EmploymentType(StrEnum):
     OTHER = "other"
 
 
+class WorkArrangement(StrEnum):
+    """Where an employment role is performed."""
+
+    ONSITE = "onsite"
+    HYBRID = "hybrid"
+    REMOTE = "remote"
+
+
 class EmploymentDocumentType(StrEnum):
     """Expected evidence categories — drives reviewer UX and extraction pipelines."""
 
