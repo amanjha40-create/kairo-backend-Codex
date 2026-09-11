@@ -280,7 +280,12 @@ def _log_model_usage(payload: dict[str, Any], *, provider: str, model_id: str) -
         )
 
 
-def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> ParsedResumeResult:
+def _parse_model_json(
+    payload: dict[str, Any],
+    extracted_text: str = "",
+    *,
+    corroborating_skill_text: str = "",
+) -> ParsedResumeResult:
     text = payload.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Bedrock returned empty structured output")
@@ -288,7 +293,11 @@ def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> Pars
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`").removeprefix("json").strip()
     return ParsedResumeResult.model_validate(
-        normalize_extracted_payload(json.loads(cleaned), extracted_text)
+        normalize_extracted_payload(
+            json.loads(cleaned),
+            extracted_text,
+            corroborating_skill_text=corroborating_skill_text,
+        )
     )
 
 
@@ -344,7 +353,15 @@ class NovaResumeParser(ResumeParser):
             provider="nova",
             model_id=self._settings.bedrock_model_id,
         )
-        result = _parse_model_json(payload, sanitized_text)
+        result = _parse_model_json(
+            payload,
+            sanitized_text,
+            corroborating_skill_text=(
+                extracted_text.embedded_text
+                if isinstance(extracted_text, _PdfExtractedText)
+                else ""
+            ),
+        )
         if isinstance(extracted_text, _PdfExtractedText):
             result = ParsedResumeResult.model_validate(
                 reconcile_pdf_employment_dates(
@@ -396,7 +413,15 @@ class BedrockResumeParser(ResumeParser):
         if isinstance(payload, dict) and isinstance(payload.get("completion"), str):
             payload = json.loads(payload["completion"])
         result = ParsedResumeResult.model_validate(
-            normalize_extracted_payload(payload, sanitized_text)
+            normalize_extracted_payload(
+                payload,
+                sanitized_text,
+                corroborating_skill_text=(
+                    extracted_text.embedded_text
+                    if isinstance(extracted_text, _PdfExtractedText)
+                    else ""
+                ),
+            )
         )
         if isinstance(extracted_text, _PdfExtractedText):
             result = ParsedResumeResult.model_validate(

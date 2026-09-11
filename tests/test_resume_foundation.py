@@ -320,6 +320,36 @@ async def test_nova_parser_uses_embedded_pdf_text_only_for_post_parse_date_evide
     assert employment.is_current is True
 
 
+@pytest.mark.asyncio
+async def test_nova_parser_finalizes_skills_after_model_and_deterministic_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Body:
+        def read(self) -> bytes:
+            structured = {"skills": [{"name": "Spark"}, {"name": "SQL"}, {"name": "Python"}]}
+            return json.dumps(
+                {"output": {"message": {"content": [{"text": json.dumps(structured)}]}}}
+            ).encode()
+
+    class Client:
+        def invoke_model(self, **kwargs: object) -> dict[str, Body]:
+            return {"body": Body()}
+
+    monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: Client())
+    settings = SimpleNamespace(
+        aws_region="us-east-1", bedrock_model_id="us.amazon.nova-2-lite-v1:0"
+    )
+    evidence = _PdfExtractedText(
+        "SKILLS\nSpark SQL Python\n\nEDUCATION",
+        "SKILLS\nPython\x7fSpark\x7fSQL\n\nEDUCATION",
+    )
+
+    result = await NovaResumeParser(settings).parse(evidence)
+
+    assert [skill.name for skill in result.skills] == ["Spark", "SQL", "Python"]
+    assert "collapsed_explicit_skill_list_reconciled" in result.warnings
+
+
 def test_nova_parser_rejects_malformed_structured_output() -> None:
     payload = {"output": {"message": {"content": [{"text": "not-json"}]}}}
 
