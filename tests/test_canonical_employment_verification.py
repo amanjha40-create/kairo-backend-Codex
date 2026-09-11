@@ -138,7 +138,7 @@ async def test_education_draft_links_completed_owned_evidence() -> None:
     evidence_items = []
 
     class Educations:
-        async def get_owned(self, candidate_education_id, candidate_user_id):
+        async def get_owned_for_update(self, candidate_education_id, candidate_user_id):
             assert candidate_education_id == education_id
             assert candidate_user_id == actor_id
             return education
@@ -265,6 +265,7 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
     service._contacts = ContactRepository()
     service._workflow = Workflow()
     service._notifications = Notifications()
+    service._capture_claim_snapshot = AsyncMock()
 
     result = await service.submit_for_review(
         actor_id,
@@ -337,6 +338,7 @@ async def test_education_candidate_submission_requires_education_evidence() -> N
     service._workflow = Workflow()
     service._commit_reload_subject_response = commit_reload_subject_response
     service._notifications = Notifications()
+    service._capture_claim_snapshot = AsyncMock()
 
     result = await service.submit_for_review(
         actor_id,
@@ -455,6 +457,8 @@ async def test_org_projection_only_exposes_consented_claim_fields_and_evidence()
         consent_version="v1",
         consented_fields=["employment_dates"],
         consented_evidence_scope=["employment_letter"],
+        claim_snapshot={},
+        withdrawn_at=None,
         candidate_response=None,
         candidate_response_submitted_at=None,
         target_organization_metadata={},

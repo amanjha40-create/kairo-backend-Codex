@@ -46,6 +46,7 @@ class VerificationRequestWorkflowService:
             VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
             VerificationRequestStatus.REJECTED,
             VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
         },
         VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS: {
             VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
@@ -57,6 +58,7 @@ class VerificationRequestWorkflowService:
             VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION,
             VerificationRequestStatus.REJECTED,
             VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
         },
         VerificationRequestStatus.APPROVED_FOR_ORGANIZATION_VERIFICATION: {
             VerificationRequestStatus.PENDING_ORGANIZATION_RESOLUTION,
@@ -95,6 +97,7 @@ class VerificationRequestWorkflowService:
         VerificationRequestStatus.REJECTED: set(),
         VerificationRequestStatus.UNABLE_TO_VERIFY: set(),
         VerificationRequestStatus.CANCELLED: set(),
+        VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE: set(),
         VerificationRequestStatus.EXPIRED: set(),
     }
 

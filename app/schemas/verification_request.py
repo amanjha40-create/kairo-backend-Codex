@@ -274,6 +274,7 @@ class VerificationRequestResponse(BaseModel):
     consent_version: str | None = None
     consented_fields: list[str] = Field(default_factory=list)
     consented_evidence_scope: list[str] = Field(default_factory=list)
+    withdrawn_at: datetime | None = None
     target_organization_metadata: dict[str, Any] = Field(default_factory=dict)
     organization_summary: VerificationRequestOrganizationSummary | None = None
     verification_target: VerificationRequestTargetResponse | None = None

@@ -14,7 +14,10 @@ from app.admin_review.enums import (
 )
 from app.config import Settings, get_settings
 from app.education.enums import EducationVerificationStatus
-from app.employment.enums import DocumentVerificationStatus
+from app.employment.enums import (
+    DocumentVerificationStatus,
+    VerificationStatus as EmploymentVerificationStatus,
+)
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.models.organization_member import OrganizationMember
@@ -122,6 +125,11 @@ _ORGANIZATION_VISIBLE_STATUSES = {
     VerificationRequestStatus.AWAITING_INFORMATION,
 }
 
+_CANDIDATE_WITHDRAWABLE_STATUSES = {
+    VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+    VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+}
+
 
 class VerificationRequestService:
     """Canonical request management and authorization for verification workflows."""
@@ -165,7 +173,7 @@ class VerificationRequestService:
         employment_id: UUID,
         payload: EmploymentVerificationDraftRequest,
     ) -> VerificationRequestResponse:
-        employment = await self._employments.get_owned_active(employment_id, actor_user_id)
+        employment = await self._employments.get_owned_active_for_update(employment_id, actor_user_id)
         if employment is None:
             raise NotFoundError("Employment not found")
         existing = await self._requests.get_active_for_employment(employment_id)
@@ -255,7 +263,7 @@ class VerificationRequestService:
             employment_id=employment_id,
             subject_user_id=actor_user_id,
         )
-        if request is None:
+        if request is None or request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE:
             raise NotFoundError("Employment verification request not found")
         return await self._to_subject_response(request)
 
@@ -265,7 +273,7 @@ class VerificationRequestService:
         education_id: UUID,
         payload: EducationVerificationDraftRequest,
     ) -> VerificationRequestResponse:
-        education = await self._educations.get_owned(education_id, actor_user_id)
+        education = await self._educations.get_owned_for_update(education_id, actor_user_id)
         if education is None:
             raise NotFoundError("Education not found")
         existing = await self._requests.get_active_for_education(education_id)
@@ -352,7 +360,7 @@ class VerificationRequestService:
             education_id=education_id,
             subject_user_id=actor_user_id,
         )
-        if request is None:
+        if request is None or request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE:
             raise NotFoundError("Education verification request not found")
         return await self._to_subject_response(request)
 
@@ -862,6 +870,7 @@ class VerificationRequestService:
         submitted_at = datetime.now(tz=UTC)
         request.submitted_for_admin_review_at = submitted_at
         self._apply_submission_consent(request, payload, submitted_at)
+        await self._capture_claim_snapshot(request)
         await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
@@ -925,6 +934,44 @@ class VerificationRequestService:
             event_type="verification_request_resubmitted",
             event_source=VerificationRequestEventSource.CANDIDATE,
             metadata={"resolved_correction_count": len(corrections)},
+        )
+        return await self._commit_reload_subject_response(request.public_id)
+
+    async def withdraw_by_candidate(
+        self,
+        actor_user_id: UUID,
+        actor_email: str,
+        verification_request_public_id: UUID,
+    ) -> VerificationRequestResponse:
+        request = await self._requests.get_by_public_id_for_update(verification_request_public_id)
+        if request is None or request.subject_user_id != actor_user_id:
+            raise NotFoundError("Verification request not found")
+        if not self._is_subject_actor(request, actor_user_id, actor_email):
+            raise NotFoundError("Verification request not found")
+        if request.status == VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE:
+            return await self._to_subject_response(request)
+        if (
+            request.status not in _CANDIDATE_WITHDRAWABLE_STATUSES
+            or request.approved_for_organization_verification_at is not None
+            or request.organization_outreach_sent_at is not None
+        ):
+            raise ConflictError(
+                "This request can no longer be withdrawn because verification processing has already progressed."
+            )
+
+        withdrawn_at = datetime.now(tz=UTC)
+        request.withdrawn_at = withdrawn_at
+        request.withdrawn_by_user_id = actor_user_id
+        if not request.claim_snapshot:
+            await self._capture_claim_snapshot(request)
+        await self._release_candidate_edit_lock(request, actor_user_id)
+        await self._workflow.transition(
+            request,
+            target_status=VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+            actor_user_id=actor_user_id,
+            event_type="verification_request_withdrawn_by_candidate",
+            event_source=VerificationRequestEventSource.CANDIDATE,
+            metadata={"withdrawn_at": withdrawn_at.isoformat()},
         )
         return await self._commit_reload_subject_response(request.public_id)
 
@@ -1475,6 +1522,33 @@ class VerificationRequestService:
             raise NotFoundError("Verification request not found")
         return request
 
+    async def _release_candidate_edit_lock(
+        self,
+        request: VerificationRequest,
+        actor_user_id: UUID,
+    ) -> None:
+        if request.employment_id is not None:
+            employment = await self._employments.get_owned_active_for_update(
+                request.employment_id,
+                actor_user_id,
+            )
+            if employment is not None and employment.verification_status in {
+                EmploymentVerificationStatus.SUBMITTED.value,
+                EmploymentVerificationStatus.UNDER_REVIEW.value,
+            }:
+                employment.verification_status = EmploymentVerificationStatus.DRAFT.value
+        if request.education_id is not None:
+            education = await self._educations.get_owned_for_update(
+                request.education_id,
+                actor_user_id,
+            )
+            if education is not None and education.verification_status in {
+                EducationVerificationStatus.PENDING.value,
+                EducationVerificationStatus.SUBMITTED.value,
+                EducationVerificationStatus.UNDER_REVIEW.value,
+            }:
+                education.verification_status = EducationVerificationStatus.DRAFT.value
+
     async def _validate_employment_document_evidence(
         self,
         request: VerificationRequest,
@@ -1630,6 +1704,7 @@ class VerificationRequestService:
             consent_version=request.consent_version,
             consented_fields=list(request.consented_fields or []),
             consented_evidence_scope=list(request.consented_evidence_scope or []),
+            withdrawn_at=request.withdrawn_at,
             candidate_response=request.candidate_response,
             candidate_response_submitted_at=request.candidate_response_submitted_at,
             target_organization_metadata=dict(request.target_organization_metadata or {}),
@@ -1652,11 +1727,13 @@ class VerificationRequestService:
             employment_claim=(
                 self._build_employment_claim_response(request, employment, apply_consent_filter)
                 if employment is not None
+                or (request.claim_snapshot or {}).get("request_type") == "employment"
                 else None
             ),
             education_claim=(
                 self._build_education_claim_response(request, education, apply_consent_filter)
                 if education is not None
+                or (request.claim_snapshot or {}).get("request_type") == "education"
                 else None
             ),
             evidence_summary=VerificationRequestEvidenceSummaryResponse(
@@ -1703,6 +1780,43 @@ class VerificationRequestService:
         request.consented_at = consented_at
         request.consent_version = payload.consent_version
 
+    async def _capture_claim_snapshot(self, request: VerificationRequest) -> None:
+        if request.employment_id is not None:
+            employment = await self._employments.get_active_by_id(request.employment_id)
+            if employment is None:
+                raise ConflictError(
+                    "Employment verification request is not linked to an active employment"
+                )
+            request.claim_snapshot = {
+                "request_type": VerificationRequestType.EMPLOYMENT.value,
+                "employer_name": employment.employer_legal_name,
+                "role": employment.job_title,
+                "start_date": employment.start_date.isoformat() if employment.start_date else None,
+                "end_date": employment.end_date.isoformat() if employment.end_date else None,
+                "employment_type": employment.employment_type,
+                "work_location_country": employment.work_location_country,
+                "work_location_region": employment.work_location_region,
+            }
+            return
+        if request.education_id is not None:
+            education = await self._educations.get_active_by_id(request.education_id)
+            if education is None:
+                raise ConflictError(
+                    "Education verification request is not linked to an active education record"
+                )
+            request.claim_snapshot = {
+                "request_type": VerificationRequestType.EDUCATION.value,
+                "institution_name": education.institution_name,
+                "degree": education.degree,
+                "field_of_study": education.field_of_study,
+                "start_date": education.start_date.isoformat() if education.start_date else None,
+                "end_date": education.end_date.isoformat() if education.end_date else None,
+            }
+
+    @staticmethod
+    def _snapshot_value(snapshot: dict, key: str, fallback):  # noqa: ANN001, ANN205
+        return snapshot[key] if key in snapshot else fallback
+
     @staticmethod
     def _expand_consented_fields(consented_fields: list[str], mapping: dict[str, set[str]]) -> set[str]:
         raw = {value.strip() for value in consented_fields if value and value.strip()}
@@ -1725,14 +1839,43 @@ class VerificationRequestService:
         )
         if apply_consent_filter and not allowed:
             return VerificationRequestEmploymentClaimResponse()
+        snapshot = request.claim_snapshot or {}
         return VerificationRequestEmploymentClaimResponse(
-            employer_name=employment.employer_legal_name if "employment.employer_name" in allowed else None,
-            role=employment.job_title if "employment.role" in allowed else None,
-            start_date=employment.start_date if "employment.start_date" in allowed else None,
-            end_date=employment.end_date if "employment.end_date" in allowed else None,
-            employment_type=employment.employment_type if "employment.employment_type" in allowed else None,
-            work_location_country=employment.work_location_country if "employment.work_location_country" in allowed else None,
-            work_location_region=employment.work_location_region if "employment.work_location_region" in allowed else None,
+            employer_name=self._snapshot_value(
+                snapshot, "employer_name", getattr(employment, "employer_legal_name", None)
+            )
+            if "employment.employer_name" in allowed
+            else None,
+            role=self._snapshot_value(snapshot, "role", getattr(employment, "job_title", None))
+            if "employment.role" in allowed
+            else None,
+            start_date=self._snapshot_value(
+                snapshot, "start_date", getattr(employment, "start_date", None)
+            )
+            if "employment.start_date" in allowed
+            else None,
+            end_date=self._snapshot_value(
+                snapshot, "end_date", getattr(employment, "end_date", None)
+            )
+            if "employment.end_date" in allowed
+            else None,
+            employment_type=self._snapshot_value(
+                snapshot, "employment_type", getattr(employment, "employment_type", None)
+            )
+            if "employment.employment_type" in allowed
+            else None,
+            work_location_country=self._snapshot_value(
+                snapshot,
+                "work_location_country",
+                getattr(employment, "work_location_country", None),
+            )
+            if "employment.work_location_country" in allowed
+            else None,
+            work_location_region=self._snapshot_value(
+                snapshot, "work_location_region", getattr(employment, "work_location_region", None)
+            )
+            if "employment.work_location_region" in allowed
+            else None,
         )
 
     def _build_education_claim_response(
@@ -1748,12 +1891,31 @@ class VerificationRequestService:
         )
         if apply_consent_filter and not allowed:
             return VerificationRequestEducationClaimResponse()
+        snapshot = request.claim_snapshot or {}
         return VerificationRequestEducationClaimResponse(
-            institution_name=education.institution_name if "education.institution_name" in allowed else None,
-            degree=education.degree if "education.degree" in allowed else None,
-            field_of_study=education.field_of_study if "education.field_of_study" in allowed else None,
-            start_date=education.start_date if "education.start_date" in allowed else None,
-            end_date=education.end_date if "education.end_date" in allowed else None,
+            institution_name=self._snapshot_value(
+                snapshot, "institution_name", getattr(education, "institution_name", None)
+            )
+            if "education.institution_name" in allowed
+            else None,
+            degree=self._snapshot_value(snapshot, "degree", getattr(education, "degree", None))
+            if "education.degree" in allowed
+            else None,
+            field_of_study=self._snapshot_value(
+                snapshot, "field_of_study", getattr(education, "field_of_study", None)
+            )
+            if "education.field_of_study" in allowed
+            else None,
+            start_date=self._snapshot_value(
+                snapshot, "start_date", getattr(education, "start_date", None)
+            )
+            if "education.start_date" in allowed
+            else None,
+            end_date=self._snapshot_value(
+                snapshot, "end_date", getattr(education, "end_date", None)
+            )
+            if "education.end_date" in allowed
+            else None,
         )
 
     def _filter_evidence_by_consent(
@@ -1878,6 +2040,7 @@ class VerificationRequestService:
             VerificationRequestStatus.VERIFIED,
             VerificationRequestStatus.REJECTED,
             VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
             VerificationRequestStatus.EXPIRED,
         }:
             return "completed"

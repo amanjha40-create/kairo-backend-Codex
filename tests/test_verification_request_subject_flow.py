@@ -142,6 +142,11 @@ class FakeSubjectVerificationRequestService:
             raise ConflictError("There are no open correction requests to resolve")
         return self._request_response(status=VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW)
 
+    async def withdraw_by_candidate(
+        self, actor_user_id, actor_email, verification_request_public_id
+    ):  # noqa: ANN001
+        return self._request_response(status=VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE)
+
     async def get_detail(self, actor_user_id, actor_email, verification_request_public_id):  # noqa: ANN001
         return self._request_response()
 
@@ -345,3 +350,18 @@ async def test_resubmit_request() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "pending_admin_re_review"
+
+
+@pytest.mark.asyncio
+async def test_candidate_can_withdraw_owned_pending_request() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_verification_request_service] = lambda: FakeSubjectVerificationRequestService()
+
+    transport = ASGITransport(app=app)
+    request_public_id = uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(f"/api/v1/verification-requests/{request_public_id}/withdraw")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "withdrawn_by_candidate"

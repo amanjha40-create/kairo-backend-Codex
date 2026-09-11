@@ -26,6 +26,7 @@ _TERMINAL_STATUSES = (
     "rejected",
     "unable_to_verify",
     "cancelled",
+    "withdrawn_by_candidate",
     "expired",
 )
 
