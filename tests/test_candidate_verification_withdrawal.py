@@ -327,3 +327,12 @@ def test_withdrawal_workflow_and_migration_contracts() -> None:
     assert 'down_revision = "074"' in migration
     assert "withdrawn_by_candidate" in migration
     assert "claim_snapshot" in migration
+
+    active_index_migration = Path(
+        "alembic/versions/076_withdrawn_request_active_index.py"
+    ).read_text()
+    assert 'revision = "076"' in active_index_migration
+    assert 'down_revision = "075"' in active_index_migration
+    assert "uq_verification_requests_active_employment" in active_index_migration
+    assert "withdrawn_by_candidate" in active_index_migration
+    assert "unable_to_verify" in active_index_migration
