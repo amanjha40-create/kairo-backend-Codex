@@ -15,10 +15,6 @@ def required_claim_blockers(claim_type: str, payload: dict[str, Any]) -> list[st
     blockers = [
         f"missing_{field}" for field in required.get(claim_type, ()) if not payload.get(field)
     ]
-    if claim_type == "education" and not any(
-        payload.get(field) for field in ("degree", "field_of_study")
-    ):
-        blockers.append("missing_education_qualification")
     if claim_type == "internship" and not any(
         payload.get(field) for field in ("company_name", "role")
     ):

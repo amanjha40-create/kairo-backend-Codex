@@ -268,6 +268,17 @@ class ResumeReviewService:
                 item.claim_type,
                 item.edited_payload,
             )
+            importability_warnings = self._completion_warnings(
+                item.claim_type,
+                item.edited_payload,
+            )
+            unusable_reasons = (
+                self._required_blockers(item.claim_type, item.edited_payload)
+                if item.import_action == "create_new"
+                else []
+            )
+            if unusable_reasons:
+                importability_warnings = ["unusable_record", *unusable_reasons]
             # Unsupported claims can remain in a review session as candidate-owned
             # provenance. They are only a blocker when someone attempts to import
             # them instead of leaving them excluded from the import action.
@@ -296,7 +307,7 @@ class ResumeReviewService:
                 fields_to_create=sorted(key for key, value in item.edited_payload.items() if key not in {"claim_type", "location"} and value is not None),
                 fields_ignored=self._ignored_fields(item.claim_type, item.edited_payload),
                 blockers=sorted(set(blockers)),
-                warnings=item.conflict_warnings,
+                warnings=sorted(set([*item.conflict_warnings, *importability_warnings])),
                 verified_record_protected=verified_protected,
             ))
         if not plans:
@@ -321,6 +332,14 @@ class ResumeReviewService:
         if action == "skip":
             item.review_status = "skipped"
             return "skipped", None, None, []
+        unusable_reasons = (
+            self._required_blockers(item.claim_type, item.edited_payload)
+            if action == "create_new"
+            else []
+        )
+        if unusable_reasons:
+            item.review_status = "skipped"
+            return "skipped", item.claim_type, None, ["unusable_record", *unusable_reasons]
         if action == "link_existing":
             record = await self._target(user_id, item.claim_type, item.target_record_id)
             await self._add_provenance(user_id, review, batch, item, item.claim_type, record.id, now)
@@ -367,13 +386,15 @@ class ResumeReviewService:
                 ),
                 start_date=self._employment_contract_date(p, "start_date"),
                 end_date=self._employment_contract_date(p, "end_date", is_end=True),
-                work_location_country=location.get("country", "").upper() or None,
+                work_location_city=location.get("city"),
+                work_location_country=self._employment_country_code(location.get("country")),
                 work_location_region=location.get("region"),
+                work_arrangement=p.get("work_arrangement"),
                 verification_method=VerificationMethod.DOCUMENT.value,
                 verification_status=VerificationStatus.DRAFT.value,
             )
         if claim_type == "education":
-            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree") or p.get("field_of_study"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), start_date_precision=p.get("start_date_precision"), end_date=p.get("end_date"), end_date_precision=p.get("end_date_precision"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
+            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), start_date_precision=p.get("start_date_precision"), end_date=p.get("end_date"), end_date_precision=p.get("end_date_precision"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
             return Internship(user_id=user_id, company_name=p.get("company_name"), role=p.get("role"), description=p.get("description"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), is_paid=False, stipend_currency="INR", verification_status="pending")
         if claim_type == "freelance":
@@ -393,7 +414,7 @@ class ResumeReviewService:
 
     def _apply_update(self, record: Any, claim_type: str, p: dict[str, Any]) -> None:
         mappings = {
-            "employment": {"company_name": "employer_legal_name", "role_title": "job_title", "start_date": "start_date", "end_date": "end_date", "employment_type": "employment_type"},
+            "employment": {"company_name": "employer_legal_name", "role_title": "job_title", "start_date": "start_date", "end_date": "end_date", "employment_type": "employment_type", "work_arrangement": "work_arrangement"},
             "education": {"institution_name": "institution_name", "degree": "degree", "field_of_study": "field_of_study", "education_level": "education_level", "grade": "grade", "start_date": "start_date", "start_date_precision": "start_date_precision", "end_date": "end_date", "end_date_precision": "end_date_precision"},
             "internship": {"company_name": "company_name", "role": "role", "description": "description", "start_date": "start_date", "end_date": "end_date"},
             "freelance": {"client_name": "client_name", "project_title": "project_title", "description": "description", "start_date": "start_date", "end_date": "end_date"},
@@ -413,6 +434,13 @@ class ResumeReviewService:
             p = dict(p)
             p["start_date"] = self._employment_contract_date(p, "start_date")
             p["end_date"] = self._employment_contract_date(p, "end_date", is_end=True)
+            if "location" in p:
+                location = p.pop("location") or {}
+                record.work_location_city = location.get("city")
+                record.work_location_country = self._employment_country_code(
+                    location.get("country")
+                )
+                record.work_location_region = location.get("region")
         for source, target in mappings[claim_type].items():
             if source in p:
                 value = p[source]
@@ -467,11 +495,7 @@ class ResumeReviewService:
 
     @staticmethod
     def _item_response(item: ResumeReviewItem) -> ReviewItemResponse:
-        response = ReviewItemResponse.model_validate(item)
-        if response.claim_type == "employment":
-            response.original_payload.pop("location", None)
-            response.edited_payload.pop("location", None)
-        return response
+        return ReviewItemResponse.model_validate(item)
 
     async def _batch_response(self, batch: ResumeImportBatch) -> ImportBatchResponse:
         batch = await self.session.scalar(select(ResumeImportBatch).where(ResumeImportBatch.id == batch.id))
@@ -508,8 +532,6 @@ class ResumeReviewService:
     def _review_payload(claim_type: str, raw: dict[str, Any]) -> dict[str, Any]:
         metadata = {"source_type", "source_text_reference", "confidence", "warnings", "selected_for_import"}
         value = {key: val for key, val in raw.items() if key not in metadata}
-        if claim_type == "employment":
-            value.pop("location", None)
         if claim_type == "profile" and value.get("professional_headline"):
             value["professional_headline"] = value["professional_headline"][:255]
         value["claim_type"] = claim_type
@@ -554,7 +576,11 @@ class ResumeReviewService:
             ):
                 missing.append("missing_end_date")
         if claim_type == "education":
-            missing.extend(field for field in ("education_level",) if not payload.get(field))
+            missing.extend(
+                field
+                for field in ("degree", "field_of_study", "education_level")
+                if not payload.get(field)
+            )
         if claim_type == "certification" and not payload.get("issued_date"):
             missing.append("missing_issued_date")
         if claim_type == "portfolio" and not payload.get("url"):
@@ -585,7 +611,8 @@ class ResumeReviewService:
         claim_type: str,
         payload: dict[str, Any],
     ) -> list[str]:
-        return cls._required_blockers(claim_type, payload) if action == "create_new" else []
+        # Structurally unusable create-new items are skipped independently during import.
+        return []
 
     @staticmethod
     def _target_model(claim_type: str) -> tuple[Any, str]:
@@ -610,13 +637,13 @@ class ResumeReviewService:
 
     @staticmethod
     def _mapping_warnings(claim_type: str, payload: dict[str, Any]) -> list[str]:
-        return ["work_arrangement_not_persisted"] if claim_type == "employment" and payload.get("work_arrangement") else []
+        return []
 
     @staticmethod
     def _ignored_fields(claim_type: str, payload: dict[str, Any]) -> list[str]:
         ignored: list[str] = []
         if claim_type == "employment":
-            ignored.extend(field for field in ("work_arrangement", "description", "location") if payload.get(field) is not None)
+            ignored.extend(field for field in ("description",) if payload.get(field) is not None)
         if claim_type == "profile" and payload.get("profile_links"):
             ignored.append("profile_links")
         return ignored
@@ -624,6 +651,24 @@ class ResumeReviewService:
     @staticmethod
     def _location_text(location: dict[str, Any]) -> str:
         return ", ".join(value for value in (location.get("city"), location.get("region"), location.get("country")) if value)
+
+    @staticmethod
+    def _employment_country_code(value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = value.strip()
+        if len(normalized) == 2 and normalized.isalpha():
+            return normalized.upper()
+        aliases = {
+            "india": "IN",
+            "united states": "US",
+            "united states of america": "US",
+            "united kingdom": "GB",
+            "great britain": "GB",
+            "uae": "AE",
+            "united arab emirates": "AE",
+        }
+        return aliases.get(normalized.casefold())
 
     @staticmethod
     def _check_version(actual: int, expected: int) -> None:

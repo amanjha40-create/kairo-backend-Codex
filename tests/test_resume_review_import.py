@@ -176,7 +176,46 @@ def test_incomplete_resume_claims_remain_importable_for_career_completion() -> N
     assert service._completion_warnings("education", {
         "institution_name": "Synthetic Institute", "degree": "Synthetic Degree",
         "education_level": None, "start_date": None,
-    }) == ["needs_completion_in_career", "missing_start_date", "missing_end_date", "education_level"]
+    }) == [
+        "needs_completion_in_career",
+        "missing_start_date",
+        "missing_end_date",
+        "field_of_study",
+        "education_level",
+    ]
+
+
+@pytest.mark.parametrize(
+    "education",
+    [
+        {"institution_name": "Synthetic Institute", "field_of_study": "Economics"},
+        {"institution_name": "Synthetic Institute", "degree": "Bachelor of Arts"},
+        {"institution_name": "Synthetic Institute"},
+    ],
+)
+def test_missing_education_qualification_fields_require_career_completion_not_blocking(
+    education: dict[str, str],
+) -> None:
+    service = ResumeReviewService(SimpleNamespace())
+
+    assert service._required_blockers("education", education) == []
+    warnings = service._completion_warnings("education", education)
+    assert warnings[0] == "needs_completion_in_career"
+    assert "degree" in warnings or "field_of_study" in warnings
+
+
+def test_missing_claim_identity_is_unusable_but_not_a_plan_wide_blocker() -> None:
+    service = ResumeReviewService(SimpleNamespace())
+
+    assert service._required_blockers("education", {"degree": "Bachelor of Arts"}) == [
+        "missing_institution_name"
+    ]
+    assert service._required_blockers("employment", {"role_title": "Engineer"}) == [
+        "missing_company_name"
+    ]
+    assert service._action_blockers(
+        "create_new", "education", {"degree": "Bachelor of Arts"}
+    ) == []
 
 
 def test_incomplete_employment_is_importable_and_marked_for_career_completion() -> None:
@@ -646,7 +685,12 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                     "employment_type": "full_time",
                     "start_date": "2024-01-01",
                     "is_current": True,
-                    "location": {"country": "IN"},
+                    "work_arrangement": "hybrid",
+                    "location": {
+                        "city": "Mumbai",
+                        "region": "Maharashtra",
+                        "country": "India",
+                    },
                 }],
                 "education": [{
                     "institution_name": "Synthetic University",
@@ -655,6 +699,12 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                     "start_date_precision": "year",
                     "end_date_display": "2019",
                     "end_date_precision": "year",
+                    "is_current": False,
+                }, {
+                    "institution_name": None,
+                    "degree": "Unusable Degree",
+                    "start_date_display": "2020",
+                    "end_date_display": "2022",
                     "is_current": False,
                 }],
             },
@@ -666,7 +716,7 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         service = ResumeReviewService(session)
         review = await service.create(user.id, document.id)
         assert review.status == "draft"
-        assert len(review.items) == 2
+        assert len(review.items) == 3
         unedited_education = next(item for item in review.items if item.claim_type == "education")
         assert unedited_education.edited_payload["start_date"] == "2015-01-01"
         assert unedited_education.edited_payload["start_date_precision"] == "year"
@@ -675,19 +725,46 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert unedited_education.edited_payload["is_current"] is False
         plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
         assert plan.ready
-        assert [item.claim_type for item in plan.items] == ["employment", "education"]
+        assert [item.claim_type for item in plan.items] == [
+            "employment",
+            "education",
+            "education",
+        ]
+        unusable_plan_item = next(
+            item for item in plan.items if "unusable_record" in item.warnings
+        )
+        assert unusable_plan_item.blockers == []
+        assert "missing_institution_name" in unusable_plan_item.warnings
         request = ReviewImportRequest(expected_version=plan.version, idempotency_key="synthetic-confirmed-import", confirmed=True)
         first = await service.import_review(user.id, review.id, request)
         second = await service.import_review(user.id, review.id, request)
         assert first.id == second.id
         assert first.status == "completed"
         assert first.imported_count == 2
-        result_ids = {result.record_type: result.record_id for result in first.results}
-        employment_id = result_ids["employment"]
-        education_id = result_ids["education"]
+        assert first.skipped_count == 1
+        assert first.failed_count == 0
+        assert first.incomplete_count == 1
+        skipped = next(result for result in first.results if result.outcome == "skipped")
+        assert skipped.record_type == "education"
+        assert skipped.record_id is None
+        assert skipped.warnings == ["unusable_record", "missing_institution_name"]
+        employment_id = next(
+            result.record_id
+            for result in first.results
+            if result.record_type == "employment" and result.outcome == "imported"
+        )
+        education_id = next(
+            result.record_id
+            for result in first.results
+            if result.record_type == "education" and result.outcome == "imported"
+        )
         employment = await session.get(Employment, employment_id)
         education = await session.get(Education, education_id)
         assert employment.verification_status == "draft"
+        assert employment.work_location_city == "Mumbai"
+        assert employment.work_location_region == "Maharashtra"
+        assert employment.work_location_country == "IN"
+        assert employment.work_arrangement == "hybrid"
         assert education is not None
         assert education.verification_status == "draft"
         assert education.start_date == date(2015, 1, 1)
