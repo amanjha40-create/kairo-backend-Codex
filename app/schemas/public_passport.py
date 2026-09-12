@@ -41,7 +41,7 @@ class PublicPassportEmployment(BaseModel):
 class PublicPassportEducation(BaseModel):
     id: uuid.UUID
     institution_name: str
-    degree: str
+    degree: str | None
     field_of_study: str | None
     education_level: str | None
     grade: str | None

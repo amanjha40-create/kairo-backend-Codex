@@ -89,7 +89,7 @@ class FakePassportEngineService:
                     PublicPassportEducation(
                         id=uuid4(),
                         institution_name="Example University",
-                        degree="B.Tech",
+                        degree=None,
                         field_of_study="CS",
                         education_level="bachelors",
                         grade=None,
@@ -225,6 +225,7 @@ async def test_get_my_passport_returns_canonical_owner_payload() -> None:
     assert body["sharing_summary"]["total_links"] == 2
     assert body["verification_summary"]["overall"]["total"] == 8
     education = body["vault"]["educations"][0]
+    assert education["degree"] is None
     assert education["start_date"] == "2015-01-01"
     assert education["start_date_precision"] == "year"
     assert education["end_date"] == "2019-12-31"

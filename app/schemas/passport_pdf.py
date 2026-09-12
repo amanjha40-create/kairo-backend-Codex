@@ -34,7 +34,7 @@ class PassportPDFEmployment(BaseModel):
 
 class PassportPDFEducation(BaseModel):
     institution_name: str
-    degree: str
+    degree: str | None
     field_of_study: str | None
     start_date: date | None
     end_date: date | None

@@ -391,7 +391,7 @@ def _employment_story(item: PassportPDFEmployment, styles) -> list:  # noqa: ANN
 
 
 def _education_story(item: PassportPDFEducation, styles) -> list:  # noqa: ANN001
-    degree = " - ".join(part for part in (item.degree, item.field_of_study) if part)
+    degree = " - ".join(part for part in (item.degree, item.field_of_study) if part) or "Education"
     return _record_story(
         degree,
         item.institution_name,
