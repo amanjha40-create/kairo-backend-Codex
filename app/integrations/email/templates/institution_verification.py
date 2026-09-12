@@ -43,7 +43,7 @@ def render_institution_verification(
             )
             + (
                 f'<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
-                f"Kairo has asked your institution to review an education claim for "
+                f"KairoID has asked your institution to review an education claim for "
                 f"<strong>{safe_subject}</strong>.</p>"
             )
             + (
@@ -65,13 +65,13 @@ def render_institution_verification(
             + (
                 '<p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#697572;">'
                 "If you did not expect this request, do not open the link and contact "
-                "Kairo support.</p>"
+                "KairoID support.</p>"
             )
         ),
     )
     text_body = with_text_footer(
         f"Hello {context.contact_name},\n\n"
-        f"Kairo has asked your institution to review an education claim for "
+        f"KairoID has asked your institution to review an education claim for "
         f"{context.subject_name}.\n"
         f"Institution: {context.institution_name}\n"
         f"Degree: {context.degree}\n"
@@ -79,10 +79,10 @@ def render_institution_verification(
         f"Review and respond: {context.review_url}\n\n"
         f"This secure link expires in {context.expires_hours} hours. "
         "Do not forward or share it.\n\n"
-        "If you did not expect this request, do not open the link and contact Kairo support."
+        "If you did not expect this request, do not open the link and contact KairoID support."
     )
     return TransactionalEmailContent(
-        subject="Kairo — education verification request",
+        subject="KairoID — education verification request",
         html_body=html_body,
         text_body=text_body,
     )

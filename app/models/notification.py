@@ -27,7 +27,7 @@ class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     notification_type: Mapped[str] = mapped_column(String(64), nullable=False)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     category: Mapped[str] = mapped_column(String(32), nullable=False, default="system", server_default="system", index=True)
-    title: Mapped[str] = mapped_column(String(160), nullable=False, default="Kairo notification", server_default="Kairo notification")
+    title: Mapped[str] = mapped_column(String(160), nullable=False, default="KairoID notification", server_default="KairoID notification")
     body: Mapped[str] = mapped_column(String(500), nullable=False, default="You have a new notification.", server_default="You have a new notification.")
     dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
     priority: Mapped[str] = mapped_column(String(32), nullable=False, default="normal", server_default="normal")

@@ -15,7 +15,7 @@ def test_render_trust_invitation_template() -> None:
         template_key=EmailTemplateKey.TRUST_INVITATION.value,
         to_email="aman3@test.com",
         data={
-            "organization_name": "Kairo Labs",
+            "organization_name": "KairoID Labs",
             "subject_name": "Aman Jha",
             "invitation_url": "https://example.com/invite/token",
             "expires_at_iso": "2026-07-10T12:00:00+00:00",
@@ -25,10 +25,14 @@ def test_render_trust_invitation_template() -> None:
     assert message.template_key == EmailTemplateKey.TRUST_INVITATION.value
     assert message.template_version == DEFAULT_TEMPLATE_VERSION
     assert message.to_email == "aman3@test.com"
-    assert "Kairo Labs" in message.subject
+    assert "KairoID Labs" in message.subject
     assert "Open your invitation" in message.text_body
     assert "invitation_url" not in message.audit_payload
-    assert message.audit_payload["organization_name"] == "Kairo Labs"
+    assert message.audit_payload["organization_name"] == "KairoID Labs"
+    assert "KairoID" in message.html_body
+    assert "Verify once. Trusted everywhere." in message.text_body
+    assert "contact@kairoid.com" in message.text_body
+    assert "support@kairoid.com" not in message.text_body
 
 
 def test_render_admin_invitation_keeps_tokenized_url_out_of_audit_payload() -> None:
@@ -63,7 +67,7 @@ def test_render_institution_verification_keeps_review_url_out_of_audit_payload()
         data={
             "contact_name": "Registrar",
             "subject_name": "Candidate",
-            "institution_name": "Kairo University",
+            "institution_name": "KairoID University",
             "degree": "BSc",
             "programme": "Computer Science",
             "review_url": review_url,
@@ -130,7 +134,7 @@ def test_render_password_reset_keeps_reset_url_out_of_audit_payload() -> None:
             {
                 "contact_name": "Registrar",
                 "subject_name": "Candidate",
-                "institution_name": "Kairo University",
+                "institution_name": "KairoID University",
                 "degree": "BSc",
                 "programme": "Computer Science",
                 "review_url": "https://institution.example.com/institution/verify/token",

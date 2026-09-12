@@ -49,8 +49,8 @@ class FakeTrustRegistryService:
         return TrustRegistryRecordResponse(
             public_id=self._record_public_id,
             registry_code="KR-EMP-ABC12345",
-            legal_name="Kairo Labs Pvt Ltd",
-            display_name="Kairo Labs",
+            legal_name="KairoID Labs Pvt Ltd",
+            display_name="KairoID Labs",
             organization_type="employer",
             country="IN",
             state_province="DL",
@@ -101,7 +101,7 @@ class FakeTrustRegistryService:
             aliases=[
                 TrustRegistryAliasResponse(
                     public_id=self._alias_public_id,
-                    alias_name="Kairo Labs",
+                    alias_name="KairoID Labs",
                     alias_type="brand_name",
                     source_type="manual",
                     source_metadata={},
@@ -238,8 +238,8 @@ class FakeTrustRegistrySearchService:
         self._record = TrustRegistryRecordResponse(
             public_id=uuid4(),
             registry_code="KR-EMP-ABC12345",
-            legal_name="Kairo Labs Pvt Ltd",
-            display_name="Kairo Labs",
+            legal_name="KairoID Labs Pvt Ltd",
+            display_name="KairoID Labs",
             organization_type="employer",
             country="IN",
             state_province="DL",
@@ -382,8 +382,8 @@ async def test_create_trust_registry_record_returns_created_payload() -> None:
         response = await client.post(
             "/api/v1/admin/trust-registry",
             json={
-                "legal_name": "Kairo Labs Pvt Ltd",
-                "display_name": "Kairo Labs",
+                "legal_name": "KairoID Labs Pvt Ltd",
+                "display_name": "KairoID Labs",
                 "organization_type": "employer",
                 "country": "IN",
                 "state_province": "DL",
@@ -414,8 +414,8 @@ async def test_registry_manage_routes_require_user_manager_permission() -> None:
         create_response = await client.post(
             "/api/v1/admin/trust-registry",
             json={
-                "legal_name": "Kairo Labs Pvt Ltd",
-                "display_name": "Kairo Labs",
+                "legal_name": "KairoID Labs Pvt Ltd",
+                "display_name": "KairoID Labs",
                 "organization_type": "employer",
                 "country": "IN",
                 "state_province": "DL",
@@ -462,7 +462,7 @@ async def test_add_registry_metadata_endpoints_return_created_resources() -> Non
         alias_response = await client.post(
             f"/api/v1/admin/trust-registry/{registry_public_id}/aliases",
             json={
-                "alias_name": "Kairo Labs",
+                "alias_name": "KairoID Labs",
                 "alias_type": "brand_name",
                 "source_type": "manual",
                 "source_metadata": {},
@@ -529,7 +529,7 @@ async def test_search_and_lookup_routes_return_expected_shapes() -> None:
             "/api/v1/internal/trust-registry/lookup-by-identifier?identifier_type=gst&identifier_value=29ABCDE1234F2Z5"
         )
         name_response = await client.get(
-            "/api/v1/internal/trust-registry/lookup-by-name?name=Kairo Labs"
+            "/api/v1/internal/trust-registry/lookup-by-name?name=KairoID Labs"
         )
 
     app.dependency_overrides.clear()

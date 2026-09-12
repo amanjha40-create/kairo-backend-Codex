@@ -381,11 +381,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("EMAIL_FROM_ADDRESS", "EMAIL_FROM"),
     )
     email_from_name: str = Field(
-        default="Kairo",
+        default="KairoID",
         validation_alias=AliasChoices("EMAIL_FROM_NAME"),
     )
     email_reply_to: str = Field(
-        default="support@kairoid.com",
+        default="contact@kairoid.com",
         validation_alias=AliasChoices("EMAIL_REPLY_TO"),
     )
     email_backend: str = Field(

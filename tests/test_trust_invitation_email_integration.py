@@ -182,7 +182,7 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     notifications = FakeNotificationService()
@@ -225,7 +225,7 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     notifications = FakeNotificationService(should_raise=True)
@@ -259,7 +259,7 @@ async def test_create_trust_invitation_requires_candidate_portal_origin() -> Non
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     service = TrustInvitationService(
@@ -289,7 +289,7 @@ async def test_public_lookup_records_opened_without_mutating_delivery_state() ->
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     service = TrustInvitationService(
@@ -332,7 +332,7 @@ async def test_create_trust_invitation_survives_people_sync_failure() -> None:
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     notifications = FakeNotificationService()
@@ -368,7 +368,7 @@ async def test_accept_trust_invitation_survives_people_sync_failure() -> None:
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     notifications = FakeNotificationService()
@@ -414,7 +414,7 @@ async def test_accept_trust_invitation_refetches_events_for_people_sync_after_pr
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     people = AssertLoadedEventsOrganizationPersonService()
@@ -470,7 +470,7 @@ async def test_accept_trust_invitation_retry_is_idempotent_after_primary_accepta
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
         public_id=UUID("00000000-0000-0000-0000-000000000101"),
-        name="Kairo Verification Ops",
+        name="KairoID Verification Ops",
     )
     repo = FakeTrustInvitationRepository(organization)
     service = TrustInvitationService(

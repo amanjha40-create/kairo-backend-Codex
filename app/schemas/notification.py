@@ -83,7 +83,7 @@ class NotificationResponse(BaseModel):
     notification_type: str
     event_type: str
     category: str = "system"
-    title: str = "Kairo notification"
+    title: str = "KairoID notification"
     body: str = "You have a new notification."
     priority: str
     status: str

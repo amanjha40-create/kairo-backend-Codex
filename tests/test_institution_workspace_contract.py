@@ -54,7 +54,7 @@ class FakeInstitutionWorkspaceService:
             priority="high",
             created_at=self.now,
             updated_at=self.now,
-            education_institution_name="Kairo University",
+            education_institution_name="KairoID University",
             education_degree="BSc",
         )
 
@@ -64,7 +64,7 @@ class FakeInstitutionWorkspaceService:
             comparison=InstitutionVerificationComparison(
                 match_status="partial",
                 candidate_claim=InstitutionCandidateEducationClaim(
-                    institution_name="Kairo University", degree="BSc"
+                    institution_name="KairoID University", degree="BSc"
                 ),
                 institution_record=InstitutionAuthoritativeRecord(
                     found=True, degree="BSc", programme="Computer Science"

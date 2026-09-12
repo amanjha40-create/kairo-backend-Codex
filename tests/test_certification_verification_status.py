@@ -63,7 +63,7 @@ async def test_manual_certification_create_defaults_to_self_declared() -> None:
         uuid4(),
         CertificationCreateRequest(
             title="Career QA Product Management Certificate",
-            issuing_organization="Kairo QA Institute",
+            issuing_organization="KairoID QA Institute",
             issued_date=date(2025, 1, 1),
         ),
     )
@@ -99,7 +99,7 @@ async def test_certification_upload_intent_defaults_to_self_declared(
         uuid4(),
         CertificationUploadIntentRequest(
             title="Career QA Product Management Certificate",
-            issuing_organization="Kairo QA Institute",
+            issuing_organization="KairoID QA Institute",
             issued_date=None,
             expiry_date=None,
             does_not_expire=True,
@@ -126,7 +126,7 @@ async def test_editing_certification_preserves_self_declared_status() -> None:
         id=uuid4(),
         user_id=uuid4(),
         title="Career QA Product Management Certificate",
-        issuing_organization="Kairo QA Institute",
+        issuing_organization="KairoID QA Institute",
         issued_date=date(2025, 1, 1),
         verification_status=Certification.SELF_DECLARED_STATUS,
     )
@@ -152,7 +152,7 @@ async def test_delete_certification_preserves_existing_contract() -> None:
         id=uuid4(),
         user_id=uuid4(),
         title="Career QA Product Management Certificate",
-        issuing_organization="Kairo QA Institute",
+        issuing_organization="KairoID QA Institute",
         issued_date=date(2025, 1, 1),
         verification_status=Certification.SELF_DECLARED_STATUS,
     )
@@ -177,7 +177,7 @@ async def test_resume_imported_certification_is_self_declared() -> None:
         "certification",
         {
             "title": "Career QA Product Management Certificate",
-            "issuing_organization": "Kairo QA Institute",
+            "issuing_organization": "KairoID QA Institute",
             "issued_date": None,
             "expiry_date": None,
             "credential_id": None,

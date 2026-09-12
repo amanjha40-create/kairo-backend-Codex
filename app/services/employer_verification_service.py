@@ -654,7 +654,7 @@ class EmployerVerificationService:
         return render_result_page(
             title="Response recorded",
             message=(
-                "Thank you. Your response is awaiting Kairo's final quality review."
+                "Thank you. Your response is awaiting KairoID's final quality review."
                 if not response.idempotent
                 else "Your response was already recorded."
             ),
@@ -750,7 +750,7 @@ class EmployerVerificationService:
         return render_result_page(
             title="Response recorded",
             message=(
-                "Thank you. Your response is awaiting Kairo's final quality review."
+                "Thank you. Your response is awaiting KairoID's final quality review."
                 if not response.idempotent
                 else "Your response was already recorded."
             ),

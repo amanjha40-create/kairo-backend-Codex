@@ -162,7 +162,7 @@ def _trust_invitation_request() -> NotificationRequest:
         event_type="trust_invitation_created",
         recipient_email="aman3@test.com",
         payload={
-            "organization_name": "Kairo Labs",
+            "organization_name": "KairoID Labs",
             "subject_name": "Aman Jha",
             "invitation_url": "https://api.example.com/api/v1/trust-invitations/token",
             "expires_at_iso": "2026-07-10T12:00:00+00:00",

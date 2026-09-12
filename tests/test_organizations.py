@@ -37,7 +37,7 @@ class FakeOrganizationService:
     def _organization(self) -> OrganizationResponse:
         return OrganizationResponse(
             public_id=self._org_public_id,
-            name="Kairo Labs",
+            name="KairoID Labs",
             organization_type=OrganizationType.EMPLOYER,
             website="https://kairo.example",
             industry="Software",
@@ -228,7 +228,7 @@ async def test_create_organization_returns_owner_membership() -> None:
         response = await client.post(
             "/api/v1/organizations",
             json={
-                "name": "Kairo Labs",
+                "name": "KairoID Labs",
                 "organization_type": "employer",
                 "verification_capabilities": ["employment"],
             },
@@ -250,7 +250,7 @@ async def test_organization_onboarding_complete_returns_owner_membership() -> No
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/api/v1/organizations/onboarding/complete",
-            json={"name": "Kairo University", "organization_type": "university"},
+            json={"name": "KairoID University", "organization_type": "university"},
         )
 
     app.dependency_overrides.clear()
@@ -271,7 +271,7 @@ async def test_list_my_organizations_returns_memberships() -> None:
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1
-    assert body[0]["name"] == "Kairo Labs"
+    assert body[0]["name"] == "KairoID Labs"
 
 
 @pytest.mark.asyncio

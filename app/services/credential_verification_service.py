@@ -136,7 +136,7 @@ class CredentialVerificationService:
     async def _user_full_name(self, user_id: UUID) -> str:
         user = (await self._session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
         if user is None:
-            return "A Kairo user"
+            return "A KairoID user"
         return user.full_name or user.email
 
     async def request_verification(

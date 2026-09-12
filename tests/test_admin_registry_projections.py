@@ -27,8 +27,8 @@ def _record() -> TrustRegistryAdminRecordResponse:
     return TrustRegistryAdminRecordResponse(
         public_id=uuid4(),
         registry_code="KR-ORG-TEST1234",
-        legal_name="Kairo Test University",
-        display_name="Kairo University",
+        legal_name="KairoID Test University",
+        display_name="KairoID University",
         organization_type="educational_institution",
         country="IN",
         state_province=None,
@@ -39,7 +39,7 @@ def _record() -> TrustRegistryAdminRecordResponse:
         trust_metadata={},
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
-        aliases=["Kairo Institute"],
+        aliases=["KairoID Institute"],
         state="verified",
         active_case_count=1,
         total_verifications=2,
@@ -106,13 +106,13 @@ async def test_admin_registry_projection_routes_use_canonical_namespace() -> Non
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         list_response = await client.get("/api/v1/admin/trust-registry?paginate=true")
         metrics_response = await client.get("/api/v1/admin/trust-registry/metrics")
-        search_response = await client.get("/api/v1/admin/trust-registry/search?search=Kairo")
+        search_response = await client.get("/api/v1/admin/trust-registry/search?search=KairoID")
         detail_response = await client.get(f"/api/v1/admin/trust-registry/{registry_id}")
         legacy_response = await client.get("/api/admin/registry")
     app.dependency_overrides.clear()
 
     assert list_response.status_code == 200
-    assert list_response.json()["items"][0]["aliases"] == ["Kairo Institute"]
+    assert list_response.json()["items"][0]["aliases"] == ["KairoID Institute"]
     assert list_response.json()["items"][0]["linked_organization_count"] == 1
     assert metrics_response.status_code == 200
     assert metrics_response.json()["institutions"] == 1
@@ -171,4 +171,4 @@ async def test_registry_detail_projection_reuses_summary_aliases_without_duplica
 
     detail = await service.get_detail(uuid4())
 
-    assert detail.aliases == ["Kairo Institute"]
+    assert detail.aliases == ["KairoID Institute"]

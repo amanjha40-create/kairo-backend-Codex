@@ -25,7 +25,7 @@ class NotificationRequest:
     template_key: str | None = None
     template_version: str = "v1"
     category: str = "system"
-    title: str = "Kairo notification"
+    title: str = "KairoID notification"
     body: str = "You have a new notification."
     dedupe_key: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)

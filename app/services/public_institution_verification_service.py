@@ -474,7 +474,7 @@ class PublicInstitutionVerificationService:
         )
 
     def _request_organization_name(self, request: VerificationRequest) -> str:
-        return request.target_organization_name or "Kairo"
+        return request.target_organization_name or "KairoID"
 
     @staticmethod
     def _request_type_label(request: VerificationRequest) -> str:

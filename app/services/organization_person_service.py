@@ -1091,7 +1091,7 @@ class OrganizationPersonService:
         return {
             "candidate": "Candidate",
             "organization": "Organization",
-            "admin": "Kairo Trust Engine",
+            "admin": "KairoID Trust Engine",
         }.get(source, self._humanize_token(source))
 
     def _invitation_activity_kind(self, event_type: str) -> str:

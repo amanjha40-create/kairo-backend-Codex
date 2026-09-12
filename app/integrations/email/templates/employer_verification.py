@@ -49,7 +49,7 @@ def render_employer_verification(
             "Do not forward or share it.</p>"
             f'<p style="margin:0 0 16px;font-size:12px;line-height:1.5;word-break:break-all;color:#697572;">{safe_url}</p>'
             '<p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#697572;">'
-            "If you did not expect this request, do not open the link and contact Kairo support.</p>"
+            "If you did not expect this request, do not open the link and contact KairoID support.</p>"
         ),
     )
     text_body = with_text_footer(
@@ -59,10 +59,10 @@ def render_employer_verification(
         f"Your relationship: {context.relationship}.\n\n"
         f"Review and respond: {context.review_url}\n\n"
         f"This secure link expires in {context.expires_hours} hours. Do not forward or share it.\n\n"
-        "If you did not expect this request, do not open the link and contact Kairo support."
+        "If you did not expect this request, do not open the link and contact KairoID support."
     )
     return TransactionalEmailContent(
-        subject="Kairo — employment verification request",
+        subject="KairoID — employment verification request",
         html_body=html_body,
         text_body=text_body,
     )

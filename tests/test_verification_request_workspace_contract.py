@@ -37,7 +37,7 @@ def _build_request() -> VerificationRequest:
         organization_id=uuid4(),
         subject_name="Candidate One",
         subject_email="candidate@example.com",
-        target_organization_name="Kairo HR",
+        target_organization_name="KairoID HR",
         target_organization_email="hr@kairo.example.com",
         request_type=VerificationRequestType.EMPLOYMENT,
         status=VerificationRequestStatus.ACCEPTED,

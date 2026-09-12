@@ -131,7 +131,7 @@ async def test_education_draft_links_completed_owned_evidence() -> None:
     request = SimpleNamespace(id=uuid4(), public_id=uuid4())
     education = SimpleNamespace(
         id=education_id,
-        institution_name="Kairo University",
+        institution_name="KairoID University",
         verification_status=EducationVerificationStatus.DRAFT.value,
     )
     document = SimpleNamespace(id=document_id, document_type="transcript")

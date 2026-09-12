@@ -50,7 +50,7 @@ def _request(
     status: str,
     request_type: str = "education",
     priority: str = "normal",
-    education_name: str = "Kairo University",
+    education_name: str = "KairoID University",
     degree: str = "BSc Computer Science",
 ) -> SimpleNamespace:
     now = datetime.now(tz=UTC)
@@ -135,7 +135,7 @@ async def test_institution_inbox_filters_terminal_requests_with_string_statuses(
     service._require_university_access = AsyncMock(return_value=(organization, None))
     service._requests_for_organization = AsyncMock(
         return_value=[
-            _request(status="verified", priority="urgent", education_name="Kairo University"),
+            _request(status="verified", priority="urgent", education_name="KairoID University"),
             _request(
                 status="pending_organization_acceptance",
                 priority="high",

@@ -46,7 +46,7 @@ class FakePublicInstitutionVerificationService:
                     candidate=PublicInstitutionVerificationCandidateClaim(
                         candidate_name="Synthetic Student",
                         student_id="STU-42",
-                        institution_name="Kairo University",
+                        institution_name="KairoID University",
                         degree="BSc",
                         programme="Computer Science",
                         department="Engineering",
@@ -171,7 +171,7 @@ async def test_public_projection_does_not_touch_lazy_request_organization() -> N
     service = PublicInstitutionVerificationService.__new__(PublicInstitutionVerificationService)
     request = _LazyOrganizationRequest()
     education = SimpleNamespace(
-        institution_name="Kairo University",
+        institution_name="KairoID University",
         degree="BSc",
         field_of_study="Computer Science",
         start_date=datetime(2020, 1, 1, tzinfo=UTC),
@@ -216,7 +216,7 @@ async def test_public_projection_accepts_string_request_type() -> None:
         candidate_response="Candidate supplied note",
     )
     education = SimpleNamespace(
-        institution_name="Kairo University",
+        institution_name="KairoID University",
         degree="BSc",
         field_of_study="Computer Science",
         start_date=datetime(2020, 1, 1, tzinfo=UTC),

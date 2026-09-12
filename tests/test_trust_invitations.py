@@ -186,7 +186,7 @@ class FakeTrustInvitationService:
             raise NotFoundError("Trust invitation not found")
         return TrustInvitationPublicLookupResponse(
             public_id=self._invitation_public_id,
-            organization_name="Kairo Verification Ops",
+            organization_name="KairoID Verification Ops",
             subject_name="Aman Jha",
             purpose="Software Engineer Hiring",
             requested_verification_types=[
@@ -525,7 +525,7 @@ async def test_public_lookup_returns_sanitized_payload() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     body = response.json()
-    assert body["organization_name"] == "Kairo Verification Ops"
+    assert body["organization_name"] == "KairoID Verification Ops"
     assert "subject_email" not in body
     assert body["requested_verification_types"] == ["identity", "employment"]
 

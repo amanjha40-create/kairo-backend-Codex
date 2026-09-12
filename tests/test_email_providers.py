@@ -138,7 +138,7 @@ async def test_ses_provider_preserves_text_and_html_content() -> None:
     assert request["FromEmailAddress"] == "verify@kairoid.com"
     assert request["Destination"] == {"ToAddresses": ["recipient@example.com"]}
     raw_message = request["Content"]["Raw"]["Data"]  # type: ignore[index]
-    assert b"Reply-To: support@kairoid.com" in raw_message
+    assert b"Reply-To: contact@kairoid.com" in raw_message
     assert b"Plain text fallback" in raw_message
     assert b"HTML body" in raw_message
     assert b"multipart/alternative" in raw_message
@@ -180,8 +180,8 @@ def _brevo_settings(**overrides: object) -> Settings:
         "email_send_enabled": True,
         "brevo_api_key": "brevo-secret",
         "email_from": "noreply@kairoid.com",
-        "email_from_name": "Kairo",
-        "email_reply_to": "support@kairoid.com",
+        "email_from_name": "KairoID",
+        "email_reply_to": "contact@kairoid.com",
     }
     base.update(overrides)
     return Settings(**base)

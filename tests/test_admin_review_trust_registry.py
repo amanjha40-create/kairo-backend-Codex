@@ -76,8 +76,8 @@ async def test_admin_review_registry_routes_return_resolution_payloads() -> None
             f"/api/v1/admin/verification-requests/{request_public_id}/create-registry-record",
             json={
                 "record": {
-                    "legal_name": "Kairo Labs Pvt Ltd",
-                    "display_name": "Kairo Labs",
+                    "legal_name": "KairoID Labs Pvt Ltd",
+                    "display_name": "KairoID Labs",
                     "organization_type": "employer",
                     "country": "IN",
                     "state_province": "DL",

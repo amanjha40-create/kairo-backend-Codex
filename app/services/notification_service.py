@@ -61,7 +61,7 @@ class NotificationService:
         "password_reset_requested": (
             "security",
             "Password reset requested",
-            "A password reset was requested for your Kairo account.",
+            "A password reset was requested for your KairoID account.",
         ),
         "admin_verification_review_required": (
             "verification",
@@ -184,7 +184,7 @@ class NotificationService:
         body = request.body.strip()
         return (
             category,
-            default_title if title == "Kairo notification" else title,
+            default_title if title == "KairoID notification" else title,
             default_body if body == "You have a new notification." else body,
         )
 

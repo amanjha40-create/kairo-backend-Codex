@@ -34,7 +34,7 @@ def _build_request(*, trust_context: dict | None = None) -> VerificationRequest:
     )
     request.public_id = uuid4()
     request.organization = Organization(
-        name="Kairo Labs",
+        name="KairoID Labs",
         organization_type="employer",
         verification_capabilities=["employment"],
         created_by_user_id=uuid4(),
@@ -108,8 +108,8 @@ async def test_selection_picks_exact_registry_type_match_first() -> None:
     request = _build_request()
     request.registry_record = TrustRegistryRecord(
         registry_code="KR-TEST-0001",
-        legal_name="Kairo Labs Pvt Ltd",
-        display_name="Kairo Labs",
+        legal_name="KairoID Labs Pvt Ltd",
+        display_name="KairoID Labs",
         organization_type="employer",
         country="IN",
         lifecycle_status="active",

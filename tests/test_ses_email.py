@@ -46,13 +46,13 @@ def test_sender_factory_selects_ses() -> None:
 def test_mime_builder_uses_valid_smtp_multipart_message() -> None:
     message = build_mime_message(
         content=TransactionalEmailContent(
-            subject="Résumé verification — Kairo",
+            subject="Résumé verification — KairoID",
             html_body="<p>HTML résumé</p>",
             text_body="Plain résumé",
         ),
         to_email="recipient@example.com",
         from_email="verify@kairoid.com",
-        reply_to="support@kairoid.com",
+        reply_to="contact@kairoid.com",
     )
     raw = message.as_bytes()
     assert isinstance(raw, bytes)
@@ -61,7 +61,7 @@ def test_mime_builder_uses_valid_smtp_multipart_message() -> None:
     assert raw.count(b"\r\n") > 10
     assert parsed["From"] == "verify@kairoid.com"
     assert parsed["To"] == "recipient@example.com"
-    assert parsed["Reply-To"] == "support@kairoid.com"
+    assert parsed["Reply-To"] == "contact@kairoid.com"
     assert parsed["Date"]
     assert parsed["Message-ID"]
     assert parsed["MIME-Version"] == "1.0"
@@ -78,7 +78,7 @@ def test_mime_builder_rejects_header_injection(field: str) -> None:
         "subject": "Safe",
         "to_email": "recipient@example.com",
         "from_email": "verify@kairoid.com",
-        "reply_to": "support@kairoid.com",
+        "reply_to": "contact@kairoid.com",
     }
     values[field] = "safe\r\nBcc: attacker@example.com"
     with pytest.raises(ValueError):

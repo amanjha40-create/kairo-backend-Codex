@@ -77,7 +77,7 @@ class SnsPhoneOtpSender:
         return generated_code
 
     async def send_signup_otp(self, *, to_phone: str, code: str, ttl_minutes: int) -> None:
-        message = f"Your Kairo verification code is {code}. It expires in {ttl_minutes} minutes."
+        message = f"Your KairoID verification code is {code}. It expires in {ttl_minutes} minutes."
 
         def _publish() -> None:
             client = boto3.client(

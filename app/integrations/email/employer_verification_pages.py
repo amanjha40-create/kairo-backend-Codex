@@ -106,7 +106,7 @@ def render_review_page(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{escape(headline)} — Kairo</title>
+  <title>{escape(headline)} — KairoID</title>
   <style>
     * {{ box-sizing: border-box; }}
     body {{ margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }}
@@ -118,7 +118,7 @@ def render_review_page(
 
       <!-- Header -->
       <div style="text-align:center;padding:24px 0 20px;">
-        <p style="margin:0 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#6b7280;">Kairo</p>
+        <p style="margin:0 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#6b7280;">KairoID</p>
         <h1 style="margin:0;font-size:22px;font-weight:700;color:#111827;">{escape(headline)}</h1>
         <p style="margin:8px 0 0;font-size:14px;color:#6b7280;">
           <strong style="color:#111827;">{escape(subject_full_name)}</strong> has requested you to verify their {escape(intro_noun)}.

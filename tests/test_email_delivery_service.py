@@ -67,7 +67,7 @@ async def test_queue_template_email_creates_audit_log_and_dispatches() -> None:
         template_key="trust_invitation",
         to_email="aman3@test.com",
         template_data={
-            "organization_name": "Kairo Labs",
+            "organization_name": "KairoID Labs",
             "subject_name": "Aman Jha",
             "invitation_url": "https://example.com/invite/token",
             "expires_at_iso": "2026-07-10T12:00:00+00:00",

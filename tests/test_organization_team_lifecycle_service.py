@@ -31,7 +31,7 @@ def _build_organization():
     return SimpleNamespace(
         id=uuid4(),
         public_id=uuid4(),
-        name="Kairo University",
+        name="KairoID University",
         organization_type=OrganizationType.UNIVERSITY,
     )
 

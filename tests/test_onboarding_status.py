@@ -58,7 +58,7 @@ async def test_get_onboarding_status_returns_backend_owned_progress() -> None:
 
 def _user(**overrides):  # noqa: ANN003, ANN202
     values = {
-        "full_name": "Kairo Candidate",
+        "full_name": "KairoID Candidate",
         "phone": "+919876543210",
         "headline": "Software Engineer",
         "current_role": "Senior Engineer",

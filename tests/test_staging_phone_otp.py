@@ -152,7 +152,7 @@ async def test_sns_provider_publishes_otp_without_logging_code(
 
     client.publish.assert_called_once_with(
         PhoneNumber=ALLOWED_PHONE,
-        Message="Your Kairo verification code is 135790. It expires in 10 minutes.",
+        Message="Your KairoID verification code is 135790. It expires in 10 minutes.",
     )
     assert "135790" not in caplog.text
     assert ALLOWED_PHONE not in caplog.text

@@ -21,14 +21,14 @@ class AdminInvitationContext:
 
 
 def render_admin_invitation(context: AdminInvitationContext) -> TransactionalEmailContent:
-    title = "You've been invited to Kairo Admin"
+    title = "You've been invited to KairoID Admin"
     safe_role = html_escape(context.invited_role_label)
     safe_expiry = html_escape(context.expires_at_iso)
     html_body = render_html(
         title=title,
         content=(
             '<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
-            "A Kairo administrator has invited this email address to access the internal "
+            "A KairoID administrator has invited this email address to access the internal "
             "Admin Portal.</p>"
             f'<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#5d6966;">'
             f"Sanctioned role: <strong>{safe_role}</strong></p>"
@@ -41,7 +41,7 @@ def render_admin_invitation(context: AdminInvitationContext) -> TransactionalEma
         ),
     )
     text_body = with_text_footer(
-        "A Kairo administrator has invited this email address to access the internal "
+        "A KairoID administrator has invited this email address to access the internal "
         "Admin Portal.\n\n"
         f"Sanctioned role: {context.invited_role_label}\n\n"
         f"Accept admin invitation: {context.invitation_url}\n\n"
@@ -49,7 +49,7 @@ def render_admin_invitation(context: AdminInvitationContext) -> TransactionalEma
         "If you did not expect this invitation, do not open the link. Never forward or share it."
     )
     return TransactionalEmailContent(
-        subject="Kairo — admin access invitation",
+        subject="KairoID — admin access invitation",
         html_body=html_body,
         text_body=text_body,
     )

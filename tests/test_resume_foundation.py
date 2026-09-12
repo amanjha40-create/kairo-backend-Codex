@@ -41,7 +41,7 @@ def _docx_bytes() -> bytes:
         archive.writestr("[Content_Types].xml", "<Types />")
         archive.writestr(
             "word/document.xml",
-            """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Kairo</w:t></w:r></w:p><w:p><w:r><w:t>Engineer</w:t></w:r></w:p></w:body></w:document>""",
+            """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>KairoID</w:t></w:r></w:p><w:p><w:r><w:t>Engineer</w:t></w:r></w:p></w:body></w:document>""",
         )
     return output.getvalue()
 
@@ -73,7 +73,7 @@ async def test_docx_extraction_is_deterministic_and_does_not_call_shell() -> Non
     text = await DeterministicDocxExtractor().extract(
         _docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
-    assert text == "Kairo\nEngineer"
+    assert text == "KairoID\nEngineer"
 
 
 @pytest.mark.asyncio
@@ -125,7 +125,7 @@ async def test_textract_uses_async_s3_flow_for_staged_pdf_processing() -> None:
 
 
 def test_parsed_claims_are_candidate_provided_and_unverified() -> None:
-    result = ParsedResumeResult(employments=[EmploymentClaim(company_name="Kairo")])
+    result = ParsedResumeResult(employments=[EmploymentClaim(company_name="KairoID")])
     claim = result.employments[0]
     assert claim.source_type == "resume"
     assert claim.selected_for_import is False

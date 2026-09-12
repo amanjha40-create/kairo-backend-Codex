@@ -1,4 +1,4 @@
-"""Shared presentation primitives for Kairo transactional emails."""
+"""Shared presentation primitives for KairoID transactional emails."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from html import escape
 
 
-BRAND_NAME = "Kairo"
-SUPPORT_EMAIL = "support@kairoid.com"
-FOOTER_TEXT = "Kairo — Verify once. Trusted everywhere."
+BRAND_NAME = "KairoID"
+SUPPORT_EMAIL = "contact@kairoid.com"
+FOOTER_TEXT = "KairoID — Verify once. Trusted everywhere."
 
 
 @dataclass(frozen=True, slots=True)

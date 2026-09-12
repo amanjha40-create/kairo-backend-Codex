@@ -20,7 +20,7 @@ def _bodies(message) -> tuple[str, str]:
 
 def test_build_signup_otp_email() -> None:
     msg = build_signup_otp_email(
-        app_name="Kairo",
+        app_name="KairoID",
         to_email="user@example.com",
         from_email="noreply@kairo.app",
         code="123456",
@@ -35,7 +35,7 @@ def test_build_signup_otp_email() -> None:
 
 def test_build_password_reset_email() -> None:
     msg = build_password_reset_email(
-        app_name="Kairo",
+        app_name="KairoID",
         to_email="user@example.com",
         from_email="noreply@kairo.app",
         reset_token="reset-token-123",
@@ -50,7 +50,7 @@ def test_build_password_reset_email() -> None:
 
 def test_build_password_reset_email_with_reset_url() -> None:
     msg = build_password_reset_email(
-        app_name="Kairo",
+        app_name="KairoID",
         to_email="user@example.com",
         from_email="noreply@kairo.app",
         reset_token="reset-token-123",

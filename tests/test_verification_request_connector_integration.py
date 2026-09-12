@@ -41,7 +41,7 @@ def _build_request() -> VerificationRequest:
     request.created_at = datetime.now(tz=UTC)
     request.updated_at = request.created_at
     request.organization = Organization(
-        name="Kairo Labs",
+        name="KairoID Labs",
         organization_type="employer",
         verification_capabilities=["employment"],
         created_by_user_id=uuid4(),

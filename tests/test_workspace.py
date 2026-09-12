@@ -38,7 +38,7 @@ class FakeWorkspaceService:
         return WorkspaceOrganizationInvitationResponse(
             public_id=self._invitation_public_id,
             organization_public_id=self._org_public_id,
-            organization_name="Kairo Labs",
+            organization_name="KairoID Labs",
             invited_role=OrganizationRole.ADMIN,
             invited_by_email="owner@kairo.example",
             invited_by_full_name="Owner User",
@@ -62,7 +62,7 @@ class FakeWorkspaceService:
             ),
             active_organization=WorkspaceOrganizationSummary(
                 public_id=self._org_public_id,
-                name="Kairo Labs",
+                name="KairoID Labs",
                 organization_type=OrganizationType.EMPLOYER,
                 website="https://kairo.example",
                 industry="Software",
@@ -134,7 +134,7 @@ async def test_workspace_bootstrap_returns_authoritative_state() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["state"] == "verification_pending"
-    assert body["active_organization"]["name"] == "Kairo Labs"
+    assert body["active_organization"]["name"] == "KairoID Labs"
     assert body["permission_flags"]["manage_team"] is True
 
 

@@ -29,7 +29,7 @@ def render_password_reset(context: PasswordResetContext) -> TransactionalEmailCo
             title=title,
             content=(
                 '<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
-                "We received a request to reset your Kairo password.</p>"
+                "We received a request to reset your KairoID password.</p>"
                 f"{action_link(label='Reset password', url=context.reset_url)}"
                 '<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#5d6966;">'
                 "If the button does not work, use this link:</p>"
@@ -42,7 +42,7 @@ def render_password_reset(context: PasswordResetContext) -> TransactionalEmailCo
             ),
         )
         text_body = with_text_footer(
-            "We received a request to reset your Kairo password.\n\n"
+            "We received a request to reset your KairoID password.\n\n"
             f"Reset password: {context.reset_url}\n\n"
             f"This link expires in {context.ttl_minutes} minutes and can only be used once.\n\n"
             "If you did not request a password reset, you can ignore this email."
@@ -52,26 +52,26 @@ def render_password_reset(context: PasswordResetContext) -> TransactionalEmailCo
             title=title,
             content=(
                 '<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
-                "We received a request to reset your Kairo password.</p>"
+                "We received a request to reset your KairoID password.</p>"
                 f'<p style="margin:20px 0;padding:16px;background:#eef6f4;border-radius:10px;'
                 f'font-size:15px;line-height:1.5;word-break:break-all;color:#174f4a;">{safe_token}</p>'
                 f'<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#5d6966;">'
                 "This token expires in "
                 f"{context.ttl_minutes} minutes and can only be used once.</p>"
                 '<p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#697572;">'
-                "Never share this token. Kairo will never ask you to provide it by email or phone. "
+                "Never share this token. KairoID will never ask you to provide it by email or phone. "
                 "If you did not request a password reset, you can ignore this email.</p>"
             ),
         )
         text_body = with_text_footer(
-            "We received a request to reset your Kairo password.\n\n"
+            "We received a request to reset your KairoID password.\n\n"
             f"Password reset token: {context.reset_token}\n\n"
             f"This token expires in {context.ttl_minutes} minutes and can only be used once.\n\n"
-            "Never share this token. Kairo will never ask you to provide it by email or phone. "
+            "Never share this token. KairoID will never ask you to provide it by email or phone. "
             "If you did not request a password reset, you can ignore this email."
         )
     return TransactionalEmailContent(
-        subject="Kairo — reset your password",
+        subject="KairoID — reset your password",
         html_body=html_body,
         text_body=text_body,
     )
