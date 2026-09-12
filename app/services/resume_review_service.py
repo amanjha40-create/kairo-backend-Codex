@@ -52,7 +52,18 @@ from app.resumes.schemas import ParsedResumeResult
 from app.services.resume_duplicate_service import ResumeDuplicateService
 
 logger = logging.getLogger(__name__)
-SUPPORTED_IMPORT_TYPES = {"profile", "employment", "education", "internship", "freelance", "gig_platform", "certification", "portfolio", "project", "skill"}
+SUPPORTED_IMPORT_TYPES = {
+    "employment",
+    "education",
+    "internship",
+    "freelance",
+    "gig_platform",
+    "certification",
+    "portfolio",
+    "project",
+    "skill",
+}
+SUGGESTION_ONLY_TYPES = {"profile"}
 
 
 class ResumeReviewService:
@@ -156,6 +167,17 @@ class ResumeReviewService:
             raise ValidationAppError("Review item contains invalid fields", code="invalid_review_item") from exc
         if claim.claim_type != item.claim_type:
             raise ValidationAppError("Claim type cannot be changed", code="claim_type_immutable")
+        if item.claim_type in SUGGESTION_ONLY_TYPES and (
+            payload.selected is True
+            or (
+                payload.import_action is not None
+                and payload.import_action != ResumeImportAction.SKIP
+            )
+        ):
+            raise ValidationAppError(
+                "Resume profile details must be changed through Profile",
+                code="resume_profile_suggestion_only",
+            )
         normalized = review_claim_adapter.dump_python(claim, mode="json")
         assessment = await self.duplicates.assess(user_id, item.claim_type, normalized)
         item.edited_payload = normalized
@@ -207,7 +229,11 @@ class ResumeReviewService:
         review.status = ResumeReviewStatus.IMPORTING.value
         await self.session.flush()
         logger.info("resume_import_started", extra={"review_session_id": str(review.id), "import_batch_id": str(batch.id), "user_id": str(user_id)})
-        items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == review.id, ResumeReviewItem.selected.is_(True)).order_by(ResumeReviewItem.created_at))).all()
+        items = (await self.session.scalars(select(ResumeReviewItem).where(
+            ResumeReviewItem.review_session_id == review.id,
+            ResumeReviewItem.selected.is_(True),
+            ResumeReviewItem.claim_type.in_(SUPPORTED_IMPORT_TYPES),
+        ).order_by(ResumeReviewItem.created_at))).all()
         for item in items:
             try:
                 async with self.session.begin_nested():
@@ -261,6 +287,8 @@ class ResumeReviewService:
         items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == review.id).order_by(ResumeReviewItem.created_at))).all()
         plans: list[ReviewPlanItem] = []
         for item in items:
+            if item.claim_type in SUGGESTION_ONLY_TYPES:
+                continue
             if not item.selected:
                 continue
             blockers = self._action_blockers(
@@ -315,6 +343,11 @@ class ResumeReviewService:
         return ReviewPlanResponse(session_id=review.id, ready=not any(item.blockers for item in plans), version=review.version, items=plans)
 
     async def _import_item(self, user_id: UUID, review: ResumeReviewSession, batch: ResumeImportBatch, item: ResumeReviewItem, now: datetime) -> tuple[str, str | None, UUID | None, list[str]]:
+        if item.claim_type in SUGGESTION_ONLY_TYPES:
+            raise ValidationAppError(
+                "Resume profile details must be changed through Profile",
+                code="resume_profile_suggestion_only",
+            )
         prior = await self.session.scalar(select(ResumeRecordProvenance).where(
             ResumeRecordProvenance.review_item_id == item.id,
             ResumeRecordProvenance.user_id == user_id,
@@ -362,12 +395,10 @@ class ResumeReviewService:
 
     async def _create_record(self, user_id: UUID, claim_type: str, p: dict[str, Any]) -> Any:
         if claim_type == "profile":
-            user = await self.session.get(User, user_id)
-            if p.get("full_name") and not user.full_name: user.full_name = p["full_name"]
-            if p.get("professional_headline") and not user.headline: user.headline = p["professional_headline"]
-            if p.get("summary") and not user.bio: user.bio = p["summary"][:500]
-            if p.get("location") and not user.location: user.location = self._location_text(p["location"])
-            return user
+            raise ValidationAppError(
+                "Resume profile details must be changed through Profile",
+                code="resume_profile_suggestion_only",
+            )
         if claim_type == "employment":
             user = await self.session.get(User, user_id)
             if not user or not user.full_name:
@@ -425,11 +456,10 @@ class ResumeReviewService:
             "skill": {"name": "name"},
         }
         if claim_type == "profile":
-            if p.get("full_name") and not record.full_name: record.full_name = p["full_name"]
-            if p.get("professional_headline"): record.headline = p["professional_headline"]
-            if p.get("summary"): record.bio = p["summary"][:500]
-            if p.get("location"): record.location = self._location_text(p["location"])
-            return
+            raise ValidationAppError(
+                "Resume profile details must be changed through Profile",
+                code="resume_profile_suggestion_only",
+            )
         if claim_type == "employment":
             p = dict(p)
             p["start_date"] = self._employment_contract_date(p, "start_date")
@@ -452,8 +482,8 @@ class ResumeReviewService:
         if not record_id:
             raise ValidationAppError("Target record is required", code="target_record_required")
         model, owner = self._target_model(claim_type)
-        record = await self.session.scalar(select(model).where(model.id == record_id, getattr(model, owner) == user_id, model.deleted_at.is_(None))) if claim_type != "profile" else await self.session.get(User, user_id)
-        if not record or record.id != record_id:
+        record = await self.session.scalar(select(model).where(model.id == record_id, getattr(model, owner) == user_id, model.deleted_at.is_(None)))
+        if not record:
             raise NotFoundError("Import target not found")
         return record
 
@@ -616,7 +646,7 @@ class ResumeReviewService:
 
     @staticmethod
     def _target_model(claim_type: str) -> tuple[Any, str]:
-        return {"profile": (User, "id"), "employment": (Employment, "created_by_user_id"), "education": (Education, "user_id"), "internship": (Internship, "user_id"), "freelance": (FreelanceContract, "user_id"), "gig_platform": (GigPlatform, "user_id"), "certification": (Certification, "user_id"), "portfolio": (PortfolioItem, "user_id"), "project": (Project, "user_id"), "skill": (Skill, "user_id")}[claim_type]
+        return {"employment": (Employment, "created_by_user_id"), "education": (Education, "user_id"), "internship": (Internship, "user_id"), "freelance": (FreelanceContract, "user_id"), "gig_platform": (GigPlatform, "user_id"), "certification": (Certification, "user_id"), "portfolio": (PortfolioItem, "user_id"), "project": (Project, "user_id"), "skill": (Skill, "user_id")}[claim_type]
 
     @staticmethod
     def _protected(record: Any) -> bool:

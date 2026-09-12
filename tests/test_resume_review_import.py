@@ -624,9 +624,21 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
     from app.resumes.review_schemas import ReviewImportRequest, ReviewValidateRequest
 
     now = datetime.now(UTC)
+    account_phone = f"+1{uuid4().int % 10**10:010d}"
     user_id = resume_id = employment_id = existing_employment_id = None
     async with async_session_factory() as session:
-        user = User(email=f"resume-import-{uuid4()}@example.invalid", full_name="Synthetic Candidate", role="user", is_active=True)
+        user = User(
+            email=f"resume-import-{uuid4()}@example.invalid",
+            phone=account_phone,
+            full_name="Synthetic Candidate",
+            headline="Authenticated headline",
+            bio="Authenticated introduction",
+            location="Authenticated City",
+            role="user",
+            is_active=True,
+            email_verified_at=now,
+            phone_verified_at=now,
+        )
         session.add(user)
         await session.flush()
         user_id = user.id
@@ -679,6 +691,14 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
             schema_version="1",
             structured_result={
                 "schema_version": "1",
+                "candidate_profile": {
+                    "full_name": "Resume Test Person",
+                    "email": "resume-test@example.invalid",
+                    "phone": "+10000000000",
+                    "professional_headline": "Resume headline",
+                    "summary": "Resume introduction",
+                    "location": {"city": "Resume City", "country": "IN"},
+                },
                 "employments": [{
                     "company_name": "Synthetic Company",
                     "role_title": "Engineer",
@@ -716,7 +736,12 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         service = ResumeReviewService(session)
         review = await service.create(user.id, document.id)
         assert review.status == "draft"
-        assert len(review.items) == 3
+        assert len(review.items) == 4
+        profile_suggestion = next(item for item in review.items if item.claim_type == "profile")
+        assert profile_suggestion.selected is False
+        assert profile_suggestion.import_action == "skip"
+        assert "email" not in profile_suggestion.edited_payload
+        assert "phone" not in profile_suggestion.edited_payload
         unedited_education = next(item for item in review.items if item.claim_type == "education")
         assert unedited_education.edited_payload["start_date"] == "2015-01-01"
         assert unedited_education.edited_payload["start_date_precision"] == "year"
@@ -744,6 +769,13 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert first.skipped_count == 1
         assert first.failed_count == 0
         assert first.incomplete_count == 1
+        await session.refresh(user)
+        assert user.full_name == "Synthetic Candidate"
+        assert user.email != "resume-test@example.invalid"
+        assert user.phone == account_phone
+        assert user.headline == "Authenticated headline"
+        assert user.bio == "Authenticated introduction"
+        assert user.location == "Authenticated City"
         skipped = next(result for result in first.results if result.outcome == "skipped")
         assert skipped.record_type == "education"
         assert skipped.record_id is None
