@@ -28,6 +28,18 @@ class CertificationRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_owned_for_update(self, item_id: UUID, user_id: UUID) -> Certification | None:
+        stmt = (
+            select(Certification)
+            .where(
+                Certification.id == item_id,
+                Certification.user_id == user_id,
+                Certification.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_user(
         self, user_id: UUID, *, offset: int = 0, limit: int = 50,
     ) -> tuple[list[Certification], int]:

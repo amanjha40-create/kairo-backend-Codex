@@ -12,6 +12,9 @@ from app.api.dependencies.services import get_certification_service
 from app.schemas.certification import (
     CertificationCompleteUploadRequest,
     CertificationCreateRequest,
+    CertificationDocumentCompleteUploadRequest,
+    CertificationDocumentUploadIntentRequest,
+    CertificationDocumentUploadIntentResponse,
     CertificationDownloadUrlResponse,
     CertificationResponse,
     CertificationUpdateRequest,
@@ -69,6 +72,40 @@ async def complete_upload(
     svc: Annotated[CertificationService, Depends(get_certification_service)],
 ) -> CertificationResponse:
     item = await svc.complete_upload(current.id, certification_id, payload.checksum_sha256)
+    return CertificationResponse.model_validate(item)
+
+
+@router.post(
+    "/{certification_id}/document/upload-intent",
+    response_model=CertificationDocumentUploadIntentResponse,
+)
+async def create_document_upload_intent(
+    certification_id: UUID,
+    payload: CertificationDocumentUploadIntentRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[CertificationService, Depends(get_certification_service)],
+) -> CertificationDocumentUploadIntentResponse:
+    return await svc.create_document_upload_intent(current.id, certification_id, payload)
+
+
+@router.post("/{certification_id}/document/complete-upload", response_model=CertificationResponse)
+async def complete_document_upload(
+    certification_id: UUID,
+    payload: CertificationDocumentCompleteUploadRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[CertificationService, Depends(get_certification_service)],
+) -> CertificationResponse:
+    item = await svc.complete_document_upload(current.id, certification_id, payload)
+    return CertificationResponse.model_validate(item)
+
+
+@router.delete("/{certification_id}/document", response_model=CertificationResponse)
+async def detach_document(
+    certification_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[CertificationService, Depends(get_certification_service)],
+) -> CertificationResponse:
+    item = await svc.detach_document(current.id, certification_id)
     return CertificationResponse.model_validate(item)
 
 

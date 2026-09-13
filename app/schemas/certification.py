@@ -85,6 +85,59 @@ class CertificationCompleteUploadRequest(BaseModel):
     checksum_sha256: str
 
 
+class CertificationDocumentUploadIntentRequest(BaseModel):
+    original_filename: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(min_length=1, max_length=255)
+    byte_size: int = Field(gt=0)
+    checksum_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+
+    @field_validator("original_filename")
+    @classmethod
+    def validate_filename(cls, value: str) -> str:
+        cleaned = value.strip()
+        unsafe = "/" in cleaned or "\\" in cleaned or any(ord(char) < 32 for char in cleaned)
+        if not cleaned or unsafe:
+            raise ValueError("filename must be a plain file name")
+        return cleaned
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"application/pdf", "image/jpeg", "image/png"}:
+            raise ValueError("unsupported certificate document type")
+        return normalized
+
+    @field_validator("byte_size")
+    @classmethod
+    def validate_byte_size(cls, value: int) -> int:
+        if value > 50 * 1024 * 1024:
+            raise ValueError("document exceeds the 50 MB limit")
+        return value
+
+    @field_validator("checksum_sha256")
+    @classmethod
+    def normalize_checksum(cls, value: str) -> str:
+        return value.lower()
+
+
+class CertificationDocumentUploadIntentResponse(BaseModel):
+    upload_url: str
+    upload_token: str
+    expires_in_seconds: int
+    headers_required: dict[str, str]
+
+
+class CertificationDocumentCompleteUploadRequest(BaseModel):
+    upload_token: str = Field(min_length=32)
+    checksum_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+
+    @field_validator("checksum_sha256")
+    @classmethod
+    def normalize_checksum(cls, value: str) -> str:
+        return value.lower()
+
+
 class CertificationDownloadUrlResponse(BaseModel):
     download_url: str
 
