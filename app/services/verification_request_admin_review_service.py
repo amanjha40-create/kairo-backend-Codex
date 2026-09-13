@@ -51,6 +51,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCycleResponse,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminReviewDirectConfirmationRequest,
     AdminReviewerSummary,
     AdminReviewEvidenceResponse,
     AdminReviewFinalizationRequest,
@@ -84,7 +85,10 @@ from app.services.public_institution_verification_service import (
     PublicInstitutionVerificationService,
 )
 from app.services.trust_registry_service import TrustRegistryCodeService
-from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
+from app.services.verification_request_workflow_service import (
+    ADMIN_DIRECT_CONFIRMATION_STATUSES,
+    VerificationRequestWorkflowService,
+)
 from app.trust_registry.enums import (
     TrustRegistryLifecycleStatus,
     TrustRegistryResolutionMethod,
@@ -665,6 +669,59 @@ class VerificationRequestAdminReviewService:
             outcome=payload.outcome,
             decision_summary=payload.decision_summary,
         )
+
+    async def direct_confirm(
+        self,
+        actor_user_id: UUID,
+        verification_request_public_id: UUID,
+        payload: AdminReviewDirectConfirmationRequest,
+    ) -> VerificationRequestResponse:
+        request = await self._get_required_request_for_update(verification_request_public_id)
+        if request.status not in ADMIN_DIRECT_CONFIRMATION_STATUSES:
+            raise ConflictError("Verification request is not eligible for direct confirmation")
+        if payload.confirmation_outcome != "details_confirmed":
+            raise ConflictError("Material discrepancies must use the existing correction workflow")
+
+        await self._require_linked_canonical_claim(request)
+        review = await self._get_or_create_review(request, actor_user_id)
+        review.review_status = VerificationRequestReviewStatus.APPROVED
+        review.decision_by_user_id = actor_user_id
+        review.decision_at = datetime.now(tz=UTC)
+        review.decision_summary = payload.internal_note
+
+        await self._workflow.transition_via_admin_direct_confirmation(
+            request,
+            actor_user_id=actor_user_id,
+            metadata={
+                "reason": "manual_direct_confirmation",
+                "verification_request_public_id": str(request.public_id),
+                "confirmation_method": payload.confirmation_method,
+                "confirmation_outcome": payload.confirmation_outcome,
+                "confirmed_by": payload.confirmed_by,
+                "verifier_role": payload.verifier_role,
+                "contact_detail_used": payload.contact_detail_used,
+                "internal_note": payload.internal_note,
+            },
+        )
+        await self._apply_canonical_outcome(
+            request,
+            actor_user_id,
+            "verified",
+            payload.internal_note,
+        )
+        await self._workflow.record_action(
+            request,
+            actor_user_id=actor_user_id,
+            event_type="trust_score_recalculation_requested",
+            event_source=VerificationRequestEventSource.SYSTEM,
+            metadata={"outcome": "verified"},
+        )
+        await self._session.commit()
+        await self._notify_finalization(request, actor_user_id, "verified")
+        refreshed = await self._requests.get_by_public_id(request.public_id)
+        if refreshed is None:
+            raise NotFoundError("Verification request not found")
+        return await self._to_request_response(refreshed)
 
     async def return_to_verifier(
         self,

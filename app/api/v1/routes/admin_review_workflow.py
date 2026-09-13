@@ -29,6 +29,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCorrectionRequest,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminReviewDirectConfirmationRequest,
     AdminReviewFinalizationRequest,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
@@ -139,6 +140,22 @@ async def finalize_admin_quality_review(
     svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
 ) -> VerificationRequestResponse:
     return await svc.finalize(reviewer.id, verification_request_public_id, payload)
+
+
+@router.post(
+    "/{verification_request_public_id}/direct-confirmation",
+    response_model=VerificationRequestResponse,
+)
+async def verify_via_direct_confirmation(
+    verification_request_public_id: UUID,
+    payload: AdminReviewDirectConfirmationRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_finalizer)],
+    svc: Annotated[
+        VerificationRequestAdminReviewService,
+        Depends(get_verification_request_admin_review_service),
+    ],
+) -> VerificationRequestResponse:
+    return await svc.direct_confirm(reviewer.id, verification_request_public_id, payload)
 
 
 @router.post("/{verification_request_public_id}/return-to-verifier", response_model=VerificationRequestResponse)

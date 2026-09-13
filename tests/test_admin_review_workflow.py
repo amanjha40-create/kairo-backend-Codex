@@ -428,6 +428,9 @@ class FakeVerificationRequestAdminReviewService:
     async def finalize(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.VERIFIED)
 
+    async def direct_confirm(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
+        return self._request_response(status=VerificationRequestStatus.VERIFIED)
+
     async def return_to_verifier(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._request_response(status=VerificationRequestStatus.IN_PROGRESS)
 
@@ -799,6 +802,75 @@ async def test_admin_can_finalize_verification() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "verified"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_verify_via_direct_confirmation() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{uuid4()}/direct-confirmation",
+            json={
+                "confirmation_method": "phone",
+                "confirmed_by": "Pat Verifier",
+                "verifier_role": "HR Manager",
+                "contact_detail_used": "+91 98XXXXXX10",
+                "confirmation_outcome": "details_confirmed",
+                "internal_note": "Confirmed title and employment dates directly.",
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["status"] == "verified"
+
+
+@pytest.mark.asyncio
+async def test_hr_cannot_verify_via_direct_confirmation() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("hr")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{uuid4()}/direct-confirmation",
+            json={
+                "confirmation_method": "email",
+                "confirmed_by": "Pat Verifier",
+                "verifier_role": "HR Manager",
+                "contact_detail_used": "pat.verifier@example.com",
+                "confirmation_outcome": "details_confirmed",
+                "internal_note": "Confirmed by direct email.",
+            },
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_direct_confirmation_requires_complete_metadata() -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory("admin")
+    app.dependency_overrides[get_verification_request_admin_review_service] = (
+        lambda: FakeVerificationRequestAdminReviewService()
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/v1/admin/verification-requests/{uuid4()}/direct-confirmation",
+            json={"confirmation_method": "phone", "confirmation_outcome": "details_confirmed"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
