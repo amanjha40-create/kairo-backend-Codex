@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.dependencies.auth import CurrentUser, get_current_user
+from app.api.dependencies.services import get_portfolio_service
 from app.exceptions import NotFoundError
 from app.main import app
 from app.models.portfolio import PortfolioItem
@@ -94,8 +96,8 @@ async def test_upload_complete_and_download_document(monkeypatch: pytest.MonkeyP
     item = make_item()
     service, session = make_service(item)
 
-    async def fake_put(**_kwargs) -> tuple[str, dict[str, str]]:  # noqa: ANN003
-        return "https://private-upload.example.test/signed-put", {"Content-Type": "application/pdf"}
+    async def fake_put(**_kwargs) -> str:  # noqa: ANN003
+        return "https://private-upload.example.test/signed-put"
 
     async def fake_get(**_kwargs) -> str:  # noqa: ANN003
         return "https://private-download.example.test/signed-get"
@@ -105,6 +107,7 @@ async def test_upload_complete_and_download_document(monkeypatch: pytest.MonkeyP
 
     intent = await service.create_upload_intent(item.user_id, item.id, upload_request())
     assert intent.upload_url == "https://private-upload.example.test/signed-put"
+    assert intent.headers_required == {"Content-Type": "application/pdf"}
     assert item.upload_completed_at is None
 
     completed = await service.complete_upload(item.user_id, item.id, SimpleNamespace())
@@ -116,6 +119,56 @@ async def test_upload_complete_and_download_document(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+async def test_upload_intent_route_uses_real_single_url_presign_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = make_item()
+    service, _ = make_service(item)
+
+    class FakeS3Client:
+        def generate_presigned_url(
+            self,
+            operation: str,
+            *,
+            Params: dict[str, str],  # noqa: N803
+            ExpiresIn: int,  # noqa: N803
+        ) -> str:
+            assert operation == "put_object"
+            assert Params["ContentType"] == "application/pdf"
+            assert ExpiresIn == 300
+            return "https://private-upload.example.test/real-helper-signed-put"
+
+    monkeypatch.setattr(
+        "app.infrastructure.s3.presign.get_s3_client",
+        lambda _settings: FakeS3Client(),
+    )
+
+    async def override_current_user() -> CurrentUser:
+        return CurrentUser(id=item.user_id, email="portfolio-qa@kairo.test", role="candidate")
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_portfolio_service] = lambda: service
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/portfolio/{item.id}/upload-intent",
+                json={
+                    "original_filename": "replacement.pdf",
+                    "content_type": "application/pdf",
+                    "byte_size": 4096,
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_portfolio_service, None)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["upload_url"] == "https://private-upload.example.test/real-helper-signed-put"
+    assert body["headers_required"] == {"Content-Type": "application/pdf"}
+
+
+@pytest.mark.asyncio
 async def test_replacement_marks_only_new_attachment_as_current(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -123,8 +176,8 @@ async def test_replacement_marks_only_new_attachment_as_current(
     old_key = item.object_key
     service, session = make_service(item)
 
-    async def fake_put(**_kwargs) -> tuple[str, dict[str, str]]:  # noqa: ANN003
-        return "https://private-upload.example.test/signed-put", {}
+    async def fake_put(**_kwargs) -> str:  # noqa: ANN003
+        return "https://private-upload.example.test/signed-put"
 
     monkeypatch.setattr("app.services.portfolio_service.generate_presigned_put_url", fake_put)
 

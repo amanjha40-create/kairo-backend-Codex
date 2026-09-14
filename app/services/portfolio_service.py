@@ -96,11 +96,12 @@ class PortfolioService:
         prefix = self._settings.s3_document_key_prefix.rstrip("/")
         object_key = f"{prefix}/portfolio/{user_id}/{item_id}/{payload.original_filename}"
 
-        upload_url, headers = await generate_presigned_put_url(
+        upload_url = await generate_presigned_put_url(
             bucket=bucket,
             object_key=object_key,
             content_type=payload.content_type,
             ttl_seconds=self._settings.s3_presigned_put_ttl_seconds,
+            settings=self._settings,
         )
         item.original_filename = payload.original_filename
         item.content_type = payload.content_type
@@ -118,7 +119,7 @@ class PortfolioService:
             bucket=bucket,
             upload_url=upload_url,
             expires_in_seconds=self._settings.s3_presigned_put_ttl_seconds,
-            headers_required=headers,
+            headers_required={"Content-Type": payload.content_type},
         )
 
     async def complete_upload(
