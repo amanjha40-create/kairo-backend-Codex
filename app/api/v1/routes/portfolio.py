@@ -116,3 +116,13 @@ async def get_download_url(
     svc: Annotated[PortfolioService, Depends(get_portfolio_service)],
 ) -> PortfolioDownloadUrlResponse:
     return await svc.get_download_url(current.id, item_id)
+
+
+@router.delete("/{item_id}/document", response_model=PortfolioItemResponse)
+async def detach_document(
+    item_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[PortfolioService, Depends(get_portfolio_service)],
+) -> PortfolioItemResponse:
+    item = await svc.detach_document(current.id, item_id)
+    return PortfolioItemResponse.model_validate(item)

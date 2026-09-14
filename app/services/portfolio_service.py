@@ -85,7 +85,9 @@ class PortfolioService:
         item_id: UUID,
         payload: PortfolioUploadIntentRequest,
     ) -> PortfolioUploadIntentResponse:
-        item = await self.get_owned(user_id, item_id)
+        item = await self._repo.get_owned_for_update(item_id, user_id)
+        if item is None:
+            raise NotFoundError("Portfolio item not found")
 
         bucket = self._settings.s3_documents_bucket
         if not bucket:
@@ -94,18 +96,22 @@ class PortfolioService:
         prefix = self._settings.s3_document_key_prefix.rstrip("/")
         object_key = f"{prefix}/portfolio/{user_id}/{item_id}/{payload.original_filename}"
 
-        item.original_filename = payload.original_filename
-        item.content_type = payload.content_type
-        item.byte_size = payload.byte_size
-        item.object_key = object_key
-        await self._session.commit()
-
         upload_url, headers = await generate_presigned_put_url(
             bucket=bucket,
             object_key=object_key,
             content_type=payload.content_type,
             ttl_seconds=self._settings.s3_presigned_put_ttl_seconds,
         )
+        item.original_filename = payload.original_filename
+        item.content_type = payload.content_type
+        item.byte_size = payload.byte_size
+        item.object_key = object_key
+        item.upload_completed_at = None
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
         return PortfolioUploadIntentResponse(
             portfolio_item_id=item.id,
             object_key=object_key,
@@ -121,10 +127,46 @@ class PortfolioService:
         item_id: UUID,
         _payload: PortfolioCompleteUploadRequest,
     ) -> PortfolioItem:
-        item = await self.get_owned(user_id, item_id)
+        item = await self._repo.get_owned_for_update(item_id, user_id)
+        if item is None:
+            raise NotFoundError("Portfolio item not found")
+        if not item.object_key:
+            raise NotFoundError("No pending file upload for this portfolio item")
         item.upload_completed_at = datetime.now(tz=UTC)
-        await self._session.commit()
-        await self._session.refresh(item)
+        try:
+            await self._session.commit()
+            await self._session.refresh(item)
+        except Exception:
+            await self._session.rollback()
+            raise
+        return item
+
+    async def detach_document(self, user_id: UUID, item_id: UUID) -> PortfolioItem:
+        item = await self._repo.get_owned_for_update(item_id, user_id)
+        if item is None:
+            raise NotFoundError("Portfolio item not found")
+        if not any(
+            (
+                item.object_key,
+                item.original_filename,
+                item.content_type,
+                item.byte_size,
+                item.upload_completed_at,
+            )
+        ):
+            return item
+
+        item.object_key = None
+        item.original_filename = None
+        item.content_type = None
+        item.byte_size = None
+        item.upload_completed_at = None
+        try:
+            await self._session.commit()
+            await self._session.refresh(item)
+        except Exception:
+            await self._session.rollback()
+            raise
         return item
 
     async def get_download_url(

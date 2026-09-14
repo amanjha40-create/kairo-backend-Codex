@@ -28,6 +28,18 @@ class PortfolioRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_owned_for_update(self, item_id: UUID, user_id: UUID) -> PortfolioItem | None:
+        stmt = (
+            select(PortfolioItem)
+            .where(
+                PortfolioItem.id == item_id,
+                PortfolioItem.user_id == user_id,
+                PortfolioItem.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_user(
         self,
         user_id: UUID,
