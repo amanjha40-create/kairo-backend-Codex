@@ -23,11 +23,13 @@ class PassportShareRepository:
         await self._session.flush()
         return link
 
-    async def get_owned(self, share_id: UUID, owner_user_id: UUID) -> PassportShareLink | None:
+    async def get_owned(self, share_id: UUID, owner_user_id: UUID, *, for_update: bool = False) -> PassportShareLink | None:
         stmt = select(PassportShareLink).where(
             PassportShareLink.id == share_id,
             PassportShareLink.owner_user_id == owner_user_id,
         )
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_token_hash(self, token_hash: str) -> PassportShareLink | None:

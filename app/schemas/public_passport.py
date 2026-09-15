@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.passport_share import PassportSharePermissions
-from app.schemas.trust_score import TrustScoreResponse
+from app.schemas.passport_share import PassportSharePermissions, ResolvedSharingMode
+from typing import Literal
 
 
 class PublicPassportProfile(BaseModel):
@@ -154,10 +154,22 @@ class PublicPassportShareMetadata(BaseModel):
     expires_at: datetime | None
     track_views: bool
     permissions: PassportSharePermissions
+    policy_version: Literal[1, 2] = 1
+    sharing_mode: ResolvedSharingMode = "legacy_mixed"
+
+
+class PublicPassportTrustScore(BaseModel):
+    """Recipient allowlist; no contributor names, private details or owner breakdown."""
+    model_config = ConfigDict(from_attributes=True)
+    overall: int | None
+    status: str
+    score_version: str = "v1"
+    last_calculated_at: datetime | None = None
+    verification_completeness_percentage: int = 0
 
 
 class PublicPassportResponse(BaseModel):
     profile: PublicPassportProfile
-    trust_score: TrustScoreResponse | None
+    trust_score: PublicPassportTrustScore | None
     vault: PublicPassportVault
     share: PublicPassportShareMetadata

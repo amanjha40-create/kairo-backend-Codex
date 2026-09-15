@@ -16,11 +16,19 @@ from app.schemas.passport_share import (
     PassportShareCreateResponse,
     PassportShareResponse,
     PassportShareUpdateRequest,
+    PassportShareCapabilities,
 )
 from app.services.passport_share_service import PassportShareService
 from app.services.passport_share_view_service import PassportShareViewService
 
 router = APIRouter(prefix="/passport-shares", tags=["passport-shares"])
+
+
+@router.get("/capabilities", response_model=PassportShareCapabilities)
+async def passport_share_capabilities(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+) -> PassportShareCapabilities:
+    return PassportShareCapabilities()
 
 
 @router.post("", response_model=PassportShareCreateResponse, status_code=status.HTTP_201_CREATED)

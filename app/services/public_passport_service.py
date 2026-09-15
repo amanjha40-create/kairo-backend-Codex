@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 from datetime import UTC, datetime
+from urllib.parse import quote, urlsplit, parse_qs
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,7 @@ from app.models import (
     Project,
     Skill,
     UserDocument,
+    User,
 )
 from app.models.employment_document import EmploymentDocument
 from app.models.freelance_contract import FreelanceContract
@@ -44,7 +47,9 @@ from app.schemas.public_passport import (
     PublicPassportSkill,
     PublicPassportUserDocument,
     PublicPassportVault,
+    PublicPassportTrustScore,
 )
+from app.services.passport_sharing_policy import resolve_policy
 from app.services.trust_score_service import TrustScoreService
 from app.services.user_service import UserService
 
@@ -81,21 +86,27 @@ class PublicPassportService:
 
     async def get_by_token(self, raw_token: str) -> PublicPassportResponse:
         link = await self._resolve_active_share(raw_token)
-        permissions = PassportSharePermissions.model_validate(link.permissions or {})
+        policy = resolve_policy(link.permissions)
+        permissions = policy.permissions
 
         profile = await self._users.get_public_profile(link.owner_user_id)
         trust_score = None
         if permissions.show_trust_score:
-            trust_score = await self._trust.calculate_trust_score(link.owner_user_id)
+            score = await self._trust.calculate_trust_score(link.owner_user_id)
+            trust_score = PublicPassportTrustScore.model_validate(score.model_dump())
 
-        vault = await self.build_vault_for_user(link.owner_user_id, permissions, public_only=True)
+        vault = await self.build_vault_for_user(
+            link.owner_user_id, permissions, public_only=True,
+            sharing_mode=policy.mode if policy.version == 2 else None,
+        )
         return PublicPassportResponse(
             profile=PublicPassportProfile(
                 full_name=profile.full_name,
-                headline=profile.headline,
-                location=profile.location,
-                avatar_url=profile.avatar_url,
-                profile_slug=profile.profile_slug,
+                headline=profile.headline if permissions.include_profile else None,
+                location=profile.location if permissions.include_profile else None,
+                avatar_url=(f"/api/v1/public/passport/{quote(raw_token, safe='')}/photo"
+                            if permissions.show_photo and permissions.include_profile and profile.avatar_url else None),
+                profile_slug=profile.profile_slug if permissions.include_profile else None,
             ),
             trust_score=trust_score,
             vault=vault,
@@ -105,8 +116,42 @@ class PublicPassportService:
                 expires_at=link.expires_at,
                 track_views=link.track_views,
                 permissions=permissions,
+                policy_version=policy.version,
+                sharing_mode=policy.mode,
             ),
         )
+
+    async def get_photo_by_token(self, raw_token: str) -> tuple[bytes, str]:
+        link = await self._resolve_active_share(raw_token)
+        permissions = resolve_policy(link.permissions).permissions
+        if not permissions.include_profile or not permissions.show_photo:
+            raise NotFoundError("Trust Passport not found")
+        user = (await self._session.execute(select(User).where(
+            User.id == link.owner_user_id, User.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if user is None or not user.avatar_key or not self._settings.s3_documents_bucket:
+            raise NotFoundError("Photo not found")
+
+        def read_photo():
+            from app.infrastructure.s3.client import get_s3_client
+            response = get_s3_client(self._settings).get_object(
+                Bucket=self._settings.s3_documents_bucket, Key=user.avatar_key,
+            )
+            body = response["Body"]
+            try:
+                content_type = str(response.get("ContentType", "")).split(";")[0].lower()
+                if content_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+                    raise NotFoundError("Photo not found")
+                content = body.read(5 * 1024 * 1024 + 1)
+                if not content or len(content) > 5 * 1024 * 1024:
+                    raise NotFoundError("Photo not found")
+                return content, content_type
+            finally:
+                body.close()
+        try:
+            return await asyncio.to_thread(read_photo)
+        except Exception as exc:
+            raise NotFoundError("Photo not found") from exc
 
     async def _resolve_active_share(self, raw_token: str) -> PassportShareLink:
         link = await self._shares.get_by_token_hash(self._hash_token(raw_token))
@@ -124,6 +169,7 @@ class PublicPassportService:
         permissions: PassportSharePermissions,
         *,
         public_only: bool = False,
+        sharing_mode: str | None = None,
     ) -> PublicPassportVault:
         show_documents = permissions.show_documents
 
@@ -139,7 +185,7 @@ class PublicPassportService:
             )
             if public_only:
                 employment_query = employment_query.where(
-                    Employment.verification_status.in_(self._PUBLIC_EMPLOYMENT_STATUSES),
+                    Employment.verification_status.in_({"verified"} if sharing_mode == "verified_only" else self._PUBLIC_EMPLOYMENT_STATUSES),
                 )
             emp_rows = (await self._session.execute(employment_query)).scalars().all()
 
@@ -190,7 +236,7 @@ class PublicPassportService:
             )
             if public_only:
                 education_query = education_query.where(
-                    Education.verification_status.in_(self._PUBLIC_EDUCATION_STATUSES),
+                    Education.verification_status.in_({"verified"} if sharing_mode == "verified_only" else self._PUBLIC_EDUCATION_STATUSES),
                 )
             edu_rows = (await self._session.execute(education_query)).scalars().all()
             educations = [
@@ -378,7 +424,7 @@ class PublicPassportService:
                 for row in project_rows
             ]
 
-        return PublicPassportVault(
+        vault = PublicPassportVault(
             employments=employments,
             educations=educations,
             internships=internships,
@@ -390,6 +436,32 @@ class PublicPassportService:
             skills=skills,
             projects=projects,
         )
+        if public_only:
+            for category in type(vault).model_fields:
+                for record in getattr(vault, category):
+                    if sharing_mode is not None:
+                        if category not in {"employments", "educations"} or record.verification_status == "approved":
+                            record.verification_status = "self_declared"
+                    for field in ("url", "credential_url", "project_url", "repository_url"):
+                        if hasattr(record, field):
+                            setattr(record, field, safe_recipient_url(getattr(record, field)))
+        return vault
 
     def _hash_token(self, raw_token: str) -> str:
         return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def safe_recipient_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        url = urlsplit(value)
+        host = (url.hostname or "").lower()
+        query = {key.lower() for key in parse_qs(url.query)}
+        if url.scheme != "https" or not host or url.username or url.password:
+            return None
+        if host.endswith(("amazonaws.com", "amazonaws.com.cn")) or any(key.startswith("x-amz-") for key in query):
+            return None
+        return value
+    except ValueError:
+        return None

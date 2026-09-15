@@ -10,13 +10,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.exceptions import ConflictError, NotFoundError
+from app.exceptions import ConflictError, NotFoundError, ValidationAppError
+from app.services.passport_sharing_policy import resolve_policy, stored_v2, narrow_policy
 from app.models.passport_share_link import PassportShareLink
 from app.repositories.passport_share import PassportShareRepository
 from app.schemas.passport_share import (
     PassportShareCreateRequest,
     PassportShareCreateResponse,
-    PassportSharePermissions,
     PassportShareResponse,
     PassportShareUpdateRequest,
 )
@@ -34,7 +34,7 @@ class PassportShareService:
             owner_user_id=owner_user_id,
             label=payload.label,
             token_hash=self._hash_token(raw_token),
-            permissions=payload.permissions.model_dump(),
+            permissions=stored_v2(payload.sharing_mode, payload.permissions),
             track_views=payload.track_views,
             expires_at=payload.expires_at,
         )
@@ -69,27 +69,31 @@ class PassportShareService:
         share_id: UUID,
         payload: PassportShareUpdateRequest,
     ) -> PassportShareResponse:
-        link = await self._repo.get_owned(share_id, owner_user_id)
+        link = await self._repo.get_owned(share_id, owner_user_id, for_update=True)
         if link is None:
             raise NotFoundError("Passport share link not found")
         self._assert_mutable(link)
 
         updates = payload.model_dump(exclude_unset=True)
+        policy = resolve_policy(link.permissions)
+        if policy.version == 2 and "label" in updates and payload.label is None:
+            raise ValidationAppError("Purpose cannot be null")
+        new_permissions = narrow_policy(link.permissions, payload)
         if "label" in updates:
             link.label = updates["label"]
         if "expires_at" in updates:
             link.expires_at = updates["expires_at"]
         if "track_views" in updates:
             link.track_views = updates["track_views"]
-        if "permissions" in updates and payload.permissions is not None:
-            link.permissions = payload.permissions.model_dump()
+        if "permissions" in updates or "sharing_mode" in updates:
+            link.permissions = new_permissions
 
         await self._session.commit()
         await self._session.refresh(link)
         return self._to_response(link)
 
     async def revoke(self, owner_user_id: UUID, share_id: UUID) -> PassportShareResponse:
-        link = await self._repo.get_owned(share_id, owner_user_id)
+        link = await self._repo.get_owned(share_id, owner_user_id, for_update=True)
         if link is None:
             raise NotFoundError("Passport share link not found")
 
@@ -107,10 +111,13 @@ class PassportShareService:
             raise ConflictError("Expired share links cannot be updated. Create a new link instead.")
 
     def _to_response(self, link: PassportShareLink) -> PassportShareResponse:
+        policy = resolve_policy(link.permissions)
         return PassportShareResponse(
             id=link.id,
             label=link.label,
-            permissions=PassportSharePermissions.model_validate(link.permissions or {}),
+            permissions=policy.permissions,
+            policy_version=policy.version,
+            sharing_mode=policy.mode,
             track_views=link.track_views,
             expires_at=link.expires_at,
             revoked_at=link.revoked_at,
