@@ -1,4 +1,4 @@
-"""Focused Version 1 Trust Score engine tests."""
+"""Current Trust Score engine regressions, including preserved Version 1 signals."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -57,7 +57,7 @@ class _Session:
 def _settings():
     return SimpleNamespace(
         trust_score_require_consent=True,
-        trust_score_version="v1",
+        trust_score_version="v2",
         trust_score_identity_weight=0.25,
         trust_score_employment_weight=0.45,
         trust_score_education_weight=0.30,
@@ -85,7 +85,7 @@ async def test_consent_gate_returns_no_numeric_score_and_persists_reason():
 
     assert response.status == "consent_required"
     assert response.overall is None
-    assert response.score_version == "v1"
+    assert response.score_version == "v2"
     assert response.manual_review_reason is not None
     assert session.added[0].status == "consent_required"
 
@@ -96,8 +96,18 @@ async def test_v1_scores_only_three_domains_and_explains_verified_inputs():
     session = _Session(
         user,
         documents=[SimpleNamespace(verification_status="approved", deleted_at=None)],
-        employments=[SimpleNamespace(verification_status="approved", deleted_at=None, employer_legal_name="Example Corp")],
-        educations=[SimpleNamespace(verification_status="verified", deleted_at=None, institution_name="Example University")],
+        employments=[
+            SimpleNamespace(
+                verification_status="approved", deleted_at=None, employer_legal_name="Example Corp"
+            )
+        ],
+        educations=[
+            SimpleNamespace(
+                verification_status="verified",
+                deleted_at=None,
+                institution_name="Example University",
+            )
+        ],
     )
     response = await TrustScoreService(session, _settings()).calculate_trust_score(user.id)
 
@@ -115,7 +125,7 @@ async def test_v1_scores_only_three_domains_and_explains_verified_inputs():
         "employment_authoritative",
         "education_authoritative",
     }
-    assert session.added[0].score_version == "v1"
+    assert session.added[0].score_version == "v2"
 
 
 @pytest.mark.asyncio
@@ -174,3 +184,34 @@ def test_domain_score_is_floored_and_capped():
     assert result.score == 100
     result = TrustScoreService._domain(-10, 100, 0.45, [], [])
     assert result.score == 0
+
+
+@pytest.mark.parametrize(
+    "status", ["pending", "self_declared", "unverified", "rejected", "cancelled"]
+)
+async def test_unverified_document_states_never_add_identity_points(status):
+    user = _user(trust_score_consent_at=datetime.now(UTC))
+    session = _Session(user)
+    service = TrustScoreService(session, _settings())
+    baseline = await service.calculate_trust_score(user.id)
+    session.documents = [SimpleNamespace(verification_status=status, deleted_at=None)]
+    after = await service.calculate_trust_score(user.id)
+    assert after.domain_details["identity"] == baseline.domain_details["identity"]
+    assert after.overall == baseline.overall
+    assert "identity_self_attested" not in {item.code for item in after.positive_contributors}
+
+
+@pytest.mark.parametrize(
+    "verified_field,code",
+    [("email_verified_at", "email_verified"), ("phone_verified_at", "phone_verified")],
+)
+async def test_each_verified_contact_signal_still_contributes(verified_field, code):
+    user = _user(
+        trust_score_consent_at=datetime.now(UTC), email_verified_at=None, phone_verified_at=None
+    )
+    service = TrustScoreService(_Session(user), _settings())
+    before = await service.calculate_trust_score(user.id)
+    setattr(user, verified_field, datetime.now(UTC))
+    after = await service.calculate_trust_score(user.id)
+    assert after.breakdown.identity > before.breakdown.identity
+    assert code in {item.code for item in after.positive_contributors}

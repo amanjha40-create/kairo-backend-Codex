@@ -1,4 +1,11 @@
-# Kairo Trust Score V1
+# KairoID Trust Score V2
+
+Version 2 removes the self-attested identity-document tier: standalone uploads contribute
+zero points regardless of type, attachment, checksum, or successful upload. The existing
+approved/verified identity tier (40 points), verified phone (15), verified email (15),
+Employment, Education, weights, and consent rules are unchanged. Production has not been
+enabled by this source change. Deploy this calculator with `TRUST_SCORE_VERSION=v2`;
+configuration rejects an old formula label. Historical v1 snapshots remain untouched.
 
 The canonical source for Version 1 scoring is `Kairo_Trust_Score_Logic.md.pdf` supplied with Command 9. The backend implementation is in `app/services/trust_score_service.py`; its response contract is in `app/schemas/trust_score.py`.
 
@@ -16,7 +23,7 @@ The canonical source for Version 1 scoring is `Kairo_Trust_Score_Logic.md.pdf` s
 
 ## Current evidence mapping
 
-- Identity document approved/verified: authoritative identity tier; candidate-submitted identity evidence: self-attested tier.
+- Identity document approved/verified: authoritative identity tier; unverified candidate-provided documents: zero points in v2.
 - Verified email and phone contribute their independent binary checks.
 - Approved employment claims and verified education claims contribute existing workflow outcomes; submitted but unverified claims are represented as self-attested evidence.
 - Face KYC is excluded until the existing identity architecture supplies a face-match result; this follows the specification's in-person/non-applicable rule.
@@ -36,4 +43,22 @@ The specification's critical fraud overrides are represented by the response con
 
 ## Maintenance
 
-Use a new `score_version` and migration when scoring rules change. Keep the existing snapshot rows immutable for audit and explainability. Proposed weight defaults remain environment-configurable through `TRUST_SCORE_*_WEIGHT` settings.
+### Document-signal audit
+
+| Signal | Previous effect | V2 effect | Basis | Decision |
+| --- | --- | --- | --- | --- |
+| Standalone unverified UserDocument, any type | 10 identity points if no authoritative identity document | 0 | Self-attested | Remove |
+| Approved/verified identity UserDocument | 40 identity points | Unchanged | Existing authoritative status | Keep |
+| Verified email | 15 identity points | Unchanged | Verified contact | Keep |
+| Verified phone | 15 identity points | Unchanged | Verified contact | Keep |
+| Approved/verified Employment record | 80 per record before averaging | Unchanged | Authoritative record status | Keep |
+| Other non-rejected/cancelled Employment record | 7.5 per record before averaging | Unchanged | Existing self-attested record tier, not file presence | Outside this fix |
+| Approved/verified Education record | 70 per record before averaging | Unchanged | Authoritative record status | Keep |
+| Other non-rejected/cancelled Education record | 17.5 per record before averaging | Unchanged | Existing self-attested record tier, not file presence | Outside this fix |
+| Employment/Education attachment existence | 0 | 0 | Evidence, not record verification | Keep |
+| Certification or Project/Portfolio attachment | 0 | 0 | Not queried by calculator | Keep |
+| Document Pack creation/view/revocation | 0 | 0 | Sharing, not verification | Keep |
+
+Identity points are normalized against 70; existing domain weights remain unchanged.
+
+Use a new `score_version` when scoring rules change. A migration is needed only if the stored schema changes. The existing String(32) snapshot version supports v2 without a migration; Alembic remains 078. Keep existing snapshot rows immutable for audit and explainability. Weight defaults remain environment-configurable through `TRUST_SCORE_*_WEIGHT` settings.

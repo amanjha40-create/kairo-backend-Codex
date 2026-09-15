@@ -1,4 +1,4 @@
-"""Canonical Version 1 Trust Score engine.
+"""Canonical Version 2 Trust Score engine.
 
 The engine consumes existing verification outcomes. It does not verify claims,
 change verification state, or infer trust from profile completeness.
@@ -26,7 +26,7 @@ _VERIFIED_STATES = {"approved", "verified"}
 
 
 class TrustScoreService:
-    """Calculate and persist explainable, versioned Version 1 scores."""
+    """Calculate current scores without rewriting historical snapshots."""
 
     def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
@@ -108,15 +108,11 @@ class TrustScoreService:
             select(UserDocument).where(UserDocument.user_id == user.id, UserDocument.deleted_at.is_(None))
         )).scalars().all())
         identity_doc = next((doc for doc in documents if doc.verification_status in _VERIFIED_STATES), None)
-        self_attested_doc = next((doc for doc in documents if doc.verification_status not in {"rejected", "cancelled"}), None)
         points = 0.0
         positives: list[TrustScoreContributor] = []
         if identity_doc:
             points += 40
             positives.append(TrustScoreContributor(code="identity_authoritative", label="Identity document verified", points=40, detail="Approved identity evidence provides the authoritative tier."))
-        elif self_attested_doc:
-            points += 10
-            positives.append(TrustScoreContributor(code="identity_self_attested", label="Identity document submitted", points=10, detail="Candidate-submitted identity evidence is self-attested only."))
         if user.phone_verified_at:
             points += 15
             positives.append(TrustScoreContributor(code="phone_verified", label="Mobile number verified", points=15, detail="Phone OTP verification is complete."))

@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
 from math import isclose
-from typing import Self
+from typing import Literal, Self
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
@@ -346,8 +346,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SIGNUP_RECOVERY_RATE_LIMIT_WINDOW_SECONDS"),
     )
     # --- Versioned Trust Score configuration ---
-    trust_score_version: str = Field(
-        default="v1", validation_alias=AliasChoices("TRUST_SCORE_VERSION")
+    trust_score_version: Literal["v2"] = Field(
+        default="v2", validation_alias=AliasChoices("TRUST_SCORE_VERSION")
     )
     trust_score_identity_weight: float = Field(
         default=0.25, ge=0, le=1, validation_alias=AliasChoices("TRUST_SCORE_IDENTITY_WEIGHT")
