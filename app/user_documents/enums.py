@@ -13,6 +13,8 @@ class UserDocumentType(StrEnum):
     DRIVING_LICENSE = "driving_license"
     PASSPORT = "passport"
     VOTER_ID = "voter_id"
+    BIRTH_CERTIFICATE = "birth_certificate"
+    ADDRESS_PROOF = "address_proof"
     GOVERNMENT_ID = "government_id"
     OTHER = "other"
 

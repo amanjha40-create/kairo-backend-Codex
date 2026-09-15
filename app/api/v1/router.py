@@ -19,6 +19,7 @@ from app.api.v1.routes import (
     credential_verification,
     dashboard,
     documents,
+    document_share_packs,
     educations,
     employment_documents,
     employments,
@@ -90,6 +91,8 @@ api_router.include_router(public_vault.router)
 api_router.include_router(credential_verification.router)
 api_router.include_router(public_credential_verification.router)
 api_router.include_router(documents.router)
+api_router.include_router(document_share_packs.router)
+api_router.include_router(document_share_packs.public_router)
 api_router.include_router(employment_documents.router)
 api_router.include_router(admin_review_workflow.router)
 api_router.include_router(admin_employer_verifications.router)

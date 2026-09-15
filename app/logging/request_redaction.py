@@ -6,6 +6,9 @@ import re
 
 _SENSITIVE_PATHS = (
     re.compile(
+        r"(?P<prefix>(?:https?://[^/\s]+)?(?:/api/v1)?/public/document-share-packs/)(?P<credential>[^/?\s]+)"
+    ),
+    re.compile(
         r"(?P<prefix>(?:https?://[^/\s]+)?(?:(?:/api/v1)?/public/employer-verifications?/|/employer-verification/))(?P<credential>[^/?\s]+)"
     ),
     re.compile(
@@ -19,7 +22,7 @@ _SENSITIVE_PATHS = (
     ),
 )
 _SENSITIVE_QUERY_PARAMS = re.compile(
-    r"(?P<prefix>[?&](?:token|reset_token|code|state|handoff|magic_token|invitation_token)=)(?P<credential>[^&#\s]+)",
+    r"(?P<prefix>[?&](?:token|signature|reset_token|code|state|handoff|magic_token|invitation_token)=)(?P<credential>[^&#\s]+)",
     re.IGNORECASE,
 )
 

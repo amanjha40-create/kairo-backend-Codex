@@ -95,7 +95,12 @@ def create_app() -> FastAPI:
     application.add_middleware(
         SecurityHeadersMiddleware,
         enable_hsts=settings.app_env.value in {"staging", "production"},
-        no_store_prefixes=(f"{settings.api_v1_prefix}/admin", f"{settings.api_v1_prefix}/auth"),
+        no_store_prefixes=(
+            f"{settings.api_v1_prefix}/admin",
+            f"{settings.api_v1_prefix}/auth",
+            f"{settings.api_v1_prefix}/document-share-packs",
+            f"{settings.api_v1_prefix}/public/document-share-packs",
+        ),
     )
 
     application.include_router(api_router, prefix=settings.api_v1_prefix)

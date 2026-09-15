@@ -3,6 +3,7 @@
 from app.models.admin_access_audit_event import AdminAccessAuditEvent
 from app.models.admin_access_invitation import AdminAccessInvitation
 from app.models.certification import Certification
+from app.models.document_share_pack import DocumentSharePack, DocumentSharePackItem
 from app.models.credential_verification_request import CredentialVerificationRequest
 from app.models.education import Education
 from app.models.education_document import EducationDocument
@@ -96,6 +97,8 @@ __all__ = [
     "AdminAccessAuditEvent",
     "AdminAccessInvitation",
     "Certification",
+    "DocumentSharePack",
+    "DocumentSharePackItem",
     "CredentialVerificationRequest",
     "Education",
     "EducationDocument",
