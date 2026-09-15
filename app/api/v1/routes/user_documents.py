@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_user_document_service
@@ -78,8 +79,31 @@ async def get_download_url(
     document_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
     svc: Annotated[UserDocumentService, Depends(get_user_document_service)],
+    response: Response,
 ) -> UserDocumentDownloadUrlResponse:
+    response.headers["Cache-Control"] = "no-store, private, max-age=0"
     return await svc.get_download_url(current.id, document_id)
+
+
+@router.get(
+    "/{document_id}/content",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {
+                mime: {"schema": {"type": "string", "format": "binary"}}
+                for mime in ("application/pdf", "image/jpeg", "image/png", "image/webp")
+            }
+        }
+    },
+)
+async def view_user_document(
+    document_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[UserDocumentService, Depends(get_user_document_service)],
+):
+    chunks, headers, mime = await svc.content(current.id, document_id)
+    return StreamingResponse(chunks, headers=headers, media_type=mime)
 
 
 @router.patch("/{document_id}", response_model=UserDocumentResponse)

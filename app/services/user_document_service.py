@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
+import re
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,11 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.exceptions import NotFoundError, ServiceUnavailableError
 from app.infrastructure.s3.presign import (
-    generate_presigned_get_url,
     generate_presigned_put_url,
 )
 from app.models import UserDocument
 from app.repositories.user_document import UserDocumentRepository
+from app.services.document_pack_storage import ALLOWED_MIME, DocumentPackStorage
 from app.schemas.user_document import (
     UserDocumentUpdateRequest,
     UserDocumentUploadIntentRequest,
@@ -150,21 +152,38 @@ class UserDocumentService:
         await self._session.commit()
 
     async def get_download_url(
-        self, user_id: UUID, document_id: UUID,
+        self,
+        user_id: UUID,
+        document_id: UUID,
     ) -> UserDocumentDownloadUrlResponse:
-        doc = await self._docs.get_owned(document_id, user_id)
-        if doc is None:
-            raise NotFoundError("User document not found")
-        bucket = self._settings.s3_documents_bucket
-        if not bucket:
-            raise ServiceUnavailableError("Document storage is not configured")
-        ttl = 300
-        url = await generate_presigned_get_url(
-            bucket=bucket,
-            object_key=doc.object_key,
-            ttl_seconds=ttl,
-            settings=self._settings,
-        )
+        doc = await self._viewable(user_id, document_id)
         return UserDocumentDownloadUrlResponse(
-            document_id=doc.id, download_url=url, expires_in_seconds=ttl,
+            document_id=doc.id,
+            download_url=f"/api/v1/user-documents/{doc.id}/content",
+            expires_in_seconds=0,
         )
+
+    async def _viewable(self, user_id: UUID, document_id: UUID) -> UserDocument:
+        # Ownership and lifecycle are checked before any storage operation.
+        doc = await self._docs.get_owned(document_id, user_id)
+        if doc is None or not doc.checksum_sha256 or doc.content_type not in ALLOWED_MIME:
+            raise NotFoundError("User document is unavailable")
+        return doc
+
+    async def content(self, user_id: UUID, document_id: UUID):
+        doc = await self._viewable(user_id, document_id)
+        storage = DocumentPackStorage(self._settings)
+        binding = await storage.inspect(doc.object_key)
+        if binding.content_type != doc.content_type or binding.size != doc.byte_size:
+            raise NotFoundError("User document is unavailable")
+        filename = doc.original_filename.replace("\\", "/").rsplit("/", 1)[-1]
+        filename = re.sub(r"[\x00-\x1f\x7f]", "", filename).strip()[:200] or "document"
+        item = SimpleNamespace(
+            object_key=binding.key,
+            object_version=binding.version,
+            object_etag=binding.etag,
+            byte_size=binding.size,
+            filename=filename,
+        )
+        chunks, headers = await storage.open(item)
+        return chunks, headers, binding.content_type
