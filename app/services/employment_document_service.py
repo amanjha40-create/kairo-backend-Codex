@@ -9,10 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.employment.document_catalog import build_document_upload_options
 from app.exceptions import EmploymentAccessDeniedError, EmploymentCaseNotFoundError, NotFoundError
+from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
-from app.infrastructure.s3.presign import generate_presigned_get_url
-from app.schemas.employment.responses import DocumentDownloadUrlResponse, DocumentUploadOptionsResponse
+from app.schemas.employment.responses import (
+    DocumentDownloadUrlResponse,
+    DocumentUploadOptionsResponse,
+)
 from app.schemas.employment_document import (
     DocumentCompleteUploadRequest,
     DocumentUploadCompleteResponse,
@@ -21,6 +24,7 @@ from app.schemas.employment_document import (
     EmploymentDocumentPublic,
 )
 from app.services.document_upload_service import DocumentUploadService
+from app.services.private_document_content import private_document_content
 
 
 class EmploymentDocumentService:
@@ -72,6 +76,18 @@ class EmploymentDocumentService:
         if emp is None:
             raise EmploymentAccessDeniedError()
         return EmploymentDocumentPublic.model_validate(doc)
+
+    async def content(self, owner_user_id: UUID, employment_id: UUID, document_id: UUID):
+        emp = await self._employment.get_owned_active(employment_id, owner_user_id)
+        if emp is None:
+            raise EmploymentCaseNotFoundError()
+        doc = await self._documents.get_active_by_id(document_id)
+        if doc is None or doc.employment_id != employment_id:
+            raise NotFoundError("Document not found")
+        return await private_document_content(
+            self._settings, doc,
+            completed=bool(doc.checksum_sha256 and doc.checksum_sha256 != "0" * 64),
+        )
 
     async def get_download_url(
         self,

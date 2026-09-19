@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_education_service, get_verification_request_service
@@ -25,9 +26,24 @@ from app.schemas.verification_request import (
     VerificationRequestResponse,
 )
 from app.services.education_service import EducationService
+from app.services.private_document_content import CONTENT_RESPONSES
 from app.services.verification_request_service import VerificationRequestService
 
 router = APIRouter(prefix="/educations", tags=["educations"])
+
+
+@router.get(
+    "/{education_id}/documents/{document_id}/content",
+    response_class=StreamingResponse, responses=CONTENT_RESPONSES,
+)
+async def document_content(
+    education_id: UUID,
+    document_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[EducationService, Depends(get_education_service)],
+):
+    chunks, headers, mime = await svc.document_content(current.id, education_id, document_id)
+    return StreamingResponse(chunks, headers=headers, media_type=mime)
 
 
 # --- Education CRUD ---

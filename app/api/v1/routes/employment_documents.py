@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_employment_document_service
@@ -19,8 +20,23 @@ from app.schemas.employment_document import (
 )
 from app.schemas.pagination import Page, PageParams
 from app.services.employment_document_service import EmploymentDocumentService
+from app.services.private_document_content import CONTENT_RESPONSES
 
 router = APIRouter(prefix="/employments", tags=["employment-documents"])
+
+
+@router.get(
+    "/{employment_id}/documents/{document_id}/content",
+    response_class=StreamingResponse, responses=CONTENT_RESPONSES,
+)
+async def document_content(
+    employment_id: UUID,
+    document_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[EmploymentDocumentService, Depends(get_employment_document_service)],
+):
+    chunks, headers, mime = await svc.content(current.id, employment_id, document_id)
+    return StreamingResponse(chunks, headers=headers, media_type=mime)
 
 
 @router.post(

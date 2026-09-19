@@ -281,6 +281,17 @@ class CertificationService:
         await self._session.refresh(item)
         return item
 
+    async def content(self, user_id: UUID, cert_id: UUID):
+        from app.services.private_document_content import private_document_content
+
+        item = await self._repo.get_owned(cert_id, user_id)
+        if item is None:
+            raise NotFoundError("Certification not found")
+        return await private_document_content(
+            self._settings, item,
+            completed=bool(item.checksum_sha256 and item.checksum_sha256 != "0" * 64),
+        )
+
     async def get_download_url(
         self, user_id: UUID, cert_id: UUID,
     ) -> CertificationDownloadUrlResponse:

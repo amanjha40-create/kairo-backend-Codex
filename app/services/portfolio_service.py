@@ -170,6 +170,14 @@ class PortfolioService:
             raise
         return item
 
+    async def content(self, user_id: UUID, item_id: UUID):
+        from app.services.private_document_content import private_document_content
+
+        item = await self.get_owned(user_id, item_id)
+        return await private_document_content(
+            self._settings, item, completed=bool(item.upload_completed_at),
+        )
+
     async def get_download_url(
         self, user_id: UUID, item_id: UUID,
     ) -> PortfolioDownloadUrlResponse:

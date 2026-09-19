@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_certification_service
@@ -23,8 +24,19 @@ from app.schemas.certification import (
 )
 from app.schemas.pagination import Page, PageParams
 from app.services.certification_service import CertificationService
+from app.services.private_document_content import CONTENT_RESPONSES
 
 router = APIRouter(prefix="/certifications", tags=["certifications"])
+
+
+@router.get("/{certification_id}/content", response_class=StreamingResponse, responses=CONTENT_RESPONSES)
+async def document_content(
+    certification_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[CertificationService, Depends(get_certification_service)],
+):
+    chunks, headers, mime = await svc.content(current.id, certification_id)
+    return StreamingResponse(chunks, headers=headers, media_type=mime)
 
 
 @router.get("", response_model=Page[CertificationResponse])

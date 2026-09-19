@@ -22,9 +22,9 @@ from app.repositories.verification_request import VerificationRequestRepository
 from app.resumes.normalization import date_ranges_overlap, normalize_text
 from app.schemas.education import (
     EducationCreateRequest,
+    EducationDocumentDownloadUrlResponse,
     EducationDocumentUploadIntentRequest,
     EducationDocumentUploadIntentResponse,
-    EducationDocumentDownloadUrlResponse,
     EducationUpdateRequest,
 )
 from app.verification_requests.enums import VerificationRequestStatus
@@ -266,6 +266,18 @@ class EducationService:
         await self._session.commit()
         await self._session.refresh(doc)
         return doc
+
+    async def document_content(self, user_id: UUID, education_id: UUID, document_id: UUID):
+        from app.services.private_document_content import private_document_content
+
+        await self.get_owned(user_id, education_id)
+        doc = await self._documents.get_for_education(document_id, education_id)
+        if doc is None:
+            raise NotFoundError("Education document not found")
+        return await private_document_content(
+            self._settings, doc,
+            completed=bool(doc.checksum_sha256 and doc.checksum_sha256 != "0" * 64),
+        )
 
     async def get_document_download_url(
         self, user_id: UUID, education_id: UUID, document_id: UUID,
