@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -14,16 +13,17 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import verify_password
-from app.auth.signup_otp import SignupOtpStore
 from app.config import Settings
 from app.core.constants import Role
 from app.exceptions import (
     ForbiddenError,
     NotFoundError,
+    ServiceUnavailableError,
     UnauthorizedError,
     ValidationAppError,
 )
-from app.infrastructure.s3.client import get_s3_client
+from app.infrastructure.sqs.envelope import SqsJobEnvelope
+from app.infrastructure.sqs.publisher import send_json_message
 from app.models import (
     Certification,
     CredentialVerificationRequest,
@@ -69,8 +69,10 @@ from app.models import (
     VerificationRequest,
     VerificationRequestEvidence,
 )
-from app.repositories.user import UserRepository
+from app.models.account_deletion import AccountDeletion
 from app.schemas.account_deletion import AccountDeletionRequest
+from app.services.account_deletion_inventory import inventory_deletion
+from app.services.account_deletion_policy import revoke_and_scrub_related, scrub_invitation_events
 from app.verification_requests.enums import VerificationRequestStatus
 
 logger = logging.getLogger(__name__)
@@ -92,7 +94,6 @@ _PURGEABLE_VERIFICATION_STATUSES = frozenset(
 @dataclass(slots=True)
 class _DeletionSnapshot:
     pending_signup_ids: list[UUID] = field(default_factory=list)
-    storage_keys: set[str] = field(default_factory=set)
     employment_ids: set[UUID] = field(default_factory=set)
     retained_employment_ids: set[UUID] = field(default_factory=set)
     education_ids: set[UUID] = field(default_factory=set)
@@ -115,25 +116,38 @@ class AccountDeletionService:
         self._session = session
         self._settings = settings
         self._redis = redis
-        self._users = UserRepository(session)
-        self._otp = SignupOtpStore(redis, settings)
 
     async def delete_candidate_account(
         self,
         actor_user_id: UUID,
         payload: AccountDeletionRequest,
     ) -> None:
-        user = await self._users.get_by_id(actor_user_id)
+        user = (
+            await self._session.execute(
+                select(User)
+                .where(User.id == actor_user_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
         if user is None:
             raise NotFoundError("User not found")
+
+        self._assert_confirmation(payload.confirm)
+        if user.deleted_at is not None:
+            # The HTTP auth dependency still rejects deleted accounts. A duplicate
+            # in-flight service invocation is a no-op, not an erasure restart.
+            previous = await self._session.scalar(
+                select(AccountDeletion.id).where(AccountDeletion.user_id == user.id)
+            )
+            if previous is None:
+                raise NotFoundError("User not found")
+            await self._session.commit()
+            return
 
         await self._assert_candidate_self_service_eligible(user)
         self._assert_confirmation(payload.confirm)
         self._assert_recent_password_reauthentication(user, payload.current_password)
-
-        snapshot = await self._build_snapshot(user)
-        await self._clear_signup_otp_state(snapshot.pending_signup_ids)
-        await self._delete_storage_objects(snapshot.storage_keys)
 
         now = datetime.now(tz=UTC)
         tombstone_email = self._tombstone_email(user.id)
@@ -141,6 +155,9 @@ class AccountDeletionService:
         original_email = user.email
 
         try:
+            snapshot = await self._build_snapshot(user)
+            deletion = await inventory_deletion(self._session, self._settings, user, snapshot)
+            await revoke_and_scrub_related(self._session, user.id, snapshot, now)
             await self._purge_verification_requests(snapshot.verification_request_ids_to_purge)
             await self._scrub_retained_verification_records(
                 request_ids=snapshot.verification_request_ids_to_retain,
@@ -162,17 +179,31 @@ class AccountDeletionService:
             await self._session.commit()
         except Exception:
             await self._session.rollback()
-            raise
+            logger.warning("account_deletion.database_transaction_failed")
+            raise ServiceUnavailableError(
+                "Account deletion could not be completed. Please try again."
+            ) from None
 
         logger.info(
             "candidate_account_deleted",
             extra={
                 "event": "candidate_account_deleted",
-                "user_id": str(user.id),
                 "purged_request_count": len(snapshot.verification_request_ids_to_purge),
                 "retained_request_count": len(snapshot.verification_request_ids_to_retain),
             },
         )
+        # Acceleration only. The independently runnable DB sweeper needs no queue.
+        if self._settings.sqs_main_queue_url:
+            try:
+                await send_json_message(
+                    SqsJobEnvelope(
+                        type="account.deletion.purge",
+                        data={"deletion_id": str(deletion.id)},
+                    ),
+                    settings=self._settings,
+                )
+            except Exception:
+                logger.warning("account_deletion.queue_acceleration_unavailable")
 
     async def _assert_candidate_self_service_eligible(self, user: User) -> None:
         if user.role != Role.USER.value:
@@ -190,8 +221,7 @@ class AccountDeletionService:
         )
         if membership_count:
             raise ForbiddenError(
-                "Organization workspace accounts cannot use "
-                "candidate self-service account deletion"
+                "Organization workspace accounts cannot use candidate self-service account deletion"
             )
 
     def _assert_confirmation(self, confirm: str) -> None:
@@ -237,11 +267,7 @@ class AccountDeletionService:
             .all()
         )
         snapshot.education_ids = set(
-            (
-                await self._session.execute(
-                    select(Education.id).where(Education.user_id == user.id)
-                )
-            )
+            (await self._session.execute(select(Education.id).where(Education.user_id == user.id)))
             .scalars()
             .all()
         )
@@ -266,8 +292,10 @@ class AccountDeletionService:
 
         request_filters = [
             VerificationRequest.subject_user_id == user.id,
-            VerificationRequest.requested_by_user_id == user.id,
-            VerificationRequest.subject_email == user.email,
+            (
+                VerificationRequest.subject_user_id.is_(None)
+                & (VerificationRequest.subject_email == user.email)
+            ),
         ]
         if snapshot.employment_ids:
             request_filters.append(VerificationRequest.employment_id.in_(snapshot.employment_ids))
@@ -275,11 +303,7 @@ class AccountDeletionService:
             request_filters.append(VerificationRequest.education_id.in_(snapshot.education_ids))
 
         requests = list(
-            (
-                await self._session.execute(
-                    select(VerificationRequest).where(or_(*request_filters))
-                )
-            )
+            (await self._session.execute(select(VerificationRequest).where(or_(*request_filters))))
             .scalars()
             .all()
         )
@@ -289,96 +313,12 @@ class AccountDeletionService:
                 snapshot.verification_request_ids_to_purge.add(request.id)
             else:
                 snapshot.verification_request_ids_to_retain.add(request.id)
-                if request.employment_id is not None:
+                if request.employment_id in snapshot.employment_ids:
                     snapshot.retained_employment_ids.add(request.employment_id)
-                if request.education_id is not None:
+                if request.education_id in snapshot.education_ids:
                     snapshot.retained_education_ids.add(request.education_id)
 
-        storage_statements = [
-            select(ResumeDocument.storage_key).where(ResumeDocument.user_id == user.id),
-            select(UserDocument.object_key).where(UserDocument.user_id == user.id),
-            select(EmploymentDocument.object_key).where(
-                or_(
-                    EmploymentDocument.uploaded_by_user_id == user.id,
-                    (
-                        EmploymentDocument.employment_id.in_(snapshot.employment_ids)
-                        if snapshot.employment_ids
-                        else False
-                    ),
-                )
-            ),
-            select(EducationDocument.object_key).where(
-                or_(
-                    EducationDocument.uploaded_by_user_id == user.id,
-                    (
-                        EducationDocument.education_id.in_(snapshot.education_ids)
-                        if snapshot.education_ids
-                        else False
-                    ),
-                )
-            ),
-            select(Certification.object_key).where(
-                Certification.user_id == user.id,
-                Certification.object_key.is_not(None),
-            ),
-            select(PortfolioItem.object_key).where(
-                PortfolioItem.user_id == user.id,
-                PortfolioItem.object_key.is_not(None),
-            ),
-            select(InternshipDocument.object_key).where(
-                or_(
-                    InternshipDocument.uploaded_by_user_id == user.id,
-                    (
-                        InternshipDocument.internship_id.in_(snapshot.internship_ids)
-                        if snapshot.internship_ids
-                        else False
-                    ),
-                )
-            ),
-            select(FreelanceContractDocument.object_key).where(
-                or_(
-                    FreelanceContractDocument.uploaded_by_user_id == user.id,
-                    (
-                        FreelanceContractDocument.freelance_contract_id.in_(
-                            snapshot.freelance_ids
-                        )
-                        if snapshot.freelance_ids
-                        else False
-                    ),
-                )
-            ),
-        ]
-
-        if user.avatar_key:
-            snapshot.storage_keys.add(user.avatar_key)
-
-        for stmt in storage_statements:
-            keys = list((await self._session.execute(stmt)).scalars().all())
-            snapshot.storage_keys.update({key for key in keys if key})
-
         return snapshot
-
-    async def _clear_signup_otp_state(self, signup_ids: list[UUID]) -> None:
-        for signup_id in signup_ids:
-            await self._otp.clear_all(signup_id)
-
-    async def _delete_storage_objects(self, object_keys: set[str]) -> None:
-        if not object_keys:
-            return
-
-        bucket = self._settings.s3_documents_bucket
-        if not bucket:
-            raise ValidationAppError(
-                "Account deletion cannot proceed because document storage "
-                "is not configured"
-            )
-
-        def _delete_one(object_key: str) -> None:
-            client = get_s3_client(self._settings)
-            client.delete_object(Bucket=bucket, Key=object_key)
-
-        for object_key in sorted(object_keys):
-            await asyncio.to_thread(_delete_one, object_key)
 
     async def _purge_verification_requests(self, request_ids: set[UUID]) -> None:
         if not request_ids:
@@ -412,6 +352,13 @@ class AccountDeletionService:
             request.subject_email = tombstone_email
             request.candidate_response = None
             request.candidate_response_submitted_at = None
+            request.claim_snapshot = {}
+            request.trust_context = {}
+            request.registry_resolution_metadata = {}
+            request.target_organization_metadata = {}
+            request.organization_internal_note = None
+            request.consented_fields = []
+            request.consented_evidence_scope = []
 
         contacts = list(
             (
@@ -511,52 +458,22 @@ class AccountDeletionService:
 
         await self._session.execute(
             delete(EmploymentDocument).where(
-                or_(
-                    EmploymentDocument.uploaded_by_user_id == user.id,
-                    (
-                        EmploymentDocument.employment_id.in_(snapshot.employment_ids)
-                        if snapshot.employment_ids
-                        else False
-                    ),
-                )
+                EmploymentDocument.employment_id.in_(snapshot.employment_ids)
             )
         )
         await self._session.execute(
             delete(EducationDocument).where(
-                or_(
-                    EducationDocument.uploaded_by_user_id == user.id,
-                    (
-                        EducationDocument.education_id.in_(snapshot.education_ids)
-                        if snapshot.education_ids
-                        else False
-                    ),
-                )
+                EducationDocument.education_id.in_(snapshot.education_ids)
             )
         )
         await self._session.execute(
             delete(InternshipDocument).where(
-                or_(
-                    InternshipDocument.uploaded_by_user_id == user.id,
-                    (
-                        InternshipDocument.internship_id.in_(snapshot.internship_ids)
-                        if snapshot.internship_ids
-                        else False
-                    ),
-                )
+                InternshipDocument.internship_id.in_(snapshot.internship_ids)
             )
         )
         await self._session.execute(
             delete(FreelanceContractDocument).where(
-                or_(
-                    FreelanceContractDocument.uploaded_by_user_id == user.id,
-                    (
-                        FreelanceContractDocument.freelance_contract_id.in_(
-                            snapshot.freelance_ids
-                        )
-                        if snapshot.freelance_ids
-                        else False
-                    ),
-                )
+                FreelanceContractDocument.freelance_contract_id.in_(snapshot.freelance_ids)
             )
         )
 
@@ -636,7 +553,9 @@ class AccountDeletionService:
             rows = list(
                 (
                     await self._session.execute(
-                        select(Employment).where(Employment.id.in_(snapshot.retained_employment_ids))
+                        select(Employment).where(
+                            Employment.id.in_(snapshot.retained_employment_ids)
+                        )
                     )
                 )
                 .scalars()
@@ -646,6 +565,9 @@ class AccountDeletionService:
                 row.deleted_at = now
                 row.subject_full_name = deleted_name
                 row.subject_email = None
+                row.reviewer_summary = None
+                row.pending_info_request = None
+                row.extraction_preview = None
 
         if snapshot.retained_education_ids:
             rows = list(
@@ -659,6 +581,7 @@ class AccountDeletionService:
             )
             for row in rows:
                 row.deleted_at = now
+                row.reviewer_note = None
 
     async def _scrub_shared_links(self, user_id: UUID) -> None:
         await self._session.execute(
@@ -696,9 +619,12 @@ class AccountDeletionService:
             .all()
         )
         for invitation in invitation_rows:
+            await scrub_invitation_events(self._session, invitation.id)
             invitation.subject_name = deleted_name
             invitation.subject_email = tombstone_email
             invitation.subject_phone = None
+            invitation.purpose = None
+            invitation.message = None
             invitation.accepted_by_user_id = None
             invitation.token_hash = hashlib.sha256(
                 f"{invitation.id}:{uuid4()}".encode("utf-8")
@@ -736,6 +662,7 @@ class AccountDeletionService:
         user.trust_score_consent_at = None
         user.trust_score_consent_version = None
         user.active_organization_id = None
+        user.suspension_reason = None
         user.deleted_at = now
 
     def _tombstone_email(self, user_id: UUID) -> str:

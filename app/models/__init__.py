@@ -1,10 +1,11 @@
 """Import models for Alembic metadata discovery."""
 
+from app.models.account_deletion import AccountDeletion, AccountDeletionItem
 from app.models.admin_access_audit_event import AdminAccessAuditEvent
 from app.models.admin_access_invitation import AdminAccessInvitation
 from app.models.certification import Certification
-from app.models.document_share_pack import DocumentSharePack, DocumentSharePackItem
 from app.models.credential_verification_request import CredentialVerificationRequest
+from app.models.document_share_pack import DocumentSharePack, DocumentSharePackItem
 from app.models.education import Education
 from app.models.education_document import EducationDocument
 from app.models.email_delivery_log import EmailDeliveryLog
@@ -94,6 +95,8 @@ from app.models.verification_review_correction import VerificationReviewCorrecti
 from app.models.verification_review_note import VerificationReviewNote
 
 __all__ = [
+    "AccountDeletion",
+    "AccountDeletionItem",
     "AdminAccessAuditEvent",
     "AdminAccessInvitation",
     "Certification",

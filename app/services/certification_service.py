@@ -98,7 +98,6 @@ class CertificationService:
             verification_status=Certification.SELF_DECLARED_STATUS,
         )
         await self._repo.create(item)
-        await self._session.commit()
 
         upload_url = await generate_presigned_put_url(
             bucket=bucket,
@@ -106,6 +105,7 @@ class CertificationService:
             content_type=payload.content_type,
             ttl_seconds=900,
         )
+        await self._session.commit()
         return CertificationUploadIntentResponse(
             certification_id=cert_id,
             upload_url=upload_url,

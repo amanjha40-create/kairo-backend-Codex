@@ -13,6 +13,8 @@ from app.core.constants import Role, SignupKind
 from app.db.session import async_session_factory
 from app.exceptions import ForbiddenError, NotFoundError, UnauthorizedError, ValidationAppError
 from app.models import (
+    AccountDeletion,
+    AccountDeletionItem,
     Certification,
     EmailDeliveryLog,
     Employment,
@@ -261,7 +263,7 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
     settings.candidate_portal_base_url = "https://candidate.example.com"
     s3_client = _RecordingS3Client()
     monkeypatch.setattr(
-        "app.services.account_deletion_service.get_s3_client", lambda _settings: s3_client
+        "app.services.account_deletion_purge.get_s3_client", lambda _settings: s3_client
     )
 
     now = datetime.now(tz=UTC)
@@ -464,6 +466,7 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
                 subject_email=candidate.email,
                 subject_phone=candidate.phone,
                 purpose="Verification",
+                message="Private Candidate context must be erased",
                 requested_verification_types=["employment"],
                 token_hash=f"{uuid4().hex}{uuid4().hex}",
                 status=TrustInvitationStatus.ACCEPTED,
@@ -907,6 +910,8 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
             assert invitation.subject_email == deleted_user.email
             assert invitation.accepted_by_user_id is None
             assert invitation.subject_phone is None
+            assert invitation.purpose is None
+            assert invitation.message is None
             assert invitation.expires_at <= datetime.now(tz=UTC)
 
             invitation_service = TrustInvitationService(assert_session, settings)
@@ -944,8 +949,12 @@ async def test_account_deletion_erases_candidate_data_and_scrubs_shared_records(
             assert consent is not None
             assert consent.subject_user_id is None
 
-        deleted_keys = {key for _, key in s3_client.deleted}
-        assert expected_deleted_keys.issubset(deleted_keys)
+        assert s3_client.deleted == []
+        async with async_session_factory() as ledger_session:
+            keys = set((await ledger_session.scalars(select(AccountDeletionItem.identity_hash).join(
+                AccountDeletion).where(AccountDeletion.user_id == actor_id))).all())
+            assert {hashlib.sha256(f"object:{key}".encode()).hexdigest()
+                    for key in expected_deleted_keys}.issubset(keys)
     finally:
         settings.s3_documents_bucket = original_bucket
         settings.candidate_portal_base_url = original_candidate_portal_base_url
@@ -1117,7 +1126,7 @@ async def test_account_deletion_allows_same_email_reregistration() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_account_deletion_rolls_back_when_s3_delete_fails(
+async def test_account_deletion_commits_without_contacting_s3(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = get_settings()
@@ -1131,7 +1140,7 @@ async def test_account_deletion_rolls_back_when_s3_delete_fails(
             raise RuntimeError("synthetic s3 failure")
 
     monkeypatch.setattr(
-        "app.services.account_deletion_service.get_s3_client",
+        "app.services.account_deletion_purge.get_s3_client",
         lambda _settings: _FailingS3Client(),
     )
 
@@ -1155,19 +1164,18 @@ async def test_account_deletion_rolls_back_when_s3_delete_fails(
             await session.commit()
 
             service = AccountDeletionService(session, settings, _FakeRedis())
-            with pytest.raises(RuntimeError, match="synthetic s3 failure"):
-                await service.delete_candidate_account(
-                    candidate.id,
-                    AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
-                )
+            await service.delete_candidate_account(
+                candidate.id,
+                AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
+            )
 
         async with async_session_factory() as assert_session:
             candidate = await assert_session.get(User, candidate_id)
             assert candidate is not None
-            assert candidate.deleted_at is None
-            assert candidate.is_active is True
+            assert candidate.deleted_at is not None
+            assert candidate.is_active is False
             document = await assert_session.get(UserDocument, document_id)
-            assert document is not None
+            assert document is None
     finally:
         settings.s3_documents_bucket = original_bucket
         async with async_session_factory() as cleanup:
@@ -1287,11 +1295,12 @@ async def test_account_deletion_repeat_delete_fails_closed() -> None:
                 AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
             )
 
-            with pytest.raises(NotFoundError):
-                await deletion.delete_candidate_account(
-                    candidate.id,
-                    AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
-                )
+            await deletion.delete_candidate_account(
+                candidate.id,
+                AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
+            )
+            assert len((await session.scalars(select(AccountDeletion).where(
+                AccountDeletion.user_id == candidate.id))).all()) == 1
     finally:
         async with async_session_factory() as cleanup:
             if candidate_id is not None:

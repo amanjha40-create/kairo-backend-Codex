@@ -58,6 +58,9 @@ class DocumentSharePackService:
         )
 
     async def create(self, owner, payload):
+        from app.services.private_owner_guard import lock_private_owner
+
+        await lock_private_owner(self.session, owner)
         now = datetime.now(UTC)
         token = secrets.token_urlsafe(32)
         pack = DocumentSharePack(

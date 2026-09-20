@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.config import Settings, get_settings
 from app.core.constants import ACCESS_TOKEN_TYPE
 from app.core.permissions import Permission, has_permission
 from app.db.session import get_session
-from app.exceptions import ForbiddenError, UnauthorizedError
+from app.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
 from app.logging.context import bind_user_context
 from app.repositories import RefreshTokenRepository, UserRepository
 
@@ -34,6 +34,7 @@ class CurrentUser:
 
 
 async def get_current_user(
+    request: Request = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008
     session: AsyncSession = Depends(get_session),  # noqa: B008
     settings: Settings = Depends(get_settings),  # noqa: B008
@@ -64,6 +65,20 @@ async def get_current_user(
     repo = UserRepository(session)
     refresh = RefreshTokenRepository(session)
     user = await repo.get_by_id(uid)
+    if (
+        user is not None
+        and user.role == "user"
+        and request is not None
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+    ):
+        from app.services.private_owner_guard import lock_private_owner
+
+        # Serialize Candidate writes with logical deletion before acquiring child
+        # locks. Re-read after waiting, rather than trusting a stale auth snapshot.
+        try:
+            user = await lock_private_owner(session, uid)
+        except NotFoundError:
+            raise UnauthorizedError("User not found or inactive") from None
     if user is None or not user.is_active or user.email_verified_at is None:
         raise UnauthorizedError("User not found or inactive")
     if not await refresh.has_active_family(user.id, session_family_id):

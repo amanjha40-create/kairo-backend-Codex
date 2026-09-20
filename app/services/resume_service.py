@@ -206,9 +206,15 @@ class ResumeService:
         logger.info("resume.document.deleted", extra={"resume_id": str(resume_id)})
 
     async def process_job(self, resume_id: UUID, job_id: UUID) -> None:
+        from app.services.private_owner_guard import lock_private_owner
+
         row = await self.session.get(ResumeDocument, resume_id)
         job = await self.session.get(ResumeProcessingJob, job_id)
         if row is None or job is None or row.deleted_at is not None or row.processing_status == ResumeProcessingStatus.DELETED.value:
+            return
+        try:
+            await lock_private_owner(self.session, row.user_id)
+        except NotFoundError:
             return
         job.attempt_count += 1
         job.status = ResumeProcessingStatus.EXTRACTING.value

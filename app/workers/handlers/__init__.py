@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from app.workers.handlers import builtin  # noqa: F401
-from app.workers.handlers import email  # noqa: F401
-from app.workers.handlers import extraction  # noqa: F401
-from app.workers.handlers import resume  # noqa: F401
+from app.workers.handlers import (
+    account_deletion,  # noqa: F401
+    builtin,  # noqa: F401
+    email,  # noqa: F401
+    extraction,  # noqa: F401
+    resume,  # noqa: F401
+)
