@@ -7,6 +7,7 @@ schedule periodically in the approved environment during a separately approved r
 import argparse
 import asyncio
 import json
+from contextlib import nullcontext
 
 from redis.asyncio import Redis
 from sqlalchemy import func, select
@@ -15,22 +16,25 @@ from app.config import get_settings
 from app.db.session import async_session_factory
 from app.models.account_deletion import AccountDeletion
 from app.services.account_deletion_purge import sweep_deletions
+from app.services.account_deletion_telemetry import sweep_invocation
 
 
 async def main(execute=False):
-    settings = get_settings()
-    async with async_session_factory() as session:
-        if not execute:
-            rows = (
-                await session.execute(
-                    select(AccountDeletion.status, func.count()).group_by(AccountDeletion.status)
-                )
-            ).all()
-            print(json.dumps(dict(rows)))
-            return
-        async with Redis.from_url(settings.redis_url) as redis:
-            result = await sweep_deletions(session, settings, redis)
-            print(json.dumps(result or {"due_requests": 0}))
+    with sweep_invocation() if execute else nullcontext():
+        settings = get_settings()
+        async with async_session_factory() as session:
+            if not execute:
+                rows = (
+                    await session.execute(
+                        select(AccountDeletion.status, func.count()).group_by(
+                            AccountDeletion.status
+                        )
+                    )
+                ).all()
+                print(json.dumps(dict(rows)))
+                return
+            async with Redis.from_url(settings.redis_url) as redis:
+                await sweep_deletions(session, settings, redis)
 
 
 if __name__ == "__main__":

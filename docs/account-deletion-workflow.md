@@ -100,7 +100,77 @@ quiescence, not an invented legal retention period. No new recipient capability 
 issued by cleanup. Previously issued external URLs remain subject to their own
 expiry; Kairo-authenticated and Passport/Pack access are checked against DB state.
 
-## Migration and release gates
+## Invocation telemetry (Phase 9D.2)
+
+Each execute invocation emits exactly one fixed-field JSON stdout event named
+`account_deletion_sweep_completed`, including no-work and controlled failures.
+The CLI owns the event through settings/session/Redis setup and teardown; a direct
+service or queue-handler call owns its own event. No ambient request/user logging
+context or raw exception is attached. The read-only status command is unchanged.
+
+Counter definitions (all per-invocation integers):
+
+- `rows_scanned`: `account_deletion_items` inspected in the bounded processing
+  loop for eligibility, not SQL-engine scan estimates or parent request counts.
+  Complete, future-due and review items inspected by that loop count as scanned
+  but not claimed. The first item inspected at the existing 250-work limit may
+  also count as scanned but not claimed. Items not reached by the loop do not count.
+- `rows_claimed`: eligible item rows selected for processing while their parent
+  request's existing `FOR UPDATE SKIP LOCKED` lock is held. These are not new
+  individual row locks. Retry-due and complete reconciliation namespaces can be
+  claimed; completed objects cannot. Malformed eligible rows are claimed but
+  fail the existing guard before storage. No query or eligibility rule changes.
+- `requests_claimed`: parent requests returned by the existing locking query
+  (zero or one). Another worker's locked request is invisible to that query;
+  neither its items nor its parent are counted as observed or claimed. An empty
+  result is not evidence that no locked/delayed work exists globally.
+- `objects_attempted`: actual S3 `delete_object` SDK calls entered, including
+  exact versions and delete markers, never ledger/purge/list calls. SDK-internal
+  HTTP retries are not separate logical delete operations. The counter increments
+  inside the executor thread, immediately before calling the SDK.
+- `objects_succeeded`: those calls returning normally; this is not proof of prior
+  existence (S3 delete is idempotent).
+- `objects_missing`: delete calls returning `NoSuchKey`/`NoSuchVersion`, a subset
+  of attempts. `objects_already_absent`: exact keys with no versions/markers on
+  the first listing, without a delete call. The final empty listing after a purge
+  is not counted as an initially absent key.
+- `retryable_failures` / `permanent_failures`: item-processing exceptions handled
+  by the existing classifier during this invocation, not cumulative DB retries.
+  Listing, OTP, ownership and configuration errors can increment these without a
+  delete attempt. `invocation_failures` counts an escaping invocation failure.
+- `duration_ms`: monotonic elapsed whole milliseconds. `invocation_result` is
+  `no_work`, `success`, `partial`, `review`, or `failed`; `failure_category` is a
+  fixed sanitized category, never exception text. Existing committed progress
+  summaries retain their request-scoped pending/review counts; no global backlog
+  count or new diagnostic query is introduced.
+
+Counts on cancellation/failure are best-known at summary emission. An SDK call
+already running in a thread can finish later; no completion is fabricated and no
+extra await/retry is introduced. Failure still propagates to the existing sanitized
+nonzero CLI exit. A rollback does not undo physical attempts already counted.
+All telemetry is process-local; no schema, API, deletion, locking, ownership,
+retry, revocation, queue or storage semantics change.
+
+Phase 9D.2 local qualification: **23 telemetry tests**, **236 focused tests**
+(including telemetry, deletion/storage/worker, auth/session, Passport and Pack),
+and **1,291 full backend tests** pass. Canonical Ruff, scoped configured Ruff,
+format check, OpenAPI sanity (352 paths, deletion 204 unchanged) and diff check
+pass. An independent fresh local database passes 078 -> 079 -> 078 -> 079;
+migration 079 is byte-for-byte unchanged. The earlier full-suite test database
+contained synthetic ledger fixtures, so its empty-ledger precheck stopped before
+DDL rather than deleting fixtures or bypassing the guard. The email hostname
+substitution remains exclusively in the test launcher, not runtime source.
+
+Deployment certification in 9D.2 is static only: register the exact-source
+sweeper image/task and repin the DISABLED schedule. No task execution, API
+deployment, live migration, or deletion QA is authorized. Subsequent Phase 9D
+requires renewed approval: verify API 216/DB 078, migrate 079, deploy API and
+applicable worker from the same new SHA, enable the sweeper, observe a no-work
+summary (zero scans/claims/deletes when no ledger work exists), then disposable
+deletion QA, P1-A/P1-B and queue-independent recovery. Retain or disable the
+schedule only according to that approved rollout design.
+
+## Migration and release gates (unchanged)
 
 Upgrade is additive. Downgrade refuses any nonempty deletion ledger so rollback
 cannot discard unfinished cleanup or tombstones. Application rollback must retain

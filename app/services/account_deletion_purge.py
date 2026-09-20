@@ -13,6 +13,7 @@ from app.infrastructure.s3.client import get_s3_client
 from app.models.account_deletion import AccountDeletion, AccountDeletionItem
 from app.models.user import User
 from app.services.account_deletion_inventory import identity, safe_key
+from app.services.account_deletion_telemetry import current_metrics, observe_sweep
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class PurgeStorage:
     async def purge(self, bucket, key):
         # Remove every exact version, including delete markers; a simple DELETE
         # alone only hides bytes in versioned buckets. Never delete prefix siblings.
-        for _ in range(20):
+        for page_number in range(20):
             page = await asyncio.to_thread(
                 self.client.list_object_versions, Bucket=bucket, Prefix=key, MaxKeys=1000
             )
@@ -45,11 +46,13 @@ class PurgeStorage:
                 if row["Key"] == key
             ]
             if not entries:
+                if page_number == 0 and (metrics := current_metrics()) is not None:
+                    metrics.objects_already_absent += 1
                 return
             for row in entries:
                 try:
                     await asyncio.to_thread(
-                        self.client.delete_object,
+                        self._delete_object,
                         Bucket=bucket,
                         Key=key,
                         VersionId=row["VersionId"],
@@ -61,6 +64,26 @@ class PurgeStorage:
                     }:
                         raise
         raise TimeoutError("purge_batch_limit")
+
+    def _delete_object(self, **kwargs):
+        # Count at the SDK boundary, inside the executor thread, not when a ledger
+        # row is selected or an async call is merely scheduled.
+        metrics = current_metrics()
+        if metrics is not None:
+            metrics.objects_attempted += 1
+        try:
+            result = self.client.delete_object(**kwargs)
+        except ClientError as error:
+            if metrics is not None and error.response.get("Error", {}).get("Code") in {
+                "NoSuchKey",
+                "NoSuchVersion",
+            }:
+                metrics.objects_missing += 1
+            raise
+        else:
+            if metrics is not None:
+                metrics.objects_succeeded += 1
+            return result
 
 
 def failure_category(error):
@@ -117,6 +140,7 @@ def assert_owned_reference(request, item):
         raise UnsafeReference()
 
 
+@observe_sweep
 async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id=None, now=None):
     """Process one committed request. Caller must supply a fresh session.
 
@@ -127,6 +151,7 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
     if session.in_transaction():
         raise RuntimeError("Deletion purge requires a fresh post-commit session")
     now = now or datetime.now(UTC)
+    metrics = current_metrics()
     try:
         query = select(AccountDeletion).where(AccountDeletion.next_attempt_at <= now)
         if deletion_id is not None:
@@ -139,6 +164,7 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
         if request is None:
             await session.rollback()
             return None
+        metrics.requests_claimed += 1
         owner = await session.get(User, request.user_id)
         owner_erased = owner is None or (owner.deleted_at is not None and not owner.is_active)
         items = list(
@@ -155,6 +181,7 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
         active_storage = storage
         processed = 0
         for item in sorted(items, key=lambda entry: entry.kind == "namespace"):
+            metrics.rows_scanned += 1
             if item.status == "review" or item.next_attempt_at > now:
                 continue
             if item.status == "complete" and item.kind != "namespace":
@@ -162,6 +189,7 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
             if processed >= 250:
                 break
             processed += 1
+            metrics.rows_claimed += 1
             item.attempts += 1
             try:
                 if not owner_erased:
@@ -228,6 +256,9 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
                     item.next_attempt_at = now + timedelta(hours=1)
             except Exception as error:
                 category, permanent = failure_category(error)
+                metrics.permanent_failures += int(permanent)
+                metrics.retryable_failures += int(not permanent)
+                metrics.failure_category = category
                 item.status = "review" if permanent else "retry"
                 item.last_error_category = category
                 item.next_attempt_at = now + timedelta(
