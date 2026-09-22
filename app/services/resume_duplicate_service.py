@@ -14,13 +14,16 @@ from app.models.freelance_contract import FreelanceContract
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.portfolio import PortfolioItem
+from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.skill import Skill
 from app.models.verification_request import VerificationRequest
+from app.resumes.employment_matching import employment_match, match_fingerprint, unchanged_import
 from app.resumes.normalization import (
     date_ranges_overlap,
     normalize_date,
     normalize_text,
     normalize_url,
+    payload_hash,
 )
 
 
@@ -65,6 +68,8 @@ class ResumeDuplicateService:
             return DuplicateAssessment("exact_match", candidates[:1], ["normalized_identity_match"] if candidates else []) if candidates else DuplicateAssessment("no_match", [], [])
         if claim_type in {"profile", "project"}:
             return DuplicateAssessment("no_match", [], [])
+        if claim_type == "employment":
+            return await self._employment(user_id, payload)
         model, primary, secondary, start, end, protected = self._spec(claim_type)
         payload_primary, payload_secondary, payload_start, payload_end = self._payload_spec(claim_type)
         owner_column = model.created_by_user_id if claim_type == "employment" else model.user_id
@@ -113,6 +118,34 @@ class ResumeDuplicateService:
         order = {"conflict": 5, "exact_match": 4, "probable_match": 3, "possible_match": 2, "no_match": 1}
         status = max((candidate["classification"] for candidate in candidates), key=lambda value: order[value], default="no_match")
         return DuplicateAssessment(status, candidates, ["protected_record_match"] if status == "conflict" else [])
+
+    async def _employment(self, user_id: UUID, payload: dict[str, Any]) -> DuplicateAssessment:
+        rows = (await self.session.scalars(select(Employment).where(
+            Employment.created_by_user_id == user_id, Employment.deleted_at.is_(None),
+        ).order_by(Employment.created_at, Employment.id))).all()
+        prior_ids = set((await self.session.scalars(select(ResumeRecordProvenance.record_id).where(
+            ResumeRecordProvenance.user_id == user_id,
+            ResumeRecordProvenance.record_type == "employment",
+            ResumeRecordProvenance.edited_payload_hash == payload_hash(payload),
+        ))).all())
+        candidates = []
+        for row in rows:
+            classification, reasons = employment_match(payload, row)
+            if row.id in prior_ids and unchanged_import(payload, row):
+                classification, reasons = "exact_match", ["identical_previous_import"]
+            if classification:
+                candidates.append({
+                    "record_id": str(row.id), "classification": classification,
+                    "reasons": reasons,
+                    # Employment import never offers destructive merge/enrichment.
+                    "protected": True, "safety_recommendation": "keep_existing",
+                    "match_fingerprint": match_fingerprint(payload, row),
+                    "employer": row.employer_legal_name, "title": row.job_title,
+                    "start_date": str(row.start_date) if row.start_date else None,
+                    "end_date": str(row.end_date) if row.end_date else None,
+                })
+        status = "exact_match" if any(c["classification"] == "exact_match" for c in candidates) else "possible_match" if candidates else "no_match"
+        return DuplicateAssessment(status, candidates, [])
 
     @staticmethod
     def _is_protected(row: Any, statuses: set[str]) -> bool:

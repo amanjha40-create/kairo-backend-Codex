@@ -162,6 +162,7 @@ class ReviewItemUpdateRequest(StrictModel):
     import_action: ResumeImportAction | None = None
     target_record_id: UUID | None = None
     edited_payload: dict[str, Any] | None = None
+    confirm_distinct_role: bool = False
 
 
 class ReviewSessionUpdateRequest(StrictModel):

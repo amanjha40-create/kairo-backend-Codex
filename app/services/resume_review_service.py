@@ -116,8 +116,8 @@ class ResumeReviewService:
                 source_claim_id=source_claim_id,
                 original_payload=payload,
                 edited_payload=payload,
-                selected=supported and assessment.status == "no_match",
-                review_status="selected" if supported and assessment.status == "no_match" else "deselected",
+                selected=supported and (assessment.status == "no_match" or claim_type == "employment"),
+                review_status="selected" if supported and (assessment.status == "no_match" or claim_type == "employment") else "deselected",
                 duplicate_status=assessment.status,
                 duplicate_candidates=assessment.candidates,
                 conflict_warnings=assessment.warnings,
@@ -156,6 +156,12 @@ class ResumeReviewService:
         item = await self.session.scalar(select(ResumeReviewItem).where(ResumeReviewItem.id == item_id, ResumeReviewItem.review_session_id == review_id, ResumeReviewItem.user_id == user_id))
         if not item:
             raise NotFoundError("Resume review item not found")
+        if item.claim_type == "employment" and payload.import_action == ResumeImportAction.UPDATE_EXISTING:
+            raise ValidationAppError("Keep existing employment unchanged or add a distinct role", code="employment_merge_not_supported")
+        if payload.confirm_distinct_role and (
+            item.claim_type != "employment" or payload.import_action != ResumeImportAction.CREATE_NEW
+        ):
+            raise ValidationAppError("Distinct-role confirmation requires an employment create decision")
         self._check_version(item.version, payload.expected_version)
         edited = self._normalize_review_payload(
             item.claim_type,
@@ -190,6 +196,9 @@ class ResumeReviewService:
             item.import_action = payload.import_action.value
         if payload.target_record_id is not None or payload.import_action == ResumeImportAction.CREATE_NEW:
             item.target_record_id = payload.target_record_id
+        if item.claim_type == "employment":
+            # Explicit confirmation is bound to the freshly assessed payload/candidates.
+            await self._refresh_employment_match(item, confirm_distinct=payload.confirm_distinct_role)
         item.review_status = "edited" if normalized != item.original_payload else ("selected" if item.selected else "deselected")
         item.version += 1
         review.status = ResumeReviewStatus.REVIEWING.value
@@ -212,6 +221,13 @@ class ResumeReviewService:
         return plan
 
     async def import_review(self, user_id: UUID, review_id: UUID, payload: ReviewImportRequest) -> ImportBatchResponse:
+        # Serialize all resume imports for one account, including different reviews/keys.
+        # Take the owner lock before the review lock, matching the deletion write guard.
+        owner = await self.session.scalar(select(User.id).where(
+            User.id == user_id, User.deleted_at.is_(None), User.is_active.is_(True),
+        ).with_for_update())
+        if owner is None:
+            raise NotFoundError("Candidate account not found")
         review = await self._owned_review(user_id, review_id, for_update=True)
         existing = await self.session.scalar(select(ResumeImportBatch).where(ResumeImportBatch.user_id == user_id, ResumeImportBatch.idempotency_key == payload.idempotency_key))
         if existing:
@@ -289,6 +305,8 @@ class ResumeReviewService:
         for item in items:
             if item.claim_type in SUGGESTION_ONLY_TYPES:
                 continue
+            if item.claim_type == "employment":
+                await self._refresh_employment_match(item)
             if not item.selected:
                 continue
             blockers = self._action_blockers(
@@ -323,8 +341,10 @@ class ResumeReviewService:
                         verified_protected = True
                 except NotFoundError:
                     blockers.append("target_record_not_found")
-            if item.duplicate_status in {"probable_match", "possible_match", "conflict"} and item.import_action == "create_new":
+            if item.duplicate_status in {"probable_match", "possible_match", "conflict"} and item.import_action == "create_new" and not self._distinct_role_confirmed(item):
                 blockers.append("duplicate_requires_candidate_resolution")
+            if item.claim_type == "employment" and item.import_action == "update_existing":
+                blockers.append("employment_merge_not_supported")
             plans.append(ReviewPlanItem(
                 item_id=item.id,
                 claim_type=item.claim_type,
@@ -365,6 +385,15 @@ class ResumeReviewService:
         if action == "skip":
             item.review_status = "skipped"
             return "skipped", None, None, []
+        if item.claim_type == "employment":
+            if action == "update_existing":
+                raise ValidationAppError("Employment import cannot overwrite Career records", code="employment_merge_not_supported")
+            # Recheck after earlier rows have flushed, not just at preview time.
+            await self._refresh_employment_match(item)
+            action = item.import_action
+            if action == "skip" or (action == "create_new" and item.duplicate_candidates and not self._distinct_role_confirmed(item)):
+                item.review_status = "skipped"
+                return "skipped", "employment", None, ["possible_match_skipped"]
         unusable_reasons = (
             self._required_blockers(item.claim_type, item.edited_payload)
             if action == "create_new"
@@ -377,7 +406,7 @@ class ResumeReviewService:
             record = await self._target(user_id, item.claim_type, item.target_record_id)
             await self._add_provenance(user_id, review, batch, item, item.claim_type, record.id, now)
             item.review_status, item.imported_record_type, item.imported_record_id = "imported", item.claim_type, record.id
-            return "linked", item.claim_type, record.id, []
+            return "linked", item.claim_type, record.id, ["already_in_career"] if item.claim_type == "employment" else []
         if action == "update_existing":
             record = await self._target(user_id, item.claim_type, item.target_record_id)
             if await self._is_protected_target(user_id, item.claim_type, record):
@@ -392,6 +421,39 @@ class ResumeReviewService:
         warnings = self._mapping_warnings(item.claim_type, item.edited_payload)
         warnings.extend(self._completion_warnings(item.claim_type, item.edited_payload))
         return "imported", item.claim_type, record.id, warnings
+
+    async def _refresh_employment_match(self, item: ResumeReviewItem, *, confirm_distinct: bool = False) -> None:
+        confirmed = {
+            candidate.get("match_fingerprint")
+            for candidate in item.duplicate_candidates
+            if candidate.get("distinct_role_confirmed") is True
+        }
+        assessment = await self.duplicates.assess(item.user_id, "employment", item.edited_payload)
+        candidates = [
+            {**candidate, "distinct_role_confirmed": bool(
+                candidate["classification"] != "exact_match"
+                and (confirm_distinct or candidate.get("match_fingerprint") in confirmed)
+            )}
+            for candidate in assessment.candidates
+        ]
+        item.duplicate_status = assessment.status
+        item.duplicate_candidates = candidates
+        item.conflict_warnings = assessment.warnings
+        exact = next((candidate for candidate in candidates if candidate["classification"] == "exact_match"), None)
+        if exact and item.import_action in {"create_new", "link_existing"}:
+            item.import_action = "link_existing"
+            item.target_record_id = UUID(exact["record_id"])
+        elif not exact and item.import_action == "link_existing":
+            # A previously exact target may have been edited/deleted since review.
+            item.import_action = "skip" if candidates else "create_new"
+            item.target_record_id = None
+
+    @staticmethod
+    def _distinct_role_confirmed(item: ResumeReviewItem) -> bool:
+        return item.claim_type == "employment" and bool(item.duplicate_candidates) and all(
+            candidate.get("distinct_role_confirmed") is True
+            for candidate in item.duplicate_candidates
+        )
 
     async def _create_record(self, user_id: UUID, claim_type: str, p: dict[str, Any]) -> Any:
         if claim_type == "profile":

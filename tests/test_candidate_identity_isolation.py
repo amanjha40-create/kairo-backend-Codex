@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from app.exceptions import ValidationAppError
 from app.resumes.schemas import ParsedResumeResult
 from app.schemas.user import UserUpdate
+from app.services.resume_duplicate_service import DuplicateAssessment
 from app.services.resume_review_service import ResumeReviewService
 from app.services.user_service import UserService
 
@@ -110,7 +112,11 @@ async def test_legacy_selected_profile_is_excluded_while_career_import_plan_rema
             return FakeScalars()
 
     review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
-    plan = await ResumeReviewService(FakeSession())._build_plan(review)
+    employment_item.user_id = review.user_id
+    employment_item.duplicate_candidates = []
+    service = ResumeReviewService(FakeSession())
+    service.duplicates.assess = AsyncMock(return_value=DuplicateAssessment("no_match", [], []))
+    plan = await service._build_plan(review)
 
     assert plan.ready is True
     assert [item.claim_type for item in plan.items] == ["employment"]
