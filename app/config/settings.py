@@ -600,6 +600,63 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RESUME_PROCESSING_STALE_SECONDS"),
     )
 
+    # --- DigiLocker credentials (independent of login/session secrets) ---
+    digilocker_enabled: bool = Field(default=False, validation_alias="DIGILOCKER_ENABLED")
+    digilocker_client_id: str | None = Field(default=None, validation_alias="DIGILOCKER_CLIENT_ID")
+    digilocker_client_secret: SecretStr | None = Field(
+        default=None, repr=False, validation_alias="DIGILOCKER_CLIENT_SECRET"
+    )
+    digilocker_redirect_uri: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_REDIRECT_URI"
+    )
+    digilocker_authorize_url: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_AUTHORIZE_URL"
+    )
+    digilocker_token_url: str | None = Field(default=None, validation_alias="DIGILOCKER_TOKEN_URL")
+    digilocker_revoke_url: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_REVOKE_URL"
+    )
+    digilocker_connection_return_url: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_CONNECTION_RETURN_URL"
+    )
+    digilocker_purpose: str | None = Field(default=None, validation_alias="DIGILOCKER_PURPOSE")
+    digilocker_consent_ttl: int | None = Field(
+        default=None, ge=60, le=31_536_000, validation_alias="DIGILOCKER_CONSENT_TTL"
+    )
+    digilocker_req_doctypes: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_REQ_DOCTYPES"
+    )
+    digilocker_token_encryption_active_key_id: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_TOKEN_ENCRYPTION_ACTIVE_KEY_ID"
+    )
+    digilocker_token_encryption_keys: SecretStr | None = Field(
+        default=None, repr=False, validation_alias="DIGILOCKER_TOKEN_ENCRYPTION_KEYS"
+    )
+
+    @field_validator("digilocker_token_encryption_keys", "digilocker_client_secret", mode="before")
+    @classmethod
+    def validate_digilocker_secret_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, (str, SecretStr)):
+            from app.integrations.digilocker.crypto import KeyConfigurationError
+
+            raise KeyConfigurationError()
+        return value
+
+    @model_validator(mode="after")
+    def validate_digilocker_encryption(self) -> Self:
+        if self.digilocker_enabled:
+            from app.integrations.digilocker.crypto import parse_keyring
+
+            parse_keyring(
+                self.digilocker_token_encryption_keys,
+                self.digilocker_token_encryption_active_key_id,
+                self.app_env.value,
+            )
+            from app.integrations.digilocker.configuration import validate_configuration
+
+            validate_configuration(self)
+        return self
+
     # --- Google OAuth ---
     google_client_id: str | None = Field(
         default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID")

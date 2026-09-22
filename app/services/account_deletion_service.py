@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,9 +25,11 @@ from app.exceptions import (
 )
 from app.infrastructure.sqs.envelope import SqsJobEnvelope
 from app.infrastructure.sqs.publisher import send_json_message
+from app.integrations.digilocker.transactions import TransactionStore
 from app.models import (
     Certification,
     CredentialVerificationRequest,
+    DigiLockerConnection,
     Education,
     EducationDocument,
     EmailDeliveryLog,
@@ -156,6 +159,13 @@ class AccountDeletionService:
 
         try:
             snapshot = await self._build_snapshot(user)
+            digilocker_removed = (
+                await self._session.execute(
+                    delete(DigiLockerConnection)
+                    .where(DigiLockerConnection.user_id == user.id)
+                    .returning(DigiLockerConnection.id)
+                )
+            ).scalar_one_or_none() is not None
             deletion = await inventory_deletion(self._session, self._settings, user, snapshot)
             await revoke_and_scrub_related(self._session, user.id, snapshot, now)
             await self._purge_verification_requests(snapshot.verification_request_ids_to_purge)
@@ -192,6 +202,12 @@ class AccountDeletionService:
                 "retained_request_count": len(snapshot.verification_request_ids_to_retain),
             },
         )
+        if digilocker_removed:
+            try:
+                await TransactionStore(self._redis, self._settings).clear(user.id)
+            except RedisError:
+                # The deleted owner can never complete a callback. Remaining state expires in 10m.
+                logger.warning("account_deletion.digilocker_state_cleanup_deferred")
         # Acceleration only. The independently runnable DB sweeper needs no queue.
         if self._settings.sqs_main_queue_url:
             try:

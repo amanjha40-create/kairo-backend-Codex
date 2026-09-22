@@ -18,8 +18,9 @@ from app.api.v1.routes import (
     certifications,
     credential_verification,
     dashboard,
-    documents,
+    digilocker,
     document_share_packs,
+    documents,
     educations,
     employment_documents,
     employments,
@@ -71,6 +72,7 @@ api_router.include_router(resumes.router)
 api_router.include_router(resume_reviews.resume_router)
 api_router.include_router(resume_reviews.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(digilocker.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
 api_router.include_router(organization_people.router)

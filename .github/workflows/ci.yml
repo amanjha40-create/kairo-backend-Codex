@@ -14,9 +14,20 @@ jobs:
     env:
       APP_ENV: test
       DATABASE_URL: postgresql+asyncpg://kairo:kairo@localhost:5432/kairo
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://kairo:kairo@localhost:5432/kairo
+      REDIS_URL: redis://localhost:6379/0
       JWT_SECRET_KEY: test-jwt-secret-key-32-chars-minimum!!
 
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       postgres:
         image: postgres:16
         env:
