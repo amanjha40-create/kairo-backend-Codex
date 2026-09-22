@@ -73,11 +73,34 @@ All names follow the existing typed Settings environment convention:
 | `DIGILOCKER_TOKEN_URL` | Approved environment-specific HTTPS token endpoint. |
 | `DIGILOCKER_REVOKE_URL` | Approved environment-specific HTTPS revocation endpoint. |
 | `DIGILOCKER_CONNECTION_RETURN_URL` | Optional exact Candidate completion URL; otherwise JSON. |
-| `DIGILOCKER_PURPOSE` | Optional approved provider purpose. |
+| `DIGILOCKER_PURPOSE` | Required when enabled; runtime-configured consent purpose. |
+| `DIGILOCKER_SERVICE_NAME` | Required when enabled; runtime-configured service/application label. |
 | `DIGILOCKER_CONSENT_TTL` | Optional consent lifetime in seconds, 60 through 31,536,000. |
 | `DIGILOCKER_REQ_DOCTYPES` | Optional comma-separated approved document-type codes; no defaults. |
 | `DIGILOCKER_TOKEN_ENCRYPTION_ACTIVE_KEY_ID` | Public identifier of the active key. |
 | `DIGILOCKER_TOKEN_ENCRYPTION_KEYS` | Secret JSON object: key IDs to canonical base64-encoded 32-byte keys. |
+
+The published contract baseline is [Requester / MeriPehchaan v2.4, September
+2026](https://cdn.apisetu.gov.in/portal/assets/Requester-MeriPehchaan-APISpecificationv2.4.pdf),
+authorization parameters on page 5. Both consent labels are required when enabled
+and accept only ASCII letters, digits, spaces, and underscores. Blank labels are
+rejected. That definition supplies no maximum length or fixed purpose enum, so
+neither is invented here. Values are preserved and URL-encoded exactly once;
+no product label or final purpose text is hardcoded. When disabled, these fields
+may remain unset under the existing startup conventions.
+
+Final Stage label values and any portal-matching requirements need portal/provider
+confirmation. The authorization builder still emits no explicit `scope` parameter:
+grant-response scope filtering is not a scope request or evidence of assigned
+permissions. Stage scope assignment remains portal-dependent; do not add scopes
+merely because their names occur in the specification. The portal authentication
+dropdown semantics are also unconfirmed, independently of the published support
+for HTTP Basic token authentication.
+
+Exact Stage authorize/token/revoke endpoints remain unconfirmed. Keep them as
+explicit runtime configuration with no defaults. Production endpoints must not
+be substituted. If OpenID is selected later, confirm Stage exchange and refresh
+endpoint compatibility before changing configuration or request-scope behavior.
 
 HTTPS endpoint configuration rejects credentials, queries, fragments, IP literals,
 localhost, nonstandard ports, and malformed URLs. The staging callback may not be

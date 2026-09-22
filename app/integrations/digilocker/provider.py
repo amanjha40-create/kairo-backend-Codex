@@ -91,9 +91,9 @@ class DigiLockerProvider:
             state=state,
             code_challenge=challenge,
             code_challenge_method="S256",
+            purpose=s.digilocker_purpose,
+            service_name=s.digilocker_service_name,
         )
-        if s.digilocker_purpose:
-            params["purpose"] = s.digilocker_purpose
         if s.digilocker_req_doctypes:
             params["req_doctype"] = s.digilocker_req_doctypes
         if s.digilocker_consent_ttl:

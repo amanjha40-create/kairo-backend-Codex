@@ -21,6 +21,8 @@ def config_values():
         digilocker_token_url="https://provider.example.invalid/token",
         digilocker_revoke_url="https://provider.example.invalid/revoke",
         digilocker_redirect_uri="https://api.example.invalid/api/v1/integrations/digilocker/callback",
+        digilocker_purpose="Synthetic credential verification",
+        digilocker_service_name="Synthetic Test Service_24",
         digilocker_token_encryption_active_key_id="test-v1",
         digilocker_token_encryption_keys=SecretStr(
             json.dumps({"test-v1": base64.b64encode(secrets.token_bytes(32)).decode("ascii")})

@@ -620,6 +620,9 @@ class Settings(BaseSettings):
         default=None, validation_alias="DIGILOCKER_CONNECTION_RETURN_URL"
     )
     digilocker_purpose: str | None = Field(default=None, validation_alias="DIGILOCKER_PURPOSE")
+    digilocker_service_name: str | None = Field(
+        default=None, validation_alias="DIGILOCKER_SERVICE_NAME"
+    )
     digilocker_consent_ttl: int | None = Field(
         default=None, ge=60, le=31_536_000, validation_alias="DIGILOCKER_CONSENT_TTL"
     )

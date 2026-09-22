@@ -69,15 +69,13 @@ def validate_configuration(settings):
             portal = _url(settings.candidate_portal_base_url)
             if (target.scheme, target.netloc) != (portal.scheme, portal.netloc):
                 raise ValueError()
-        if settings.digilocker_purpose not in {
-            None,
-            "kyc",
-            "verification",
-            "compliance",
-            "availing_services",
-            "educational",
-        }:
-            raise ValueError()
+        for value in (settings.digilocker_purpose, settings.digilocker_service_name):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or not re.fullmatch(r"[A-Za-z0-9 _]+", value)
+            ):
+                raise ValueError()
         if settings.digilocker_req_doctypes is not None and not re.fullmatch(
             r"[A-Z]{2,16}(,[A-Z]{2,16}){0,19}", settings.digilocker_req_doctypes
         ):

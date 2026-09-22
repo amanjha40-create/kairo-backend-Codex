@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
 import pytest
@@ -20,6 +20,8 @@ from app.integrations.digilocker.provider import DigiLockerProvider, ProviderErr
         "token_url",
         "revoke_url",
         "redirect_uri",
+        "purpose",
+        "service_name",
     ],
 )
 def test_missing_configuration_fails_closed(field):
@@ -27,6 +29,50 @@ def test_missing_configuration_fails_closed(field):
     values["digilocker_" + field] = None
     with pytest.raises(DigiLockerConfigurationError):
         Settings(**values)
+
+
+@pytest.mark.parametrize("field", ["purpose", "service_name"])
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", "\t", "Example\n", "Example-Name", "Example.Name", "A&B", "A+B", "A/B",
+     "A%20B", "A=B", "A?B", "A#B", "A\x00B", "Caf\u00e9", "A\u00a0B"],
+)
+def test_consent_labels_reject_blank_or_undocumented_characters(field, value):
+    with pytest.raises(DigiLockerConfigurationError) as exc:
+        settings(**{"digilocker_" + field: value})
+    assert str(exc.value) == "DigiLocker enabled configuration is incomplete or unsafe"
+
+
+@pytest.mark.parametrize("field", ["purpose", "service_name"])
+@pytest.mark.parametrize(
+    "value", ["Professional identity verification", "Service_24", "A", "  Service 24  ", "A" * 512]
+)
+def test_consent_labels_accept_documented_format_without_invented_enum_or_max(field, value):
+    config = settings(**{"digilocker_" + field: value})
+    assert getattr(config, "digilocker_" + field) == value
+
+
+def test_consent_labels_are_runtime_configured(monkeypatch):
+    monkeypatch.setenv("DIGILOCKER_PURPOSE", "Runtime purpose_24")
+    monkeypatch.setenv("DIGILOCKER_SERVICE_NAME", "Runtime Service 24")
+    values = config_values()
+    values.pop("digilocker_purpose")
+    values.pop("digilocker_service_name")
+    config = Settings(**values)
+    assert config.digilocker_purpose == "Runtime purpose_24"
+    assert config.digilocker_service_name == "Runtime Service 24"
+
+
+@pytest.mark.parametrize("value", [None, "", "not validated while disabled!"])
+def test_disabled_integration_does_not_require_consent_labels(value):
+    config = Settings(
+        digilocker_enabled=False,
+        digilocker_purpose=value,
+        digilocker_service_name=value,
+    )
+    assert config.digilocker_enabled is False
+    assert config.digilocker_purpose == value
+    assert config.digilocker_service_name == value
 
 
 @pytest.mark.parametrize(
@@ -73,7 +119,8 @@ def test_unsafe_logging_configuration_rejected(overrides):
 
 def test_authorize_exact_callback_pkce_and_optional_consent():
     config = settings(
-        digilocker_purpose="educational",
+        digilocker_purpose="Synthetic verification_24",
+        digilocker_service_name="Synthetic Service_24",
         digilocker_req_doctypes="ABCDE",
         digilocker_consent_ttl=600,
     )
@@ -89,11 +136,30 @@ def test_authorize_exact_callback_pkce_and_optional_consent():
         "state": ["synthetic-state"],
         "code_challenge": ["test-challenge"],
         "code_challenge_method": ["S256"],
-        "purpose": ["educational"],
+        "purpose": ["Synthetic verification_24"],
+        "service_name": ["Synthetic Service_24"],
         "req_doctype": ["ABCDE"],
         "consent_valid_till": [str(int(now.timestamp()) + 600)],
     }
+    pairs = parse_qsl(urlsplit(url).query)
+    assert len(pairs) == len({key for key, _ in pairs})
+    assert "purpose=Synthetic+verification_24" in url
+    assert "service_name=Synthetic+Service_24" in url
+    assert "scope" not in params
     assert config.digilocker_client_secret.get_secret_value() not in url
+    assert config.digilocker_token_encryption_keys.get_secret_value() not in url
+
+
+def test_authorize_keeps_configured_endpoint_and_omits_unconfigured_optional_fields():
+    config = settings(digilocker_authorize_url="https://another.example.invalid/oauth/authorize")
+    url = DigiLockerProvider(config).build_authorization_url(
+        state="synthetic-state", challenge="test-challenge", now=datetime.now(UTC)
+    )
+    assert url.split("?", 1)[0] == config.digilocker_authorize_url
+    params = parse_qs(urlsplit(url).query)
+    assert params["purpose"] == [config.digilocker_purpose]
+    assert params["service_name"] == [config.digilocker_service_name]
+    assert not {"scope", "req_doctype", "consent_valid_till"} & params.keys()
 
 
 def valid_payload():
@@ -145,7 +211,14 @@ async def test_wire_contract_code_refresh_revoke():
 
     def handle(request):
         calls.append(request)
-        assert request.headers["authorization"].startswith("Basic ")
+        expected_auth = httpx.Request(
+            "POST", "https://example.invalid", headers={},
+        )
+        expected_auth = next(httpx.BasicAuth(
+            "synthetic-client", "synthetic-client-secret"
+        ).auth_flow(expected_auth))
+        assert request.headers["authorization"] == expected_auth.headers["authorization"]
+        assert request.headers["content-type"] == "application/x-www-form-urlencoded"
         assert request.extensions["timeout"]["connect"] == 3
         if request.url.path == "/revoke":
             return httpx.Response(200)
@@ -167,6 +240,9 @@ async def test_wire_contract_code_refresh_revoke():
     }
     assert parse_qs(calls[1].content.decode())["grant_type"] == ["refresh_token"]
     assert parse_qs(calls[2].content.decode())["token_type_hint"] == ["refresh_token"]
+    assert [str(call.url) for call in calls] == [
+        config.digilocker_token_url, config.digilocker_token_url, config.digilocker_revoke_url
+    ]
 
 
 @pytest.mark.parametrize(
