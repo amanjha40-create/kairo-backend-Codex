@@ -11,7 +11,7 @@ from app.models import DigiLockerConnection
 
 def test_bounded_migration_and_single_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["080"]
+    assert script.get_heads() == ["081"]
     revision = script.get_revision("080")
     assert revision.down_revision == "079"
     tree = ast.parse(Path(revision.path).read_text())

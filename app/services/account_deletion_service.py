@@ -30,6 +30,7 @@ from app.models import (
     Certification,
     CredentialVerificationRequest,
     DigiLockerConnection,
+    DigiLockerIdentityVerification,
     Education,
     EducationDocument,
     EmailDeliveryLog,
@@ -159,6 +160,9 @@ class AccountDeletionService:
 
         try:
             snapshot = await self._build_snapshot(user)
+            await self._session.execute(
+                delete(DigiLockerIdentityVerification).where(DigiLockerIdentityVerification.user_id == user.id)
+            )
             digilocker_removed = (
                 await self._session.execute(
                     delete(DigiLockerConnection)

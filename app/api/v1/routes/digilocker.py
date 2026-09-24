@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, RedirectResponse
@@ -15,6 +15,7 @@ from app.db.session import get_session
 from app.exceptions import AppException, ServiceUnavailableError
 from app.infrastructure.redis.deps import get_redis
 from app.services.digilocker_document_service import DigiLockerDocumentService
+from app.services.digilocker_identity_service import DigiLockerIdentityService
 from app.services.digilocker_service import DigiLockerService, flow_error
 
 router = APIRouter(prefix="/integrations/digilocker", tags=["digilocker"])
@@ -60,6 +61,40 @@ def get_document_service(
 
 
 DocumentService = Annotated[DigiLockerDocumentService, Depends(get_document_service)]
+
+
+def get_identity_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[Redis, Depends(get_redis)],
+):
+    return DigiLockerIdentityService(session, settings, redis)
+
+
+IdentityService = Annotated[DigiLockerIdentityService, Depends(get_identity_service)]
+
+
+class IdentityVerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    document_types: list[Literal["PANCR", "DRVLC"]] = Field(min_length=1, max_length=2)
+    consent: StrictBool
+    consent_version: Literal["v1"]
+
+
+@router.get("/identity/verifications")
+async def identity_history(response: Response, user: Principal, service: IdentityService):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.history(user.id)
+
+
+@router.post("/identity/verify")
+async def verify_identity(
+    body: IdentityVerificationRequest, response: Response, user: Principal, service: IdentityService
+):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.verify(
+        user.id, body.document_types, consent=body.consent, consent_version=body.consent_version
+    )
 
 
 class RetrievalRequest(BaseModel):

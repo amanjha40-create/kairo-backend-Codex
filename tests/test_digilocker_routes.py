@@ -173,6 +173,8 @@ def test_openapi_exposes_connection_and_document_routes():
         BASE + "/connection",
         BASE + "/documents/issued",
         BASE + "/documents/retrieve",
+        BASE + "/identity/verify",
+        BASE + "/identity/verifications",
     }
     assert "security" not in schema["paths"][BASE + "/callback"]["get"]
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:
