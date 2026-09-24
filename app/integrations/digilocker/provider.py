@@ -12,6 +12,7 @@ import httpx
 from pydantic import SecretStr
 
 from app.integrations.digilocker.crypto import MAX_TOKEN_BYTES
+from app.integrations.digilocker.diagnostics import ExchangeDiagnostics
 
 
 class ProviderError(Exception):
@@ -100,7 +101,7 @@ class DigiLockerProvider:
             params["consent_valid_till"] = int(now.timestamp()) + s.digilocker_consent_ttl
         return s.digilocker_authorize_url + "?" + urlencode(params)
 
-    async def _post(self, url, data, *, revocation=False):
+    async def _post(self, url, data, *, revocation=False, diagnostics=None):
         client = self.client or httpx.AsyncClient()
         try:
             async with (
@@ -118,19 +119,29 @@ class DigiLockerProvider:
                     headers={"Accept": "application/json"},
                 ) as response,
             ):
+                if diagnostics is not None:
+                    diagnostics.received(response)
                 if revocation and response.status_code == 200:
                     return None
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
                     if len(content) > 65_536:
+                        if diagnostics is not None:
+                            diagnostics.parse_category = "response_too_large"
+                            diagnostics.failure = "RESPONSE_PARSE_ERROR"
                         raise ProviderError("invalid_response")
                 import json
 
                 try:
                     payload = json.loads(content)
                 except (ValueError, UnicodeError, RecursionError):
+                    if diagnostics is not None:
+                        diagnostics.parse_category = "invalid_json"
+                        diagnostics.failure = "RESPONSE_PARSE_ERROR"
                     raise ProviderError("invalid_response") from None
+                if diagnostics is not None:
+                    diagnostics.parsed(payload)
                 if response.status_code != 200:
                     if (
                         response.status_code in {400, 401}
@@ -140,25 +151,35 @@ class DigiLockerProvider:
                         raise ProviderError("invalid_grant")
                     raise ProviderError("provider_unavailable")
                 return payload
-        except (httpx.HTTPError, TimeoutError):
+        except (httpx.HTTPError, TimeoutError) as exc:
+            if diagnostics is not None:
+                diagnostics.transport_error(exc)
             raise ProviderError("provider_unavailable") from None
         finally:
             if self.client is None:
                 await client.aclose()
 
     async def exchange_authorization_code(self, code: SecretStr, verifier: SecretStr, *, now):
-        return parse_grant(
-            await self._post(
-                self.settings.digilocker_token_url,
-                {
-                    "grant_type": "authorization_code",
-                    "code": code.get_secret_value(),
-                    "redirect_uri": self.settings.digilocker_redirect_uri,
-                    "code_verifier": verifier.get_secret_value(),
-                },
-            ),
-            now,
-        )
+        data = {
+            "grant_type": "authorization_code",
+            "code": code.get_secret_value(),
+            "redirect_uri": self.settings.digilocker_redirect_uri,
+            "code_verifier": verifier.get_secret_value(),
+        }
+        diagnostics = ExchangeDiagnostics(self.settings.digilocker_token_url, data)
+        try:
+            payload = await self._post(
+                self.settings.digilocker_token_url, data, diagnostics=diagnostics
+            )
+            try:
+                grant = parse_grant(payload, now)
+            except ProviderError:
+                diagnostics.schema_failure(payload)
+                raise
+            diagnostics.parse_category = "valid_token_response"
+            return grant
+        finally:
+            diagnostics.finish()
 
     async def refresh_access_token(self, token: SecretStr, *, now):
         return parse_grant(
