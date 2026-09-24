@@ -155,7 +155,11 @@ async def test_pkce_state_hash_ttl_single_use_and_supersession(harness):
 async def test_synthetic_stored_pkce_and_exact_staging_token_wire_contract(harness):
     h = harness
     callback = "https://staging-api.kairoid.com/api/v1/integrations/digilocker/callback"
-    config = settings(digilocker_redirect_uri=callback)
+    config = settings(
+        digilocker_redirect_uri=callback,
+        digilocker_authorize_url="https://digilocker.meripehchaan.gov.in/public/oauth2/2/authorize",
+        digilocker_token_url="https://digilocker.meripehchaan.gov.in/public/oauth2/2/token",
+    )
     store = TransactionStore(h.redis, h.config)
     now = datetime.now(UTC)
     tx = await store.create(h.ids[0], uuid4(), uuid4(), now)
@@ -168,22 +172,29 @@ async def test_synthetic_stored_pkce_and_exact_staging_token_wire_contract(harne
     def handle(request):
         calls.append(request)
         assert request.method == "POST"
+        assert str(request.url) == "https://digilocker.meripehchaan.gov.in/public/oauth2/2/token"
         assert request.headers["content-type"] == "application/x-www-form-urlencoded"
-        assert request.headers["authorization"].startswith("Basic ")
-        basic = base64.b64decode(request.headers["authorization"][6:]).decode()
-        assert basic == (
-            config.digilocker_client_id + ":" + config.digilocker_client_secret.get_secret_value())
+        assert "authorization" not in request.headers
         body = parse_qs(request.content.decode(), keep_blank_values=True)
         assert body == {"code": ["synthetic-code"], "grant_type": ["authorization_code"],
-                        "redirect_uri": [callback], "code_verifier": [verifier]}
+                        "redirect_uri": [callback], "code_verifier": [verifier],
+                        "client_id": [config.digilocker_client_id],
+                        "client_secret": [config.digilocker_client_secret.get_secret_value()]}
         assert all(len(v) == 1 and v[0] and v[0] != "None" for v in body.values())
         return httpx.Response(200, json={"access_token": "synthetic-access",
                                        "token_type": "Bearer", "expires_in": 3600})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         wire = DigiLockerProvider(config, client=client)
-        auth = parse_qs(urlsplit(wire.build_authorization_url(
-            state=tx.state.get_secret_value(), challenge=tx.challenge, now=now)).query)
+        authorize = urlsplit(wire.build_authorization_url(
+            state=tx.state.get_secret_value(), challenge=tx.challenge, now=now))
+        assert authorize.scheme + "://" + authorize.netloc + authorize.path == (
+            "https://digilocker.meripehchaan.gov.in/public/oauth2/2/authorize")
+        auth = parse_qs(authorize.query)
+        assert auth["dl_flow"] == ["signin"]
+        assert not {"scope", "acr", "amr", "req_doctype", "prompt"} & auth.keys()
+        assert auth["purpose"] == [config.digilocker_purpose]
+        assert auth["service_name"] == [config.digilocker_service_name]
         assert auth["redirect_uri"] == [callback]
         assert auth["code_challenge"] == [tx.challenge]
         assert auth["code_challenge_method"] == ["S256"]

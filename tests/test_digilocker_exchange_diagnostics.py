@@ -42,7 +42,7 @@ async def invoke(caplog, handler, *, success=False):
         assert private not in raw
     assert all(r.exc_info is None and r.stack_info is None for r in records)
     assert formatted[0]["message"] == "digilocker_token_exchange_started"
-    assert formatted[0]["client_auth_method"] == "http_basic"
+    assert formatted[0]["client_auth_method"] == "client_secret_post"
     assert all(formatted[0][k] for k in (
         "code_present", "code_verifier_present", "redirect_uri_present"))
     assert formatted[0]["timeout_seconds"] == {

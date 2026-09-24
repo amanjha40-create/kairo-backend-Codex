@@ -62,7 +62,7 @@ class ExchangeDiagnostics:
         self.error_code = "absent"
         self.failure = None
         logger.info("digilocker_token_exchange_started", extra=self.endpoint | {
-            "grant_type": "authorization_code", "client_auth_method": "http_basic",
+            "grant_type": "authorization_code", "client_auth_method": "client_secret_post",
             "redirect_uri_present": bool(data.get("redirect_uri")),
             "code_verifier_present": bool(data.get("code_verifier")),
             "code_present": bool(data.get("code")),

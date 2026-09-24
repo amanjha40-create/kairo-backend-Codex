@@ -92,6 +92,7 @@ class DigiLockerProvider:
             state=state,
             code_challenge=challenge,
             code_challenge_method="S256",
+            dl_flow="signin",
             purpose=s.digilocker_purpose,
             service_name=s.digilocker_service_name,
         )
@@ -101,7 +102,7 @@ class DigiLockerProvider:
             params["consent_valid_till"] = int(now.timestamp()) + s.digilocker_consent_ttl
         return s.digilocker_authorize_url + "?" + urlencode(params)
 
-    async def _post(self, url, data, *, revocation=False, diagnostics=None):
+    async def _post(self, url, data, *, revocation=False, diagnostics=None, form_credentials=False):
         client = self.client or httpx.AsyncClient()
         try:
             async with (
@@ -110,7 +111,7 @@ class DigiLockerProvider:
                     "POST",
                     url,
                     data=data,
-                    auth=httpx.BasicAuth(
+                    auth=None if form_credentials else httpx.BasicAuth(
                         self.settings.digilocker_client_id,
                         self.settings.digilocker_client_secret.get_secret_value(),
                     ),
@@ -165,6 +166,8 @@ class DigiLockerProvider:
             "code": code.get_secret_value(),
             "redirect_uri": self.settings.digilocker_redirect_uri,
             "code_verifier": verifier.get_secret_value(),
+            "client_id": self.settings.digilocker_client_id,
+            "client_secret": self.settings.digilocker_client_secret.get_secret_value(),
         }
         diagnostics = ExchangeDiagnostics(
             self.settings.digilocker_token_url, data,
@@ -173,7 +176,8 @@ class DigiLockerProvider:
         )
         try:
             payload = await self._post(
-                self.settings.digilocker_token_url, data, diagnostics=diagnostics
+                self.settings.digilocker_token_url, data, diagnostics=diagnostics,
+                form_credentials=True,
             )
             try:
                 grant = parse_grant(payload, now)

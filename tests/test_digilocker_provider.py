@@ -119,6 +119,7 @@ def test_unsafe_logging_configuration_rejected(overrides):
 
 def test_authorize_exact_callback_pkce_and_optional_consent():
     config = settings(
+        digilocker_authorize_url="https://digilocker.meripehchaan.gov.in/public/oauth2/2/authorize",
         digilocker_purpose="Synthetic verification_24",
         digilocker_service_name="Synthetic Service_24",
         digilocker_req_doctypes="ABCDE",
@@ -129,6 +130,8 @@ def test_authorize_exact_callback_pkce_and_optional_consent():
         state="synthetic-state", challenge="test-challenge", now=now
     )
     params = parse_qs(urlsplit(url).query)
+    assert url.split("?", 1)[0] == (
+        "https://digilocker.meripehchaan.gov.in/public/oauth2/2/authorize")
     assert params == {
         "response_type": ["code"],
         "client_id": ["synthetic-client"],
@@ -136,6 +139,7 @@ def test_authorize_exact_callback_pkce_and_optional_consent():
         "state": ["synthetic-state"],
         "code_challenge": ["test-challenge"],
         "code_challenge_method": ["S256"],
+        "dl_flow": ["signin"],
         "purpose": ["Synthetic verification_24"],
         "service_name": ["Synthetic Service_24"],
         "req_doctype": ["ABCDE"],
@@ -145,7 +149,7 @@ def test_authorize_exact_callback_pkce_and_optional_consent():
     assert len(pairs) == len({key for key, _ in pairs})
     assert "purpose=Synthetic+verification_24" in url
     assert "service_name=Synthetic+Service_24" in url
-    assert "scope" not in params
+    assert not {"scope", "acr", "amr", "prompt"} & params.keys()
     assert config.digilocker_client_secret.get_secret_value() not in url
     assert config.digilocker_token_encryption_keys.get_secret_value() not in url
 
@@ -217,7 +221,12 @@ async def test_wire_contract_code_refresh_revoke():
         expected_auth = next(httpx.BasicAuth(
             "synthetic-client", "synthetic-client-secret"
         ).auth_flow(expected_auth))
-        assert request.headers["authorization"] == expected_auth.headers["authorization"]
+        body = parse_qs(request.content.decode())
+        if body.get("grant_type") == ["authorization_code"]:
+            assert "authorization" not in request.headers
+        else:
+            assert request.headers["authorization"] == expected_auth.headers["authorization"]
+            assert not {"client_id", "client_secret"} & body.keys()
         assert request.headers["content-type"] == "application/x-www-form-urlencoded"
         assert request.extensions["timeout"]["connect"] == 3
         if request.url.path == "/revoke":
@@ -225,7 +234,8 @@ async def test_wire_contract_code_refresh_revoke():
         return httpx.Response(200, json=valid_payload())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        config = settings()
+        config = settings(
+            digilocker_token_url="https://digilocker.meripehchaan.gov.in/public/oauth2/2/token")
         provider = DigiLockerProvider(config, client=client)
         await provider.exchange_authorization_code(
             SecretStr("test-code"), SecretStr("test-verifier"), now=datetime.now(UTC)
@@ -237,12 +247,45 @@ async def test_wire_contract_code_refresh_revoke():
         "code": ["test-code"],
         "redirect_uri": [config.digilocker_redirect_uri],
         "code_verifier": ["test-verifier"],
+        "client_id": ["synthetic-client"],
+        "client_secret": ["synthetic-client-secret"],
     }
+    assert calls[0].method == "POST"
+    assert str(calls[0].url) == "https://digilocker.meripehchaan.gov.in/public/oauth2/2/token"
     assert parse_qs(calls[1].content.decode())["grant_type"] == ["refresh_token"]
     assert parse_qs(calls[2].content.decode())["token_type_hint"] == ["refresh_token"]
     assert [str(call.url) for call in calls] == [
         config.digilocker_token_url, config.digilocker_token_url, config.digilocker_revoke_url
     ]
+
+
+async def test_nsso_form_credentials_are_encoded_once_without_inherited_basic_auth():
+    config = settings(
+        digilocker_client_id="synthetic+client&=id",
+        digilocker_client_secret=SecretStr("synthetic+secret&=value%"),
+        digilocker_token_url="https://digilocker.meripehchaan.gov.in/public/oauth2/2/token",
+    )
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        assert "authorization" not in request.headers
+        pairs = parse_qsl(request.content.decode(), keep_blank_values=True)
+        assert len(pairs) == len(dict(pairs)) == 6
+        assert dict(pairs) == {
+            "grant_type": "authorization_code", "code": "synthetic+code&=value",
+            "redirect_uri": config.digilocker_redirect_uri, "code_verifier": "v" * 43,
+            "client_id": config.digilocker_client_id,
+            "client_secret": config.digilocker_client_secret.get_secret_value(),
+        }
+        return httpx.Response(200, json=valid_payload())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle), auth=("unused-client", "unused-secret")
+    ) as client:
+        await DigiLockerProvider(config, client=client).exchange_authorization_code(
+            SecretStr("synthetic+code&=value"), SecretStr("v" * 43), now=datetime.now(UTC))
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

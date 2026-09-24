@@ -94,13 +94,42 @@ confirmation. The authorization builder still emits no explicit `scope` paramete
 grant-response scope filtering is not a scope request or evidence of assigned
 permissions. Stage scope assignment remains portal-dependent; do not add scopes
 merely because their names occur in the specification. The portal authentication
-dropdown semantics are also unconfirmed, independently of the published support
-for HTTP Basic token authentication.
+dropdown is not the OAuth grant: the operator-reported API Setu STAGE generator
+uses `grant_type=authorization_code`, regardless of a `client_credentials` label
+in its token-authentication-method setting. The sanitized generated Python example
+uses form-body client credentials, not HTTP Basic, for authorization-code exchange.
 
-Exact Stage authorize/token/revoke endpoints remain unconfirmed. Keep them as
-explicit runtime configuration with no defaults. Production endpoints must not
-be substituted. If OpenID is selected later, confirm Stage exchange and refresh
-endpoint compatibility before changing configuration or request-scope behavior.
+### Approved STAGE NSSO endpoint alignment (2026-09-24)
+
+The operator reports that the registered KairoID STAGE Auth Partner's live API
+Setu generator selects the following endpoints. Keep them explicitly configured;
+do not introduce application defaults or change production configuration:
+
+```text
+DIGILOCKER_AUTHORIZE_URL=https://digilocker.meripehchaan.gov.in/public/oauth2/2/authorize
+DIGILOCKER_TOKEN_URL=https://digilocker.meripehchaan.gov.in/public/oauth2/2/token
+```
+
+Only these two endpoint settings replace the previous `/1` values. The revoke
+endpoint is unchanged. Authorization remains `response_type=code`; exchange
+remains POST form-encoded with exactly `code`, `grant_type`, `redirect_uri`,
+`code_verifier`, `client_id`, and `client_secret`, without an Authorization header.
+Configured credentials are supplied directly to form serialization and never logged.
+The grant remains `authorization_code`; refresh/revoke authentication is unchanged.
+Redirect URI, state, S256 PKCE, Redis routing, token encryption, response parsing
+and all public API contracts are unchanged.
+
+The operator supplied a sanitized generated request: authorization has response_type,
+client_id, state, redirect_uri, code_challenge, code_challenge_method and dl_flow.
+KairoID now explicitly sends `dl_flow=signin` as generated. Token endpoint, form
+field names and form-body credential placement match the supplied example.
+Existing purpose/service_name remain deliberately present; the example's omission
+does not establish that the endpoint rejects them. Optional configured
+req_doctype/consent_valid_till also remain unchanged. scope, acr, amr and prompt
+remain absent. Do not add identity-data scopes or silently remove consent labels.
+Any live rejection of those parameters requires review
+before another source/configuration change. Refresh/revoke and live OAuth are
+not exercised by endpoint-alignment certification.
 
 HTTPS endpoint configuration rejects credentials, queries, fragments, IP literals,
 localhost, nonstandard ports, and malformed URLs. The staging callback may not be
