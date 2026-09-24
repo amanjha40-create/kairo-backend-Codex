@@ -1,6 +1,7 @@
 """Allowlisted metadata for code exchange only; never retain wire payloads."""
 
 import logging
+import re
 import socket
 import ssl
 from time import monotonic
@@ -9,10 +10,10 @@ from urllib.parse import urlsplit
 import httpx
 
 logger = logging.getLogger(__name__)
-OAUTH_ERRORS = frozenset({
-    "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
-    "unsupported_grant_type", "invalid_scope", "access_denied", "server_error",
-    "temporarily_unavailable",
+SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9._-]{1,64}", re.ASCII)
+SENSITIVE_FIELDS = frozenset({
+    "code", "authorization_code", "state", "code_verifier", "client_id",
+    "client_secret", "access_token", "refresh_token", "id_token", "error_description",
 })
 
 
@@ -39,7 +40,11 @@ def transport_category(exc):
 
 
 class ExchangeDiagnostics:
-    def __init__(self, url, data):
+    def __init__(self, url, data, *, client_id="", client_secret=""):
+        self._protected_values = tuple(value for value in (
+            data.get("code"), data.get("code_verifier"), client_id, client_secret,
+        ) if isinstance(value, str) and value)
+        self.response_fields = None
         endpoint = urlsplit(url)
         # Runtime configuration is validated, but only known public endpoint labels
         # are emitted so even a misconfigured path cannot become a log exfiltration channel.
@@ -75,10 +80,24 @@ class ExchangeDiagnostics:
     def parsed(self, payload):
         self.parse_category = "json"
         error = payload.get("error") if isinstance(payload, dict) else None
-        if isinstance(error, str) and error in OAUTH_ERRORS:
+        protected = self._protected_values + tuple(
+            value for key, value in (payload.items() if isinstance(payload, dict) else ())
+            if key in SENSITIVE_FIELDS and isinstance(value, str) and value
+        )
+
+        def safe_identifier(value):
+            return (isinstance(value, str) and SAFE_IDENTIFIER.fullmatch(value) is not None
+                    and not any(secret in value for secret in protected))
+
+        # Syntax alone is insufficient if a provider echoes a known credential.
+        if safe_identifier(error):
             self.error_code = error
-        elif error is not None:
+        elif isinstance(payload, dict) and "error" in payload:
             self.error_code = "other_redacted"
+        if self.status is not None and not 200 <= self.status < 300 and isinstance(payload, dict):
+            self.response_fields = sorted({
+                key if safe_identifier(key) else "other_redacted" for key in payload
+            })[:32]
 
     def schema_failure(self, payload):
         self.failure = "TOKEN_SCHEMA_ERROR"
@@ -123,4 +142,5 @@ class ExchangeDiagnostics:
                 "provider_oauth_error": self.error_code,
                 "failure_category": self.failure or (
                     "PROVIDER_HTTP_REJECTION" if self.status != 200 else "NONE"),
-            })
+            } | ({"response_fields": self.response_fields}
+                 if self.response_fields is not None else {}))

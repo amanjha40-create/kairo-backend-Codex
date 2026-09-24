@@ -157,3 +157,55 @@ async def test_read_timeout_after_headers_preserves_received_status(caplog):
     assert records[-2]["response_received"] is True
     assert records[-1]["http_status"] == 200
     assert records[-1]["failure_category"] == "TIMEOUT"
+
+
+@pytest.mark.parametrize("error", [
+    "invalid_client", "invalid_grant", "invalid_request", "invalid_grant_type",
+    "Provider.Error-42", "x", "x" * 64,
+])
+async def test_safe_unknown_error_identifier_is_preserved(caplog, error):
+    records = await invoke(caplog, lambda r: httpx.Response(400, json={
+        "error": error, "error_description": "PRIVATE-DESCRIPTION", "detail": PRIVATE[3],
+    }))
+    assert records[-1]["provider_oauth_error"] == error
+    assert records[-1]["response_fields"] == ["detail", "error", "error_description"]
+
+
+@pytest.mark.parametrize("error", [
+    "", "x" * 65, "invalid grant", "invalid_grant\n", "error\r\ninjected",
+    "error\x00", "érror", "error/value", "error=value", "https://example.invalid",
+    None, True, PRIVATE[0], PRIVATE[1], PRIVATE[2], "prefix-" + PRIVATE[0],
+])
+async def test_invalid_or_reflected_error_identifier_is_redacted(caplog, error):
+    records = await invoke(caplog, lambda r: httpx.Response(400, json={"error": error}))
+    assert records[-1]["provider_oauth_error"] == "other_redacted"
+
+
+@pytest.mark.parametrize("field,secret", [
+    ("access_token", PRIVATE[3]), ("refresh_token", PRIVATE[4]),
+    ("state", PRIVATE[5]), ("id_token", PRIVATE[6]),
+    ("error_description", "PRIVATE-DESCRIPTION"),
+])
+async def test_reflected_response_secrets_cannot_be_error_identifiers(caplog, field, secret):
+    records = await invoke(caplog, lambda r: httpx.Response(400, json={
+        "error": secret, field: secret,
+    }))
+    assert records[-1]["provider_oauth_error"] == "other_redacted"
+
+
+async def test_response_field_names_are_bounded_sanitized_and_never_values(caplog):
+    payload = {"error": "invalid_grant_type", "error_description": "PRIVATE-DESCRIPTION",
+               PRIVATE[1]: PRIVATE[3], "bad\nkey": PRIVATE[4], "x" * 65: PRIVATE[5]}
+    records = await invoke(caplog, lambda r: httpx.Response(400, json=payload))
+    assert records[-1]["response_fields"] == ["error", "error_description", "other_redacted"]
+    caplog.clear()
+    records = await invoke(caplog, lambda r: httpx.Response(400, json={
+        f"field_{i:02}": PRIVATE[3] for i in range(100)
+    }))
+    assert len(records[-1]["response_fields"]) == 32
+    assert records[-1]["response_fields"] == sorted(records[-1]["response_fields"])
+
+
+async def test_success_response_field_names_are_not_logged(caplog):
+    records = await invoke(caplog, lambda r: httpx.Response(200, json=grant()), success=True)
+    assert "response_fields" not in records[-1]

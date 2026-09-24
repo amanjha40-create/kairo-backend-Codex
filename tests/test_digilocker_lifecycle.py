@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -12,8 +13,10 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import httpx
 import pytest
 from digilocker_helpers import grant, provider, settings
+from pydantic import SecretStr
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import delete, func, select
@@ -28,7 +31,7 @@ from app.exceptions import (
     ServiceUnavailableError,
     ValidationAppError,
 )
-from app.integrations.digilocker.provider import ProviderError
+from app.integrations.digilocker.provider import DigiLockerProvider, ProviderError
 from app.integrations.digilocker.transactions import StateError, TransactionStore
 from app.models import DigiLockerConnection, User
 from app.schemas.account_deletion import AccountDeletionRequest
@@ -145,6 +148,50 @@ async def test_pkce_state_hash_ttl_single_use_and_supersession(harness):
     )
     assert sum(isinstance(result, StateError) for result in results) == 1
     assert sum(getattr(result, "user_id", None) == h.ids[0] for result in results) == 1
+    consumed = next(result for result in results if not isinstance(result, StateError))
+    assert consumed.verifier == second.verifier
+
+
+async def test_synthetic_stored_pkce_and_exact_staging_token_wire_contract(harness):
+    h = harness
+    callback = "https://staging-api.kairoid.com/api/v1/integrations/digilocker/callback"
+    config = settings(digilocker_redirect_uri=callback)
+    store = TransactionStore(h.redis, h.config)
+    now = datetime.now(UTC)
+    tx = await store.create(h.ids[0], uuid4(), uuid4(), now)
+    verifier = tx.verifier.get_secret_value()
+    assert re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier)
+    assert tx.challenge == base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        assert request.method == "POST"
+        assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+        assert request.headers["authorization"].startswith("Basic ")
+        basic = base64.b64decode(request.headers["authorization"][6:]).decode()
+        assert basic == (
+            config.digilocker_client_id + ":" + config.digilocker_client_secret.get_secret_value())
+        body = parse_qs(request.content.decode(), keep_blank_values=True)
+        assert body == {"code": ["synthetic-code"], "grant_type": ["authorization_code"],
+                        "redirect_uri": [callback], "code_verifier": [verifier]}
+        assert all(len(v) == 1 and v[0] and v[0] != "None" for v in body.values())
+        return httpx.Response(200, json={"access_token": "synthetic-access",
+                                       "token_type": "Bearer", "expires_in": 3600})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        wire = DigiLockerProvider(config, client=client)
+        auth = parse_qs(urlsplit(wire.build_authorization_url(
+            state=tx.state.get_secret_value(), challenge=tx.challenge, now=now)).query)
+        assert auth["redirect_uri"] == [callback]
+        assert auth["code_challenge"] == [tx.challenge]
+        assert auth["code_challenge_method"] == ["S256"]
+        consumed = await store.consume(tx.state.get_secret_value(), now)
+        assert consumed.verifier.get_secret_value() == verifier
+        await wire.exchange_authorization_code(
+            SecretStr("synthetic-code"), consumed.verifier, now=now)
+    assert len(calls) == 1
 
 
 async def test_expired_and_unknown_state(harness):

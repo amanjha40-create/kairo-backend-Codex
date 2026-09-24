@@ -166,7 +166,11 @@ class DigiLockerProvider:
             "redirect_uri": self.settings.digilocker_redirect_uri,
             "code_verifier": verifier.get_secret_value(),
         }
-        diagnostics = ExchangeDiagnostics(self.settings.digilocker_token_url, data)
+        diagnostics = ExchangeDiagnostics(
+            self.settings.digilocker_token_url, data,
+            client_id=self.settings.digilocker_client_id,
+            client_secret=self.settings.digilocker_client_secret.get_secret_value(),
+        )
         try:
             payload = await self._post(
                 self.settings.digilocker_token_url, data, diagnostics=diagnostics
