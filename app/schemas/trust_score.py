@@ -33,6 +33,19 @@ class TrustScoreComponentBreakdown(BaseModel):
     documents: float | None = Field(default=None, exclude=True)
 
 
+class IdentityTrustSource(BaseModel):
+    source: Literal["kairo", "digilocker"]
+    document_type: Literal["identity", "PANCR", "DRVLC"]
+    current: bool
+    match_result: Literal["VERIFIED_MATCH", "PARTIAL_MATCH", "MISMATCH", "UNABLE_TO_VERIFY"]
+    reason: Literal["NAME_MISMATCH", "DOB_MISMATCH", "NAME_AND_DOB_MISMATCH", "REQUIRED_FIELD_MISSING", "OTHER"] | None = None
+
+
+class IdentityTrustResponse(BaseModel):
+    state: Literal["verified", "unverified"]
+    sources: list[IdentityTrustSource]
+
+
 class TrustScoreResponse(BaseModel):
     """Backend-owned Trust Score; the frontend must render, not calculate, it."""
 
@@ -49,6 +62,8 @@ class TrustScoreResponse(BaseModel):
     verification_completeness_percentage: int = Field(default=0, ge=0, le=100)
     # Kept for clients released before V1; it is not part of V1 scoring.
     week_change: int = 0
+    identity_state: Literal["verified", "unverified"] = "unverified"
+    identity_sources: list[IdentityTrustSource] = Field(default_factory=list)
 
 
 class TrustScoreConsentRequest(BaseModel):

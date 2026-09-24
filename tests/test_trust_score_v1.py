@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import Education, Employment, TrustScoreSnapshot, User, UserDocument
+from app.models import DigiLockerIdentityVerification, Education, Employment, TrustScoreSnapshot, User, UserDocument
 from app.schemas.trust_score import TrustScoreConsentRequest
 from app.services.trust_score_service import TrustScoreService
 
@@ -33,6 +33,7 @@ class _Session:
         self.educations = educations or []
         self.added = []
         self.snapshot = None
+        self.digilocker = []
 
     async def execute(self, statement):
         entity = statement.column_descriptions[0]["entity"]
@@ -42,6 +43,7 @@ class _Session:
             Employment: self.employments,
             Education: self.educations,
             TrustScoreSnapshot: self.snapshot,
+            DigiLockerIdentityVerification: self.digilocker,
         }
         return _Result(values[entity])
 

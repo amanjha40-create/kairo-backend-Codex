@@ -9,6 +9,7 @@ from app.exceptions import ValidationAppError
 from app.integrations.digilocker.identity import Match, match_document
 from app.integrations.digilocker.provider import ProviderError
 from app.models import DigiLockerIdentityVerification, User
+from app.services.canonical_trust import identity_current, resolve_identity
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_service import transaction
 
@@ -22,12 +23,16 @@ def reference_fingerprint(doctype, uri):
 
 
 class DigiLockerIdentityService(DigiLockerDocumentService):
+    @transaction
+    async def trust(self, user_id):
+        await self._owner(user_id)
+        user = await self.session.get(User, user_id)
+        result = await resolve_identity(self.session, user, self.now())
+        await self.session.rollback()
+        return result
+
     def _public(self, row, user):
-        current = bool(
-            row.match_result == "VERIFIED_MATCH"
-            and row.profile_revision_at == user.updated_at
-            and (row.document_valid_until is None or row.document_valid_until >= self.now().date())
-        )
+        current = identity_current(row, user, self.now().date())
         return {
             "id": str(row.id),
             "source": row.source,
@@ -35,6 +40,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             "document_type": row.document_type,
             "integrity_result": row.integrity_result,
             "match_result": row.match_result,
+            "match_reason": row.match_reason,
             "verified_at": row.verified_at,
             "document_valid_until": row.document_valid_until,
             "consent_purpose": row.consent_purpose,
@@ -168,6 +174,11 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                     now,
                 )
                 row.integrity_result, row.match_result = integrity, match.result
+                row.match_reason = (
+                    match.diagnostics.get("mismatch_reason")
+                    if match.result != "VERIFIED_MATCH"
+                    else None
+                )
                 row.verified_at = now if match.result == "VERIFIED_MATCH" else None
                 row.document_valid_until = match.valid_until
                 row.profile_revision_at = user.updated_at

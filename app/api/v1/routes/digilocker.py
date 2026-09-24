@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.exceptions import AppException, ServiceUnavailableError
 from app.infrastructure.redis.deps import get_redis
+from app.schemas.trust_score import IdentityTrustResponse
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_identity_service import DigiLockerIdentityService
 from app.services.digilocker_service import DigiLockerService, flow_error
@@ -85,6 +86,12 @@ class IdentityVerificationRequest(BaseModel):
 async def identity_history(response: Response, user: Principal, service: IdentityService):
     response.headers.update(PRIVATE_HEADERS)
     return await service.history(user.id)
+
+
+@router.get("/identity/trust", response_model=IdentityTrustResponse)
+async def identity_trust(response: Response, user: Principal, service: IdentityService):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.trust(user.id)
 
 
 @router.post("/identity/verify")

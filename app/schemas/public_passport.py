@@ -166,6 +166,7 @@ class PublicPassportTrustScore(BaseModel):
     score_version: str = "v1"
     last_calculated_at: datetime | None = None
     verification_completeness_percentage: int = 0
+    identity_state: Literal["verified", "unverified"] = "unverified"
 
 
 class PublicPassportResponse(BaseModel):

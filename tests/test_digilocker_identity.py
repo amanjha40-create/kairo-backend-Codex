@@ -410,7 +410,7 @@ async def test_081_metadata_constraints():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["081"]
+    assert script.get_heads() == ["082"]
     migration = script.get_revision("081")
     assert migration.down_revision == "080"
     tree = ast.parse(Path(migration.path).read_text())
@@ -442,7 +442,7 @@ async def test_081_metadata_constraints():
             f["referred_table"]: f["options"]["ondelete"]
             for f in inspector.get_foreign_keys(table.name)
         } == {"users": "CASCADE", "digilocker_connections": "SET NULL"}
-        assert len(inspector.get_check_constraints(table.name)) == 7
+        assert len(inspector.get_check_constraints(table.name)) == 8
         assert [u["column_names"] for u in inspector.get_unique_constraints(table.name)] == [
             ["user_id", "document_type", "provider_reference_fingerprint"]
         ]
@@ -456,6 +456,7 @@ async def test_routes_auth_controlled_input_and_no_cache():
 
     previous = app.dependency_overrides.copy()
     fake = SimpleNamespace(
+        trust=AsyncMock(return_value={"state": "unverified", "sources": [], "private": "CANARY"}),
         history=AsyncMock(return_value={"items": [], "identity_verified": False}),
         verify=AsyncMock(return_value={"items": [], "identity_verified": False}),
     )
@@ -466,9 +467,14 @@ async def test_routes_auth_controlled_input_and_no_cache():
             transport=httpx.ASGITransport(app), base_url="http://test"
         ) as client:
             assert (await client.get(base + "/verifications")).status_code == 401
+            assert (await client.get(base + "/trust")).status_code == 401
             assert (await client.post(base + "/verify", json={})).status_code == 401
             user = CurrentUser(id=uuid4(), email="synthetic@example.invalid", role="user")
             app.dependency_overrides[get_current_user] = lambda: user
+            response = await client.get(base + "/trust")
+            assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+            assert response.json() == {"state": "unverified", "sources": []}
+            fake.trust.assert_awaited_once_with(user.id)
             for body in [
                 {"document_types": ["AADHAAR"], "consent": True, "consent_version": "v1"},
                 {"document_types": ["PANCR"], "consent": "true", "consent_version": "v1"},

@@ -36,6 +36,11 @@ class DigiLockerIdentityVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="verified_result",
         ),
         CheckConstraint("provider_reference_fingerprint ~ '^[0-9a-f]{64}$'", name="fingerprint"),
+        CheckConstraint(
+            "match_reason IS NULL OR match_reason IN ('NAME_MISMATCH','DOB_MISMATCH',"
+            "'NAME_AND_DOB_MISMATCH','REQUIRED_FIELD_MISSING','OTHER')",
+            name="match_reason",
+        ),
     )
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     source_connection_id: Mapped[UUID | None] = mapped_column(
@@ -52,6 +57,7 @@ class DigiLockerIdentityVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     consented_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     integrity_result: Mapped[str] = mapped_column(String(16))
     match_result: Mapped[str] = mapped_column(String(24))
+    match_reason: Mapped[str | None] = mapped_column(String(32))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     document_valid_until: Mapped[date | None] = mapped_column(Date)
     # No name/DOB snapshot. Any profile edit requires a new match before a current badge.

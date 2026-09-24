@@ -13,7 +13,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.models import Education, Employment, TrustScoreSnapshot, User, UserDocument
+from app.models import Education, Employment, TrustScoreSnapshot, User
+from app.services.canonical_trust import resolve_identity
 from app.schemas.trust_score import (
     TrustScoreComponentBreakdown,
     TrustScoreConsentRequest,
@@ -67,7 +68,8 @@ class TrustScoreService:
             await self._persist(user, response)
             return response
 
-        identity = await self._identity_domain(user)
+        identity_trust = await resolve_identity(self._session, user, now)
+        identity = await self._identity_domain(user, identity_trust)
         employment = await self._employment_domain(user_id)
         education = await self._education_domain(user_id)
         domains = {"identity": identity, "employment": employment, "education": education}
@@ -96,21 +98,20 @@ class TrustScoreService:
             score_version=self._settings.trust_score_version,
             last_calculated_at=now,
             verification_completeness_percentage=completeness,
+            identity_state=identity_trust["state"],
+            identity_sources=identity_trust["sources"],
         )
         await self._persist(user, response)
         return response
 
     async def _get_user(self, user_id: UUID) -> User | None:
-        return (await self._session.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))).scalar_one_or_none()
+        # Serialize score snapshots per owner, including concurrent Passport reads.
+        return (await self._session.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)).with_for_update())).scalar_one_or_none()
 
-    async def _identity_domain(self, user: User) -> TrustScoreDomainScore:
-        documents = list((await self._session.execute(
-            select(UserDocument).where(UserDocument.user_id == user.id, UserDocument.deleted_at.is_(None))
-        )).scalars().all())
-        identity_doc = next((doc for doc in documents if doc.verification_status in _VERIFIED_STATES), None)
+    async def _identity_domain(self, user: User, identity_trust) -> TrustScoreDomainScore:
         points = 0.0
         positives: list[TrustScoreContributor] = []
-        if identity_doc:
+        if identity_trust["state"] == "verified":
             points += 40
             positives.append(TrustScoreContributor(code="identity_authoritative", label="Identity document verified", points=40, detail="Approved identity evidence provides the authoritative tier."))
         if user.phone_verified_at:
