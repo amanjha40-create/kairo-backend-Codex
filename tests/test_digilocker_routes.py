@@ -164,13 +164,15 @@ async def test_callback_errors_safe_and_uncached(client_service, error, status):
     assert "error_description" not in service.callback.call_args.kwargs
 
 
-def test_openapi_exposes_only_four_connection_routes():
+def test_openapi_exposes_connection_and_document_routes():
     schema = app.openapi()
     assert {path for path in schema["paths"] if path.startswith(BASE)} == {
         BASE + "/connect",
         BASE + "/callback",
         BASE + "/status",
         BASE + "/connection",
+        BASE + "/documents/issued",
+        BASE + "/documents/retrieve",
     }
     assert "security" not in schema["paths"][BASE + "/callback"]["get"]
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:

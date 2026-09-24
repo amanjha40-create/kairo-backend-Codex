@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, RedirectResponse
@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.exceptions import AppException, ServiceUnavailableError
 from app.infrastructure.redis.deps import get_redis
+from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_service import DigiLockerService, flow_error
 
 router = APIRouter(prefix="/integrations/digilocker", tags=["digilocker"])
@@ -48,6 +49,39 @@ def get_digilocker_service(
 
 Service = Annotated[DigiLockerService, Depends(get_digilocker_service)]
 Principal = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def get_document_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[Redis, Depends(get_redis)],
+):
+    return DigiLockerDocumentService(session, settings, redis)
+
+
+DocumentService = Annotated[DigiLockerDocumentService, Depends(get_document_service)]
+
+
+class RetrievalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reference: str = Field(min_length=1, max_length=16384, repr=False)
+
+
+@router.get("/documents/issued")
+async def issued_documents(response: Response, user: Principal, service: DocumentService):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.issued(user.id)
+
+
+@router.post("/documents/retrieve")
+async def retrieve_document(
+    body: RetrievalRequest,
+    response: Response,
+    user: Principal,
+    service: DocumentService,
+):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.retrieve(user.id, body.reference)
 
 
 @router.post("/connect", response_model=ConnectResponse)

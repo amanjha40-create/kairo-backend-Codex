@@ -643,3 +643,58 @@ async def test_callback_locator_outage_is_sanitized_without_provider_call(harnes
     assert "private" not in str(exc.value)
     assert (await h.connection()).status == "pending"
     h.fake.exchange_authorization_code.assert_not_awaited()
+
+
+async def test_document_reads_preserve_connection_and_enforce_database_owner(harness):
+    from app.exceptions import NotFoundError
+    from app.integrations.digilocker.documents import RetrievedDocument, normalize_items
+    from app.services.digilocker_document_service import DigiLockerDocumentService
+
+    h = harness
+    before = await h.activate()
+    docs = SimpleNamespace(
+        issued=AsyncMock(
+            return_value=normalize_items(
+                {
+                    "items": [
+                        {
+                            "name": "Synthetic PAN",
+                            "type": "file",
+                            "doctype": "PANCR",
+                            "uri": "in.test-PANCR-SYNTHETIC",
+                            "issuerid": "in.test",
+                            "issuer": "Synthetic issuer",
+                            "mime": "application/pdf",
+                        }
+                    ]
+                }
+            )
+        ),
+        retrieve=AsyncMock(return_value=RetrievedDocument(b"synthetic", "application/pdf")),
+    )
+    async with async_session_factory() as session:
+        service = DigiLockerDocumentService(session, h.config, h.redis, documents=docs)
+        listing = await service.issued(h.ids[0])
+        reference = listing["items"][0]["reference"]
+        assert (await service.retrieve(h.ids[0], reference))["integrity"] == "verified"
+        with pytest.raises(ValidationAppError):
+            await service.retrieve(h.ids[1], reference)
+    after = await h.connection()
+    assert after.encrypted_access_token == before.encrypted_access_token
+    assert after.encrypted_refresh_token == before.encrypted_refresh_token
+    assert after.status == before.status == "active"
+    assert after.refreshed_at == before.refreshed_at
+    assert after.token_expires_at == before.token_expires_at
+    h.fake.refresh_access_token.assert_not_awaited()
+    h.fake.revoke_token.assert_not_awaited()
+    docs.retrieve.assert_awaited_once()
+    # The same issued reference must also fail for an otherwise-active second account.
+    state = (await h.call("connect", h.ids[1]))["authorization_url"]
+    await h.call(
+        "callback", state=parse_qs(urlsplit(state).query)["state"][0], code="synthetic-second-code"
+    )
+    async with async_session_factory() as session:
+        service = DigiLockerDocumentService(session, h.config, h.redis, documents=docs)
+        with pytest.raises(NotFoundError):
+            await service.retrieve(h.ids[1], reference)
+    docs.retrieve.assert_awaited_once()
