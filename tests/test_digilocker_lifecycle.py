@@ -514,15 +514,26 @@ async def test_callback_commit_failure_rolls_back_and_revokes_unstored_grant(har
     h.fake.exchange_authorization_code.assert_awaited_once()
 
 
-async def test_expired_connection_status_and_reconnect_agree(harness):
+@pytest.mark.parametrize("refresh", [False, True])
+@pytest.mark.parametrize("seconds_remaining", [-1, 20])
+async def test_expired_connection_status_and_reconnect_agree(harness, refresh, seconds_remaining):
     h = harness
-    h.fake.exchange_authorization_code.return_value = grant(refresh=False)
+    h.fake.exchange_authorization_code.return_value = grant(refresh=refresh)
     await h.activate()
-    await h.alter(token_expires_at=datetime.now(UTC) - timedelta(seconds=1))
-    assert (await h.call("status"))["status"] == "reconnect_required"
+    await h.alter(token_expires_at=datetime.now(UTC) + timedelta(seconds=seconds_remaining))
+    before = await h.connection()
+    status = await h.call("status")
+    assert status["status"] == "reconnect_required" and status["connected"] is False
+    after_status = await h.connection()
+    assert after_status.status == "active"
+    assert after_status.encrypted_access_token == before.encrypted_access_token
+    assert after_status.encrypted_refresh_token == before.encrypted_refresh_token
     assert await h.start()
     row = await h.connection()
     assert row.status == "pending" and row.encrypted_access_token is None
+    h.fake.refresh_access_token.assert_not_awaited()
+    h.fake.revoke_token.assert_not_awaited()
+    h.fake.exchange_authorization_code.assert_awaited_once()
 
 
 async def test_deleted_owner_rejects_consumed_callback_even_if_redis_cleanup_fails(harness):

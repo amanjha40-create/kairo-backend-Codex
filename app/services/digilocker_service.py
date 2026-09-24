@@ -226,9 +226,8 @@ class DigiLockerService:
     def _credentials_expired(self, connection):
         return bool(
             (connection.consent_valid_until and connection.consent_valid_until <= self.now())
-            or (
-                connection.token_expires_at <= self.now() and not connection.encrypted_refresh_token
-            )
+            # Status/connect must reflect usable access without implicitly refreshing credentials.
+            or connection.token_expires_at <= self.now() + timedelta(seconds=30)
         )
 
     def _apply_grant(self, connection, grant, *, initial=False):
