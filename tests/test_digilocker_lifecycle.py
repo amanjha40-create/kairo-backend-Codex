@@ -134,7 +134,7 @@ async def test_pkce_state_hash_ttl_single_use_and_supersession(harness):
         .decode()
     )
     keys = [key async for key in h.redis.scan_iter(match=h.config.redis_key_prefix + ":*")]
-    assert len(keys) == 2
+    assert len(keys) == 4  # Owner, current payload, and both bounded routing locators.
     assert all(second.state.get_secret_value() not in key for key in keys)
     assert all([0 < await h.redis.ttl(key) <= 600 for key in keys])
     with pytest.raises(StateError):
@@ -285,7 +285,7 @@ async def test_bounded_repeated_connect_and_active_conflict(harness):
     with pytest.raises(RateLimitError):
         await h.start()
     keys = [key async for key in h.redis.scan_iter(match=h.config.redis_key_prefix + ":*")]
-    assert len(keys) == 3
+    assert len(keys) == 7  # Rate key, owner/payload, and four retained routing locators.
 
 
 async def test_refresh_rotation_serialized_and_current_token_not_refreshed(harness):
@@ -392,18 +392,20 @@ async def test_local_account_deletion_purges_connection_and_ephemeral_state(harn
     else:
         await h.activate()
         state = None
+    store = TransactionStore(h.redis, h.config)
+    owner_key = store._owner_key(store._routing_tag(h.ids[0]))
+    assert await h.redis.exists(owner_key) == 1
+    locators = [key async for key in h.redis.scan_iter(match=store.route_prefix + "*")]
+    assert len(locators) == 1
+    before_ttl = await h.redis.pttl(locators[0])
     async with async_session_factory() as session:
         await AccountDeletionService(session, h.config, h.redis).delete_candidate_account(
             h.ids[0], AccountDeletionRequest(confirm="DELETE", current_password="TestOnly123!")
         )
     assert await h.connection() is None
-    keys = [
-        key
-        async for key in h.redis.scan_iter(
-            match=h.config.redis_key_prefix + ":cache:digilocker-state:*"
-        )
-    ]
+    keys = [key async for key in h.redis.scan_iter(match=store.prefix + "*")]
     assert keys == []
+    assert 0 < await h.redis.pttl(locators[0]) <= before_ttl <= 600_000
     if state:
         with pytest.raises(ValidationAppError):
             await h.call("callback", state=state, code="synthetic-code")
@@ -469,7 +471,10 @@ async def test_deleted_owner_rejects_consumed_callback_even_if_redis_cleanup_fai
     h = harness
     state = await h.start()
     tx = await TransactionStore(h.redis, h.config).consume(state, datetime.now(UTC))
-    failing_redis = SimpleNamespace(eval=AsyncMock(side_effect=RedisConnectionError("private")))
+    failing_redis = SimpleNamespace(
+        get=AsyncMock(side_effect=RedisConnectionError("private")),
+        eval=AsyncMock(side_effect=RedisConnectionError("private")),
+    )
     async with async_session_factory() as session:
         await AccountDeletionService(session, h.config, failing_redis).delete_candidate_account(
             h.ids[0], AccountDeletionRequest(confirm="DELETE", current_password="TestOnly123!")
@@ -517,3 +522,66 @@ async def test_refresh_reencrypts_with_current_active_key(harness):
     assert before.encrypted_access_token["key_id"] == "test-v1"
     assert after.encrypted_access_token["key_id"] == "test-v2"
     assert after.encrypted_refresh_token["key_id"] == "test-v2"
+
+
+async def test_concurrent_connects_leave_one_current_attempt(harness):
+    h = harness
+    states = await asyncio.gather(h.start(), h.start())
+    store = TransactionStore(h.redis, h.config)
+    results = await asyncio.gather(
+        *(store.consume(state, datetime.now(UTC)) for state in states),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, StateError) for result in results) == 1
+    current = next(result for result in results if not isinstance(result, StateError))
+    assert current.attempt_id == (await h.connection()).pending_attempt_id
+    async with async_session_factory() as session:
+        service = DigiLockerService(session, h.config, h.redis, provider=h.fake)
+        service.store.consume = AsyncMock(return_value=current)
+        assert await service.callback(state="synthetic", code="synthetic-code") == {
+            "connection_state": "active"
+        }
+    h.fake.exchange_authorization_code.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "mode", ["nx_conflict", "pointer_read", "create_rejected", "create_timeout"]
+)
+async def test_locator_storage_failure_rolls_back_pending_attempt(harness, monkeypatch, mode):
+    h = harness
+    original_eval = h.redis.eval
+
+    if mode == "nx_conflict":
+        monkeypatch.setattr(h.redis, "set", AsyncMock(return_value=None))
+    elif mode == "pointer_read":
+        monkeypatch.setattr(h.redis, "get", AsyncMock(side_effect=RedisConnectionError("private")))
+    else:
+        from app.integrations.digilocker.transactions import _CREATE
+
+        async def fail_create(script, *args):
+            if script == _CREATE:
+                if mode == "create_timeout":
+                    await original_eval(script, *args)
+                    raise RedisConnectionError("private")
+                return 0
+            return await original_eval(script, *args)
+
+        monkeypatch.setattr(h.redis, "eval", fail_create)
+    with pytest.raises(ServiceUnavailableError) as exc:
+        await h.start()
+    assert exc.value.code == "digilocker_storage_unavailable"
+    assert "private" not in str(exc.value)
+    assert await h.connection() is None
+    h.fake.exchange_authorization_code.assert_not_awaited()
+
+
+async def test_callback_locator_outage_is_sanitized_without_provider_call(harness, monkeypatch):
+    h = harness
+    state = await h.start()
+    monkeypatch.setattr(h.redis, "get", AsyncMock(side_effect=RedisConnectionError("private")))
+    with pytest.raises(ServiceUnavailableError) as exc:
+        await h.call("callback", state=state, code="synthetic-code")
+    assert exc.value.code == "digilocker_storage_unavailable"
+    assert "private" not in str(exc.value)
+    assert (await h.connection()).status == "pending"
+    h.fake.exchange_authorization_code.assert_not_awaited()
