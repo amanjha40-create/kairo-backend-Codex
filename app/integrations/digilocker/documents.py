@@ -20,6 +20,7 @@ from app.integrations.digilocker.provider import ProviderError
 HOST = "https://digilocker.meripehchaan.gov.in"
 ISSUED_URL = HOST + "/public/oauth2/2/files/issued"
 FILE_URL = HOST + "/public/oauth2/1/file/"
+XML_URL = HOST + "/public/oauth2/1/xml/"
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_LIST_BYTES = 1024 * 1024
 SUPPORTED_TYPES = {"PANCR", "DRVLC"}
@@ -34,6 +35,24 @@ def _text(value, limit=512):
     if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
         return None
     return value
+
+
+def normalize_mimes(value):
+    """Bounded provider MIME values; never pass arbitrary metadata through diagnostics."""
+    if isinstance(value, dict):
+        if set(value) != {"mime"}:
+            raise ValueError()
+        value = value["mime"]
+    values = [value] if isinstance(value, str) else value
+    if not isinstance(values, list) or len(values) > 10:
+        raise ValueError()
+    return sorted(
+        {
+            v.split(";", 1)[0].strip().lower()
+            for v in values
+            if isinstance(v, str) and len(v) <= 128 and v.split(";", 1)[0].strip().lower() in MIMES
+        }
+    )
 
 
 def normalize_items(payload):
@@ -53,12 +72,11 @@ def normalize_items(payload):
         if not uri or not re.fullmatch(r"[A-Za-z0-9._:-]+", uri) or not doctype or not issuerid:
             malformed += 1
             continue
-        mime = raw.get("mime", [])
-        mime = [mime] if isinstance(mime, str) else mime
-        if not isinstance(mime, list) or len(mime) > 10:
+        try:
+            mimes = normalize_mimes(raw.get("mime", []))
+        except ValueError:
             malformed += 1
             continue
-        mimes = sorted({m.lower() for m in mime if isinstance(m, str) and m.lower() in MIMES})
         items.append(
             {
                 "name": _text(raw.get("name")),
@@ -134,8 +152,12 @@ class DigiLockerDocuments:
         self.settings = settings
         self.client = client
 
-    async def _get(self, token, *, uri=None):
-        operation = "file" if uri is not None else "issued"
+    async def _get(self, token, *, uri=None, xml=False):
+        if uri is not None and (
+            not isinstance(uri, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,2048}", uri)
+        ):
+            raise ProviderError("invalid_reference")
+        operation = ("xml" if xml else "file") if uri is not None else "issued"
         client = self.client or httpx.AsyncClient()
         status = None
         category = "NONE"
@@ -144,7 +166,7 @@ class DigiLockerDocuments:
                 asyncio.timeout(20),
                 client.stream(
                     "GET",
-                FILE_URL + uri if uri is not None else ISSUED_URL,
+                    (XML_URL if xml else FILE_URL) + uri if uri is not None else ISSUED_URL,
                     headers={
                         "Authorization": "Bearer " + token.get_secret_value(),
                         "Accept-Encoding": "identity",
@@ -211,5 +233,5 @@ class DigiLockerDocuments:
     async def issued(self, token):
         return await self._get(token)
 
-    async def retrieve(self, token, uri):
-        return await self._get(token, uri=uri)
+    async def retrieve(self, token, uri, *, xml=False):
+        return await self._get(token, uri=uri, xml=xml)

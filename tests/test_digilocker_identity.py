@@ -111,6 +111,25 @@ def test_standard_base64_envelope():
     assert match_document(doc, "PANCR", "Test Candidate", DOB, TODAY).result == "VERIFIED_MATCH"
 
 
+@pytest.mark.parametrize(
+    "document,category",
+    [
+        (RetrievedDocument(b"broken", "application/xml"), "MALFORMED_XML"),
+        (
+            RetrievedDocument(b'<Certificate type="PANCR"/>', "application/xml"),
+            "MISSING_REQUIRED_FIELDS",
+        ),
+        (certificate(name="", dob=""), "IDENTITY_FIELDS_NOT_AVAILABLE"),
+        (certificate(dob="invalid"), "PROVIDER_RESPONSE_INVALID"),
+        (certificate("DRVLC"), "PROVIDER_RESPONSE_INVALID"),
+        (RetrievedDocument(b"%PDF-private-canary", "application/pdf"), "UNSUPPORTED_MIME"),
+    ],
+)
+def test_safe_parse_categories(document, category):
+    result = match_document(document, "PANCR", "Test Candidate", DOB, TODAY)
+    assert result.result == "UNABLE_TO_VERIFY" and result.category == category
+
+
 @pytest.fixture
 async def identity(harness):  # noqa: F811 - imported pytest fixture
     h = harness
@@ -122,7 +141,9 @@ async def identity(harness):  # noqa: F811 - imported pytest fixture
     docs = SimpleNamespace(
         issued=AsyncMock(return_value=normalize_items({"items": [item(), item("DRVLC")]})),
         retrieve=AsyncMock(
-            side_effect=lambda token, uri: certificate("DRVLC" if "DRVLC" in uri else "PANCR")
+            side_effect=lambda token, uri, **kwargs: certificate(
+                "DRVLC" if "DRVLC" in uri else "PANCR"
+            )
         ),
     )
 
@@ -194,6 +215,72 @@ async def test_persistence_privacy_repeat_concurrency_no_score_or_profile_mutati
         assert (await session.get(User, t.h.ids[0])).updated_at == revision
     assert (await t.call())["identity_verified"]
     assert (await t.call(user=t.h.ids[1])) == {"items": [], "identity_verified": False}
+
+
+async def test_xml_preferred_for_both_types_updates_existing_rows_with_safe_diagnostics(
+    identity, caplog
+):
+    t = identity
+    t.docs.retrieve.side_effect = None
+    t.docs.retrieve.return_value = RetrievedDocument(b"%PDF-private-canary", "application/pdf")
+    caplog.set_level("INFO", logger="app.services.digilocker_identity_service")
+    first = await t.call(["PANCR", "DRVLC"])
+    assert all(row["match_result"] == "UNABLE_TO_VERIFY" for row in first["items"])
+    assert all(call.kwargs == {"xml": False} for call in t.docs.retrieve.await_args_list)
+    assert all(
+        r.parse_category == "UNSUPPORTED_MIME"
+        for r in caplog.records
+        if r.message == "digilocker_identity_format"
+    )
+    t.docs.issued.return_value = normalize_items(
+        {
+            "items": [
+                {**item(d), "mime": ["application/pdf", "application/xml"]}
+                for d in ["PANCR", "DRVLC"]
+            ]
+        }
+    )
+    t.docs.retrieve.reset_mock()
+    t.docs.retrieve.side_effect = lambda token, uri, **kwargs: certificate(
+        "DRVLC" if "DRVLC" in uri else "PANCR"
+    )
+    caplog.clear()
+    second = await t.call(["PANCR", "DRVLC"])
+    assert second["identity_verified"]
+    assert {row["id"] for row in second["items"]} == {row["id"] for row in first["items"]}
+    assert all(call.kwargs == {"xml": True} for call in t.docs.retrieve.await_args_list)
+    assert len((await t.call())["items"]) == 2
+    diagnostics = [r for r in caplog.records if r.message == "digilocker_identity_format"]
+    assert len(diagnostics) == 2
+    for record in diagnostics:
+        assert record.document_type in {"PANCR", "DRVLC"}
+        assert record.metadata_mimes == ["application/pdf", "application/xml"]
+        assert record.retrieval_endpoint == "xml" and record.parser_selected == "xml"
+        assert record.response_content_type == "application/xml" and record.response_bytes > 0
+        assert record.hmac_result == "PASS" and record.parse_category == "XML_SUPPORTED"
+    serialized = str([r.__dict__ for r in diagnostics])
+    for secret in [
+        "Test Candidate",
+        "02-01-1990",
+        "SYNTHETIC-PRIVATE-ID",
+        "<Certificate",
+        item()["uri"],
+        "private-canary",
+    ]:
+        assert secret not in serialized
+
+
+async def test_integrity_failure_never_reaches_parser(identity, monkeypatch, caplog):
+    def forbidden(*args):
+        raise AssertionError("parser must not run")
+
+    monkeypatch.setattr("app.services.digilocker_identity_service.match_document", forbidden)
+    identity.docs.retrieve.side_effect = ProviderError("integrity_failed")
+    caplog.set_level("INFO", logger="app.services.digilocker_identity_service")
+    result = await identity.call(["PANCR"])
+    assert result["items"][0]["match_result"] == "UNABLE_TO_VERIFY"
+    record = next(r for r in caplog.records if r.message == "digilocker_identity_format")
+    assert record.hmac_result == "FAIL" and record.parser_selected == "none"
 
 
 @pytest.mark.parametrize(

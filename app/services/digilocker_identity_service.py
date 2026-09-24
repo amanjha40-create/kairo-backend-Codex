@@ -1,6 +1,7 @@
 """Explicit-consent, file-free identity verification. No scoring or profile writes."""
 
 import hashlib
+import logging
 
 from sqlalchemy import select
 
@@ -10,6 +11,8 @@ from app.integrations.digilocker.provider import ProviderError
 from app.models import DigiLockerIdentityVerification, User
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_service import transaction
+
+logger = logging.getLogger(__name__)
 
 
 def reference_fingerprint(doctype, uri):
@@ -92,9 +95,28 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             now = self.now()
             for item in selected:
                 integrity = "verified"
+                xml = bool(set(item["mime"]) & {"application/xml", "text/xml"})
+                diagnostic = {
+                    "document_type": item["doctype"],
+                    "metadata_mimes": item["mime"],
+                    "retrieval_endpoint": "xml" if xml else "file",
+                    "response_content_type": None,
+                    "response_bytes": None,
+                    "hmac_result": "NOT_CHECKED",
+                    "parser_selected": "none",
+                    "parse_category": "PROVIDER_RESPONSE_INVALID",
+                }
                 try:
-                    document = await self.documents.retrieve(token, item["uri"])
+                    document = await self.documents.retrieve(token, item["uri"], xml=xml)
                     try:
+                        diagnostic.update(
+                            response_content_type=document.mime,
+                            response_bytes=len(document.content),
+                            hmac_result="PASS",
+                            parser_selected="xml"
+                            if document.mime in {"application/xml", "text/xml"}
+                            else "none",
+                        )
                         match = match_document(
                             document,
                             item["doctype"],
@@ -102,12 +124,19 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                             user.date_of_birth,
                             now.date(),
                         )
+                        diagnostic["parse_category"] = match.category
                     finally:
                         del document
                 except ProviderError as exc:
                     if exc.category != "integrity_failed":
                         raise
-                    integrity, match = "failed", Match("UNABLE_TO_VERIFY")
+                    diagnostic["hmac_result"] = "FAIL"
+                    integrity, match = (
+                        "failed",
+                        Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID"),
+                    )
+                finally:
+                    logger.info("digilocker_identity_format", extra=diagnostic)
                 fingerprint = reference_fingerprint(item["doctype"], item["uri"])
                 row = await self.session.scalar(
                     select(DigiLockerIdentityVerification).where(

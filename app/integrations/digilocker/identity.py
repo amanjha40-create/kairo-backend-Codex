@@ -17,6 +17,7 @@ MAX_XML_BYTES = 1024 * 1024
 class Match:
     result: str
     valid_until: date | None = None
+    category: str = "XML_SUPPORTED"
 
 
 def normalize_name(value):
@@ -57,41 +58,44 @@ def match_document(document, doctype, name, dob, today):
             "application/xml",
             "text/xml",
         }:
-            return Match("UNABLE_TO_VERIFY")
+            return Match("UNABLE_TO_VERIFY", category="UNSUPPORTED_MIME")
         root = _xml(document.content)
         if root.tag == "PullDocResponse":
             statuses = root.findall("ResponseStatus")
             containers = root.findall("./DocDetails/DataContent")
             if len(statuses) != 1 or statuses[0].get("status") != "1" or len(containers) != 1:
-                raise ValueError()
+                return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
             # Official envelope carries one base64 certificate. Never parse DocContent/PDF.
             root = _xml(
                 base64.b64decode("".join((containers[0].text or "").split()), validate=True)
             )
         if root.tag != "Certificate" or root.get("type") != doctype:
-            raise ValueError()
+            return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
         persons = root.findall("./IssuedTo/Person")
         if len(persons) != 1:
-            raise ValueError()
+            return Match("UNABLE_TO_VERIFY", category="MISSING_REQUIRED_FIELDS")
         person = persons[0]
         given, expected = normalize_name(person.get("name")), normalize_name(name)
-        birth = _date(person.get("dob"))
-        until = _date(root.get("expiryDate")) if doctype == "DRVLC" else None
-        start = _date(root.get("validFromDate"))
+        try:
+            birth = _date(person.get("dob"))
+            until = _date(root.get("expiryDate")) if doctype == "DRVLC" else None
+            start = _date(root.get("validFromDate"))
+        except (ValueError, TypeError):
+            return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
         if birth and birth > today:
-            raise ValueError()
+            return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
         if (
             root.get("status") not in {None, "", "A"}
             or (until and until < today)
             or (start and start > today)
         ):
-            return Match("UNABLE_TO_VERIFY", until)
+            return Match("UNABLE_TO_VERIFY", until, "PROVIDER_RESPONSE_INVALID")
         if (given and expected and given != expected) or (birth and dob and birth != dob):
             return Match("MISMATCH", until)
         if given and expected and birth and dob:
             return Match("VERIFIED_MATCH", until)
         if (given and expected) or (birth and dob):
             return Match("PARTIAL_MATCH", until)
-        return Match("UNABLE_TO_VERIFY", until)
+        return Match("UNABLE_TO_VERIFY", until, "IDENTITY_FIELDS_NOT_AVAILABLE")
     except (ValueError, TypeError, ParseError, DefusedXmlException, RecursionError):
-        return Match("UNABLE_TO_VERIFY")
+        return Match("UNABLE_TO_VERIFY", category="MALFORMED_XML")

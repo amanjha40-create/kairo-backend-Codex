@@ -18,6 +18,7 @@ from app.integrations.digilocker.documents import (
     FILE_URL,
     ISSUED_URL,
     MAX_FILE_BYTES,
+    XML_URL,
     DigiLockerDocuments,
     DocumentReferences,
     RetrievedDocument,
@@ -83,6 +84,56 @@ def test_malformed_list(payload):
 def test_bad_rows_skipped(bad):
     records, malformed = normalize_items({"items": [bad, item()]})
     assert len(records) == malformed == 1
+
+
+@pytest.mark.parametrize(
+    "mime,expected",
+    [
+        ("application/xml", ["application/xml"]),
+        (" Application/XML; charset=utf-8 ", ["application/xml"]),
+        (["application/pdf", "text/xml", "text/xml"], ["application/pdf", "text/xml"]),
+        ({"mime": ["application/xml", "application/pdf"]}, ["application/pdf", "application/xml"]),
+        ([None, "private-canary", "application/pdf"], ["application/pdf"]),
+    ],
+)
+def test_mime_representations_are_bounded_and_allowlisted(mime, expected):
+    records, malformed = normalize_items({"items": [{**item(), "mime": mime}]})
+    assert malformed == 0 and records[0]["mime"] == expected
+
+
+@pytest.mark.parametrize("doctype", ["PANCR", "DRVLC"])
+@pytest.mark.parametrize("integrity", ["valid", "missing", "mismatch"])
+async def test_xml_wire_hmac_gate(doctype, integrity, caplog):
+    config = settings()
+    content = b'<Certificate type="' + doctype.encode() + b'"/>'
+    digest = base64.b64encode(
+        hmac.digest(config.digilocker_client_secret.get_secret_value().encode(), content, "sha256")
+    ).decode()
+    headers = {"content-type": "application/xml; charset=utf-8"}
+    if integrity != "missing":
+        headers["hmac"] = digest if integrity == "valid" else base64.b64encode(b"x" * 32).decode()
+
+    def handler(request):
+        assert str(request.url) == XML_URL + item(doctype)["uri"]
+        assert request.method == "GET" and not request.url.query
+        assert request.headers["authorization"] == "Bearer synthetic-access"
+        return httpx.Response(200, content=content, headers=headers)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = DigiLockerDocuments(config, client=client)
+        if integrity == "valid":
+            result = await provider.retrieve(
+                SecretStr("synthetic-access"), item(doctype)["uri"], xml=True
+            )
+            assert result.content == content and result.mime == "application/xml"
+        else:
+            with pytest.raises(ProviderError) as error:
+                await provider.retrieve(
+                    SecretStr("synthetic-access"), item(doctype)["uri"], xml=True
+                )
+            assert error.value.category == "integrity_failed"
+    assert item(doctype)["uri"] not in caplog.text
+    assert "synthetic-access" not in caplog.text and "<Certificate" not in caplog.text
 
 
 def test_reference_bound_to_owner_connection_credentials_and_ttl():
