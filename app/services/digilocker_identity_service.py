@@ -125,6 +125,13 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                             now.date(),
                         )
                         diagnostic["parse_category"] = match.category
+                        logger.info(
+                            "digilocker_identity_match",
+                            extra={
+                                "document_type": item["doctype"],
+                                **match.diagnostics,
+                            },
+                        )
                     finally:
                         del document
                 except ProviderError as exc:

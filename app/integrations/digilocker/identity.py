@@ -3,7 +3,8 @@
 import base64
 import re
 import unicodedata
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from xml.etree.ElementTree import ParseError
 
@@ -18,6 +19,36 @@ class Match:
     result: str
     valid_until: date | None = None
     category: str = "XML_SUPPORTED"
+    diagnostics: dict = field(default_factory=dict)
+
+
+def _match_diagnostics(given, expected, birth, dob):
+    name_bad = bool(given and expected and given != expected)
+    dob_bad = bool(birth and dob and birth != dob)
+    reason = (
+        "NAME_AND_DOB_MISMATCH"
+        if name_bad and dob_bad
+        else "NAME_MISMATCH"
+        if name_bad
+        else "DOB_MISMATCH"
+        if dob_bad
+        else "REQUIRED_FIELD_MISSING"
+        if not all([given, expected, birth, dob])
+        else "OTHER"
+    )
+    return {
+        "document_name_present": bool(given),
+        "document_dob_present": bool(birth),
+        "profile_name_present": bool(expected),
+        "profile_dob_present": bool(dob),
+        "normalized_name_exact_match": bool(given and expected and given == expected),
+        # Diagnostic only. Token reordering never changes the matching decision.
+        "normalized_name_token_match": bool(
+            given and expected and Counter(given.split()) == Counter(expected.split())
+        ),
+        "normalized_dob_match": bool(birth and dob and birth == dob),
+        "mismatch_reason": reason,
+    }
 
 
 def normalize_name(value):
@@ -53,27 +84,49 @@ def _xml(content):
 
 def match_document(document, doctype, name, dob, today):
     """Called only after the provider's HMAC gate. Return no extracted personal facts."""
+    diagnostic = {"parser_guard": "NONE", "structural_category": "SUPPORTED"}
+
+    def rejected(category, guard, structure, until=None):
+        return Match(
+            "UNABLE_TO_VERIFY",
+            until,
+            category,
+            diagnostic
+            | {
+                "parser_guard": guard,
+                "structural_category": structure,
+            },
+        )
+
     try:
         if doctype not in {"PANCR", "DRVLC"} or document.mime not in {
             "application/xml",
             "text/xml",
         }:
-            return Match("UNABLE_TO_VERIFY", category="UNSUPPORTED_MIME")
+            return rejected("UNSUPPORTED_MIME", "MIME_OR_DOCTYPE", "OTHER")
         root = _xml(document.content)
         if root.tag == "PullDocResponse":
             statuses = root.findall("ResponseStatus")
             containers = root.findall("./DocDetails/DataContent")
             if len(statuses) != 1 or statuses[0].get("status") != "1" or len(containers) != 1:
-                return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
+                return rejected(
+                    "PROVIDER_RESPONSE_INVALID", "ENVELOPE_LAYOUT", "EXPECTED_NODE_MISSING"
+                )
             # Official envelope carries one base64 certificate. Never parse DocContent/PDF.
             root = _xml(
                 base64.b64decode("".join((containers[0].text or "").split()), validate=True)
             )
-        if root.tag != "Certificate" or root.get("type") != doctype:
-            return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
+        if root.tag != "Certificate":
+            return rejected("PROVIDER_RESPONSE_INVALID", "ROOT", "UNEXPECTED_ROOT")
+        if root.get("type") != doctype:
+            return rejected(
+                "PROVIDER_RESPONSE_INVALID", "CERTIFICATE_TYPE", "SCHEMA_VERSION_VARIANT"
+            )
         persons = root.findall("./IssuedTo/Person")
         if len(persons) != 1:
-            return Match("UNABLE_TO_VERIFY", category="MISSING_REQUIRED_FIELDS")
+            return rejected(
+                "MISSING_REQUIRED_FIELDS", "PERSON_CARDINALITY", "EXPECTED_NODE_MISSING"
+            )
         person = persons[0]
         given, expected = normalize_name(person.get("name")), normalize_name(name)
         try:
@@ -81,21 +134,27 @@ def match_document(document, doctype, name, dob, today):
             until = _date(root.get("expiryDate")) if doctype == "DRVLC" else None
             start = _date(root.get("validFromDate"))
         except (ValueError, TypeError):
-            return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
+            return rejected("PROVIDER_RESPONSE_INVALID", "DATE_FORMAT", "ATTRIBUTE_LAYOUT_VARIANT")
+        diagnostic.update(_match_diagnostics(given, expected, birth, dob))
         if birth and birth > today:
-            return Match("UNABLE_TO_VERIFY", category="PROVIDER_RESPONSE_INVALID")
-        if (
-            root.get("status") not in {None, "", "A"}
-            or (until and until < today)
-            or (start and start > today)
-        ):
-            return Match("UNABLE_TO_VERIFY", until, "PROVIDER_RESPONSE_INVALID")
+            return rejected("PROVIDER_RESPONSE_INVALID", "DOB_CURRENTNESS", "OTHER")
+        status = root.get("status")
+        # Observed HMAC-authenticated DRVLC Certificate variant; no fuzzy status matching.
+        active_variant = doctype == "DRVLC" and status == "Active"
+        if active_variant:
+            diagnostic["structural_category"] = "ATTRIBUTE_LAYOUT_VARIANT"
+        if status not in {None, "", "A"} and not active_variant:
+            return rejected(
+                "PROVIDER_RESPONSE_INVALID", "CERTIFICATE_STATUS", "ATTRIBUTE_LAYOUT_VARIANT", until
+            )
+        if (until and until < today) or (start and start > today):
+            return rejected("PROVIDER_RESPONSE_INVALID", "VALIDITY_CURRENTNESS", "OTHER", until)
         if (given and expected and given != expected) or (birth and dob and birth != dob):
-            return Match("MISMATCH", until)
+            return Match("MISMATCH", until, diagnostics=diagnostic)
         if given and expected and birth and dob:
-            return Match("VERIFIED_MATCH", until)
+            return Match("VERIFIED_MATCH", until, diagnostics=diagnostic)
         if (given and expected) or (birth and dob):
-            return Match("PARTIAL_MATCH", until)
-        return Match("UNABLE_TO_VERIFY", until, "IDENTITY_FIELDS_NOT_AVAILABLE")
+            return Match("PARTIAL_MATCH", until, diagnostics=diagnostic)
+        return Match("UNABLE_TO_VERIFY", until, "IDENTITY_FIELDS_NOT_AVAILABLE", diagnostic)
     except (ValueError, TypeError, ParseError, DefusedXmlException, RecursionError):
-        return Match("UNABLE_TO_VERIFY", category="MALFORMED_XML")
+        return rejected("MALFORMED_XML", "XML_PARSE", "INVALID_XML")
