@@ -32,10 +32,14 @@ DTD, entities and external references are prohibited. XML is bounded at 1 MiB
 and 500 elements. Exactly one IssuedTo/Person and the selected Certificate type
 are required. PDFs/images are not OCR'd or guessed: UNABLE_TO_VERIFY.
 
-Matching uses NFKC/case folding, periods and whitespace normalization only.
-Names are not reordered, expanded or fuzzily matched. A comparable conflicting
-name or DOB is MISMATCH. Matching name and exact DOB is VERIFIED_MATCH; only one
-comparable matching fact is PARTIAL_MATCH. Missing facts are not invented.
+Matching uses NFKC/case folding, periods and whitespace normalization, conservative
+apostrophe/hyphen variant normalization, and removal of one leading Mr/Mrs/Ms/Dr.
+Exact names use NAME_EXACT_MATCH. With at least two usable tokens on both sides,
+exact first and last tokens plus exact DOB permit differing/absent middle tokens
+(FIRST_LAST_MATCH_MIDDLE_IGNORED). A first/surname mismatch cannot be compensated
+by middle names; a DOB mismatch always prevents verification. Single-token names
+require exact comparison. No fuzzy, reordered-token or transliterated matching.
+Missing DOB never verifies; missing facts are not invented.
 Malformed facts, inactive certificates and expired/not-yet-valid DLs cannot verify.
 An omitted expiry makes no claim of independently established licence currentness.
 
@@ -52,6 +56,13 @@ on any profile-row edit rather than silently verifying changed personal details.
 No Trust Score recalculation, snapshots, points, OAuth refresh/revoke or unrelated
 verification workflow is invoked. Token expiry requires reconnect, not automatic
 refresh. Owner history is readable without an active provider connection.
+
+Migration083 widens only the private match_reason check constraint for the two
+success reasons. No source name or middle token is persisted. Public success
+reasons remain null for compatibility with certified clients; existing mismatch
+reasons remain unchanged. Downgrade fails closed if new success reasons exist,
+rather than erasing provenance. The existing canonical best-identity resolver
+continues to count authoritative identity once, not once per PAN/DL source.
 
 The staging web DigiLocker page displays consent and per-document results. Native
 and production gates remain unchanged. Profile/Verify overview/public Passport

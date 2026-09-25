@@ -9,7 +9,7 @@ from app.exceptions import ValidationAppError
 from app.integrations.digilocker.identity import Match, match_document
 from app.integrations.digilocker.provider import ProviderError
 from app.models import DigiLockerIdentityVerification, User
-from app.services.canonical_trust import identity_current, resolve_identity
+from app.services.canonical_trust import identity_current, identity_public_reason, resolve_identity
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_service import transaction
 
@@ -40,7 +40,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             "document_type": row.document_type,
             "integrity_result": row.integrity_result,
             "match_result": row.match_result,
-            "match_reason": row.match_reason,
+            "match_reason": identity_public_reason(row),
             "verified_at": row.verified_at,
             "document_valid_until": row.document_valid_until,
             "consent_purpose": row.consent_purpose,
@@ -177,7 +177,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                 row.match_reason = (
                     match.diagnostics.get("mismatch_reason")
                     if match.result != "VERIFIED_MATCH"
-                    else None
+                    else match.diagnostics.get("name_match_reason")
                 )
                 row.verified_at = now if match.result == "VERIFIED_MATCH" else None
                 row.document_valid_until = match.valid_until

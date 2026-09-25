@@ -11,7 +11,7 @@ from app.models import DigiLockerConnection
 
 def test_bounded_migration_and_single_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["082"]
+    assert script.get_heads() == ["083"]
     revision = script.get_revision("080")
     assert revision.down_revision == "079"
     tree = ast.parse(Path(revision.path).read_text())
@@ -47,3 +47,39 @@ async def test_database_matches_connection_metadata():
 
     async with engine.connect() as connection:
         await connection.run_sync(check)
+
+
+def test_083_only_widens_match_reason_constraint(monkeypatch):
+    from unittest.mock import Mock
+
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("083")
+    assert revision.down_revision == "082"
+    migration = revision.module
+    operations = Mock()
+    operations.f.side_effect = lambda name: name
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+    operations.drop_constraint.assert_called_once_with(
+        "ck_digilocker_identity_verifications_match_reason",
+        "digilocker_identity_verifications",
+        type_="check",
+    )
+    name, table, expression = operations.create_check_constraint.call_args.args
+    assert name == "match_reason" and table == "digilocker_identity_verifications"
+    assert "NAME_EXACT_MATCH" in expression and "FIRST_LAST_MATCH_MIDDLE_IGNORED" in expression
+    assert {call[0] for call in operations.mock_calls} == {
+        "f",
+        "drop_constraint",
+        "create_check_constraint",
+    }
+    operations.reset_mock()
+    migration.downgrade()
+    assert (
+        "FIRST_LAST_MATCH_MIDDLE_IGNORED"
+        not in operations.create_check_constraint.call_args.args[2]
+    )
+    assert {call[0] for call in operations.mock_calls} == {
+        "f",
+        "drop_constraint",
+        "create_check_constraint",
+    }

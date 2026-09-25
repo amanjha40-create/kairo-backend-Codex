@@ -26,6 +26,11 @@ def identity_current(row, user, today):
     )
 
 
+def identity_public_reason(row):
+    # Existing clients accept mismatch reasons only. Success provenance stays private.
+    return None if row.match_result == "VERIFIED_MATCH" else row.match_reason
+
+
 async def resolve_identity(session, user, now=None):
     now = now or datetime.now(UTC)
     sources = []
@@ -70,7 +75,7 @@ async def resolve_identity(session, user, now=None):
                 "document_type": row.document_type,
                 "current": identity_current(row, user, now.date()),
                 "match_result": row.match_result,
-                "reason": row.match_reason,
+                "reason": identity_public_reason(row),
             }
         )
     return resolve_fact(sources)

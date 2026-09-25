@@ -38,7 +38,8 @@ class DigiLockerIdentityVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("provider_reference_fingerprint ~ '^[0-9a-f]{64}$'", name="fingerprint"),
         CheckConstraint(
             "match_reason IS NULL OR match_reason IN ('NAME_MISMATCH','DOB_MISMATCH',"
-            "'NAME_AND_DOB_MISMATCH','REQUIRED_FIELD_MISSING','OTHER')",
+            "'NAME_AND_DOB_MISMATCH','REQUIRED_FIELD_MISSING','OTHER',"
+            "'NAME_EXACT_MATCH','FIRST_LAST_MATCH_MIDDLE_IGNORED')",
             name="match_reason",
         ),
     )

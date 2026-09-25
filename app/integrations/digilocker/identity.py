@@ -23,7 +23,12 @@ class Match:
 
 
 def _match_diagnostics(given, expected, birth, dob):
-    name_bad = bool(given and expected and given != expected)
+    given_tokens, expected_tokens = given.split(), expected.split()
+    exact = bool(given and expected and given == expected)
+    comparable = len(given_tokens) >= 2 and len(expected_tokens) >= 2
+    first = bool(comparable and given_tokens[0] == expected_tokens[0])
+    last = bool(comparable and given_tokens[-1] == expected_tokens[-1])
+    name_bad = bool(given and expected and not (exact or (first and last)))
     dob_bad = bool(birth and dob and birth != dob)
     reason = (
         "NAME_AND_DOB_MISMATCH"
@@ -41,7 +46,16 @@ def _match_diagnostics(given, expected, birth, dob):
         "document_dob_present": bool(birth),
         "profile_name_present": bool(expected),
         "profile_dob_present": bool(dob),
-        "normalized_name_exact_match": bool(given and expected and given == expected),
+        "normalized_name_exact_match": exact,
+        "normalized_first_name_match": first,
+        "normalized_last_name_match": last,
+        "name_match_reason": (
+            "NAME_EXACT_MATCH"
+            if exact
+            else "FIRST_LAST_MATCH_MIDDLE_IGNORED"
+            if first and last and birth and birth == dob
+            else None
+        ),
         # Diagnostic only. Token reordering never changes the matching decision.
         "normalized_name_token_match": bool(
             given and expected and Counter(given.split()) == Counter(expected.split())
@@ -55,10 +69,20 @@ def normalize_name(value):
     if not isinstance(value, str) or len(value) > 255:
         return ""
     value = unicodedata.normalize("NFKC", value).casefold()
-    # Only spacing and periods are normalized. No token sorting, initials or fuzzy match.
-    if any(unicodedata.category(c).startswith("C") for c in value):
+    # Preserve apostrophes/hyphens as name structure; normalize typographic variants only.
+    if any(unicodedata.category(c).startswith("C") and not c.isspace() for c in value):
         return ""
-    return " ".join(value.replace(".", " ").split())
+    value = value.translate(
+        str.maketrans({"\u2019": "'", "\u2018": "'", "\u2010": "-", "\u2011": "-"})
+    )
+    tokens = value.replace(".", " ").split()
+    if tokens and tokens[0] in {"mr", "mrs", "ms", "dr"}:
+        tokens = tokens[1:]
+    if not tokens or any(
+        not any(unicodedata.category(c).startswith("L") for c in t) for t in tokens
+    ):
+        return ""
+    return " ".join(tokens)
 
 
 def _date(value):
@@ -149,7 +173,11 @@ def match_document(document, doctype, name, dob, today):
             )
         if (until and until < today) or (start and start > today):
             return rejected("PROVIDER_RESPONSE_INVALID", "VALIDITY_CURRENTNESS", "OTHER", until)
-        if (given and expected and given != expected) or (birth and dob and birth != dob):
+        if diagnostic["mismatch_reason"] in {
+            "NAME_MISMATCH",
+            "DOB_MISMATCH",
+            "NAME_AND_DOB_MISMATCH",
+        }:
             return Match("MISMATCH", until, diagnostics=diagnostic)
         if given and expected and birth and dob:
             return Match("VERIFIED_MATCH", until, diagnostics=diagnostic)
