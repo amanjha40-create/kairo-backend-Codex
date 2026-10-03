@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.exceptions import AppException, ServiceUnavailableError
 from app.infrastructure.redis.deps import get_redis
+from app.integrations.digilocker.browser_return import browser_redirect, completion_page
 from app.schemas.trust_score import IdentityTrustResponse
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_identity_service import DigiLockerIdentityService
@@ -167,15 +168,31 @@ async def callback(request: Request, service: Service):
             state=params.get("state"), code=params.get("code"), error=params.get("error")
         )
     except AppException as exc:
+        if "text/html" in request.headers.get("accept", "").lower():
+            return browser_redirect("failed")
         status_code = 503 if isinstance(exc, ServiceUnavailableError) else 400
         return JSONResponse(
             {"error": {"code": exc.code, "message": exc.message}},
             status_code=status_code,
             headers=PRIVATE_HEADERS,
         )
+    if "text/html" in request.headers.get("accept", "").lower():
+        return browser_redirect("connected")
     destination = service.settings.digilocker_connection_return_url
     if destination:
         return RedirectResponse(
             destination + "?digilocker_result=connected", status_code=303, headers=PRIVATE_HEADERS
         )
     return JSONResponse(result, headers=PRIVATE_HEADERS)
+
+
+@router.get("/complete", include_in_schema=False)
+async def complete(request: Request, settings: Annotated[Settings, Depends(get_settings)]):
+    params = request.query_params
+    outcome = (
+        "connected"
+        if set(params) == {"digilocker_result"}
+        and params.getlist("digilocker_result") == ["connected"]
+        else "failed"
+    )
+    return completion_page(settings, outcome)

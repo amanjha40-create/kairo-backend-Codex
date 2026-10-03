@@ -9,6 +9,7 @@ from digilocker_helpers import settings
 
 from app.api.v1.routes.digilocker import get_digilocker_service
 from app.auth.deps import CurrentUser, get_current_user
+from app.config import get_settings
 from app.main import app
 from app.services.digilocker_service import flow_error, unavailable
 
@@ -40,6 +41,7 @@ async def client_service():
     )
     previous = app.dependency_overrides.copy()
     app.dependency_overrides[get_digilocker_service] = lambda: service
+    app.dependency_overrides[get_settings] = lambda: service.settings
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app), base_url="http://test"
     ) as client:
@@ -180,3 +182,61 @@ def test_openapi_exposes_connection_and_document_routes():
     assert "security" not in schema["paths"][BASE + "/callback"]["get"]
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:
         assert schema["paths"][BASE + path][method]["security"]
+
+
+@pytest.mark.parametrize(
+    "error", [None, flow_error("callback_invalid"), flow_error("consent_denied"), unavailable()]
+)
+async def test_browser_callback_uses_credential_free_app_link(client_service, error):
+    client, service = client_service
+    service.callback.side_effect = error
+    response = await client.get(
+        BASE + "/callback?code=synthetic-code&state=synthetic-state",
+        headers={"Accept": "text/html"},
+    )
+    assert response.status_code == 303
+    expected = "failed" if error else "connected"
+    assert response.headers["location"] == BASE + "/complete?digilocker_result=" + expected
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["cache-control"] == "no-store"
+    assert "synthetic-" not in response.text + response.headers["location"]
+    service.callback.assert_awaited_once()
+    service.connect.assert_not_awaited()
+    service.disconnect.assert_not_awaited()
+
+
+async def test_browser_invalid_query_also_returns_safely(client_service):
+    client, service = client_service
+    response = await client.get(
+        BASE + "/callback?state=a&state=b&code=synthetic", headers={"Accept": "text/html"}
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("digilocker_result=failed")
+    service.callback.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "digilocker_result=connected",
+        "digilocker_result=failed",
+        "digilocker_result=connected&code=synthetic-secret",
+        "digilocker_result=connected&digilocker_result=failed",
+    ],
+)
+async def test_completion_fallback_is_safe(client_service, query):
+    client, service = client_service
+    response = await client.get(BASE + "/complete?" + query)
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "KairoID" in response.text and "Return to KairoID" in response.text
+    assert "synthetic-secret" not in response.text
+    assert "digilocker_callback_invalid" not in response.text
+    assert "raw state" not in response.text
+    assert "default-src 'none'" in response.headers["content-security-policy"]
+    assert response.headers["referrer-policy"] == "no-referrer"
+    if query != "digilocker_result=connected":
+        assert "Couldn't connect DigiLocker".replace("'", "&#x27;") in response.text
+    service.callback.assert_not_awaited()
+    service.connect.assert_not_awaited()
+    service.disconnect.assert_not_awaited()
