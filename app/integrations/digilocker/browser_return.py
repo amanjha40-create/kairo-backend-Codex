@@ -43,6 +43,15 @@ def completion_page(settings, outcome: str) -> HTMLResponse:
         if web
         else ""
     )
+    # A session-scoped iOS return, never an OAuth credential or connection assertion.
+    # Keep this additive and Staging-only; Production needs its own explicit approval.
+    iphone_action = (
+        '<p><a class="action" href="com.kairoid.staging.digilocker://complete?result='
+        + outcome
+        + '">Return to KairoID on iPhone</a></p>'
+        if settings.app_env.value == "staging"
+        else ""
+    )
     body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>{escape(title)} | KairoID</title>
@@ -60,7 +69,8 @@ a:focus-visible{{outline:3px solid #00a99d;outline-offset:4px}}
 main{{background:#142a38;border-color:#35515e}}a,.brand{{color:#55ddd1}}
 .action{{background:#008c87;color:#fff}}}}</style></head>
 <body><main><p class="brand">KairoID</p><h1>{escape(title)}</h1><p>{escape(message)}</p>
-{action}{web_action}<p>If the app does not open, close this browser and return to KairoID.
+{action}{iphone_action}{web_action}
+<p>If the app does not open, close this browser and return to KairoID.
 Do not reload the authorization callback.</p>
 </main></body></html>"""
     # The HTTPS completion URL is handled by Android's verified App Link before this
