@@ -10,7 +10,8 @@ from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_employment_document_service
-from app.schemas.employment.responses import DocumentDownloadUrlResponse
+from app.schemas.employment.responses import DocumentDownloadUrlResponse, EmploymentEvidencePage, EmploymentEvidenceEligibility
+from app.schemas.employment.requests import ClassifyEmploymentEvidenceRequest
 from app.schemas.employment_document import (
     DocumentCompleteUploadRequest,
     DocumentUploadCompleteResponse,
@@ -23,6 +24,24 @@ from app.services.employment_document_service import EmploymentDocumentService
 from app.services.private_document_content import CONTENT_RESPONSES
 
 router = APIRouter(prefix="/employments", tags=["employment-documents"])
+
+
+@router.get("/{employment_id}/evidence-eligibility", response_model=EmploymentEvidenceEligibility)
+async def evidence_eligibility(
+    employment_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[EmploymentDocumentService, Depends(get_employment_document_service)],
+):
+    return await svc.eligibility(current.id, employment_id)
+
+
+@router.patch("/{employment_id}/documents/{document_id}/evidence-role", response_model=EmploymentDocumentPublic)
+async def classify_evidence(
+    employment_id: UUID, document_id: UUID, payload: ClassifyEmploymentEvidenceRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[EmploymentDocumentService, Depends(get_employment_document_service)],
+):
+    return await svc.classify_legacy(current.id, employment_id, document_id, payload.evidence_role)
 
 
 @router.get(
@@ -101,12 +120,14 @@ async def get_document_download_url(
     return await svc.get_download_url(current.id, employment_id, document_id)
 
 
-@router.get("/{employment_id}/documents", response_model=Page[EmploymentDocumentPublic])
+@router.get("/{employment_id}/documents", response_model=EmploymentEvidencePage)
 async def list_documents(
     employment_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
     page: Annotated[PageParams, Depends()],
     svc: Annotated[EmploymentDocumentService, Depends(get_employment_document_service)],
-) -> Page[EmploymentDocumentPublic]:
+) -> EmploymentEvidencePage:
     items, total = await svc.list_for_employment_owned(current.id, employment_id, offset=page.offset, limit=page.limit)
-    return Page[EmploymentDocumentPublic].create(items=items, total=total, params=page)
+    result = Page[EmploymentDocumentPublic].create(items=items, total=total, params=page)
+    eligibility = await svc.eligibility(current.id, employment_id)
+    return EmploymentEvidencePage(**result.model_dump(), eligible_primary_count=eligibility["eligible_primary_count"])

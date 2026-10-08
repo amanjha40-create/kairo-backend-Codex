@@ -338,6 +338,7 @@ async def test_new_submission_after_rejection_creates_fresh_request() -> None:
     actor_id = uuid4()
     employment_id = uuid4()
     document_id = uuid4()
+    second_document_id = uuid4()
     rejected_request = SimpleNamespace(
         public_id=uuid4(),
         status=VerificationRequestStatus.REJECTED,
@@ -352,6 +353,7 @@ async def test_new_submission_after_rejection_creates_fresh_request() -> None:
     document = SimpleNamespace(id=document_id, document_type="employment_letter")
     created_requests = []
     service = VerificationRequestService.__new__(VerificationRequestService)
+    service._session = SimpleNamespace(scalar=AsyncMock(return_value=2))
 
     async def create_request(request):
         request.id = uuid4()
@@ -391,7 +393,7 @@ async def test_new_submission_after_rejection_creates_fresh_request() -> None:
             contact_email="hr@example.com",
             contact_type=VerificationContactType.HR,
         ),
-        employment_document_ids=[document_id],
+        employment_document_ids=[document_id, second_document_id],
     )
 
     new_request = await service.create_employment_verification_draft(

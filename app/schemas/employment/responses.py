@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -92,6 +92,7 @@ class EmploymentDocumentResponse(BaseModel):
     id: uuid.UUID
     employment_id: uuid.UUID
     document_type: EmploymentDocumentType
+    evidence_role: Literal["primary", "supporting"] | None = None
     original_filename: str
     content_type: str
     byte_size: int
@@ -106,6 +107,16 @@ class EmploymentDocumentResponse(BaseModel):
     extraction_completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class EmploymentEvidenceEligibility(BaseModel):
+    eligible_primary_count: int = Field(ge=0)
+    minimum_required: Literal[2] = 2
+    eligible: bool
+
+
+class EmploymentEvidencePage(Page[EmploymentDocumentResponse]):
+    eligible_primary_count: int = Field(ge=0)
 
 
 class DocumentUploadIntentResponse(BaseModel):

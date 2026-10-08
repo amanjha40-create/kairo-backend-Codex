@@ -8,7 +8,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.employment.constants import PENDING_UPLOAD_CHECKSUM_HEX
 from app.employment.enums import (
     EmploymentType,
     VerificationAuditAction,
@@ -304,6 +303,8 @@ class EmploymentService:
         ):
             raise EmploymentWorkflowError("Case cannot be submitted in the current status")
 
+        from app.services.employment_evidence_eligibility import require_primary_evidence
+        await require_primary_evidence(self._session, employment_id, owner_user_id)
         if prev == VerificationStatus.DRAFT.value:
             if row.verification_method == VerificationMethod.EMPLOYER_CONFIRMATION.value:
                 raise EmploymentWorkflowError(
@@ -311,12 +312,6 @@ class EmploymentService:
                     "Send an employer verification request from the app.",
                 )
             await self._assert_no_other_active_pipeline_case(owner_user_id, employment_id)
-            doc_count = await self._documents.count_completed_for_employment(
-                employment_id,
-                pending_checksum_hex=PENDING_UPLOAD_CHECKSUM_HEX,
-            )
-            if doc_count < 1:
-                raise EmploymentWorkflowError("Submit requires at least one completed document upload")
             row.verification_status = VerificationStatus.SUBMITTED.value
             row.submitted_at = datetime.now(tz=UTC)
         elif prev == VerificationStatus.ADDITIONAL_INFO_REQUESTED.value:

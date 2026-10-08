@@ -176,6 +176,8 @@ class VerificationRequestService:
         employment = await self._employments.get_owned_active_for_update(employment_id, actor_user_id)
         if employment is None:
             raise NotFoundError("Employment not found")
+        from app.services.employment_evidence_eligibility import require_primary_evidence
+        await require_primary_evidence(self._session, employment_id, actor_user_id, payload.employment_document_ids)
         existing = await self._requests.get_active_for_employment(employment_id)
         if existing is not None:
             if existing.subject_user_id != actor_user_id:
@@ -874,8 +876,7 @@ class VerificationRequestService:
                 raise ConflictError("Employment verification request is not linked to an employment")
             if await self._contacts.get_current(request.id) is None:
                 raise ConflictError("Add a verification contact before submitting for review")
-            if not any(item.employment_document_id is not None for item in evidence_items):
-                raise ConflictError("Add completed employment evidence before submitting for review")
+            await self._require_employment_primary_evidence(request, actor_user_id, evidence_items)
         if request.request_type == VerificationRequestType.EDUCATION:
             if request.education_id is None:
                 raise ConflictError("Education verification request is not linked to an education record")
@@ -934,6 +935,10 @@ class VerificationRequestService:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
         if request.status != VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS:
             raise ConflictError("Verification request is not awaiting subject corrections")
+        if request.request_type == VerificationRequestType.EMPLOYMENT:
+            await self._require_employment_primary_evidence(
+                request, actor_user_id, await self._evidence.list_for_request(request.id),
+            )
         review_ids = [review.id for review in await self._reviews.list_reviews_for_request(request.id)]
         corrections = await self._reviews.list_open_corrections_for_request(review_ids)
         if not corrections:
@@ -952,6 +957,18 @@ class VerificationRequestService:
             metadata={"resolved_correction_count": len(corrections)},
         )
         return await self._commit_reload_subject_response(request.public_id)
+
+    async def _require_employment_primary_evidence(self, request, actor_user_id, items):
+        from app.services.employment_evidence_eligibility import require_primary_evidence
+        employment = await self._employments.get_owned_active_for_update(request.employment_id, actor_user_id)
+        if employment is None:
+            raise NotFoundError("Employment not found")
+        # Attachment updates use the same employment lock. Read again after locking.
+        items = await self._evidence.list_for_request(request.id)
+        await require_primary_evidence(
+            self._session, employment.id, actor_user_id,
+            [item.employment_document_id for item in items if item.employment_document_id],
+        )
 
     async def withdraw_by_candidate(
         self,
@@ -1487,6 +1504,11 @@ class VerificationRequestService:
         verification_request_public_id: UUID,
     ) -> VerificationRequest:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
+        if getattr(request, "employment_id", None) is not None:
+            employment = await self._employments.get_owned_active_for_update(request.employment_id, actor_user_id)
+            if employment is None:
+                raise NotFoundError("Employment not found")
+            await self._session.refresh(request)
         if request.status not in {
             VerificationRequestStatus.ACCEPTED,
             VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,

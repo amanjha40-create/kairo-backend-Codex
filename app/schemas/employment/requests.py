@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -120,9 +121,14 @@ class UploadDocumentRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     document_type: EmploymentDocumentType
+    evidence_role: Literal["primary", "supporting"]
     original_filename: str = Field(..., min_length=1, max_length=512)
     content_type: str = Field(..., min_length=3, max_length=255)
     byte_size: int = Field(..., ge=1, le=500_000_000)
+
+
+class ClassifyEmploymentEvidenceRequest(BaseModel):
+    evidence_role: Literal["primary", "supporting"]
 
 
 class CompleteUploadRequest(BaseModel):

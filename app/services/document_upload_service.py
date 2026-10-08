@@ -60,7 +60,7 @@ class DocumentUploadService:
     ) -> DocumentUploadIntentResponse:
         self._storage.validate_declaration(byte_size=payload.byte_size, content_type=payload.content_type)
 
-        emp = await self._employment.get_owned_active(employment_id, owner_user_id)
+        emp = await self._employment.get_owned_active_for_update(employment_id, owner_user_id)
         if emp is None:
             raise EmploymentCaseNotFoundError()
         if emp.verification_method == VerificationMethod.EMPLOYER_CONFIRMATION.value:
@@ -75,6 +75,8 @@ class DocumentUploadService:
             raise EmploymentWorkflowError("Documents cannot be attached in the current workflow state")
 
         safe_name = sanitize_filename_for_storage(payload.original_filename)
+        from app.services.employment_evidence_eligibility import assert_evidence_editable
+        await assert_evidence_editable(self._session, employment_id)
         dup_intent = await self._documents.count_pending_intent_duplicate(
             employment_id,
             document_type=payload.document_type.value,
@@ -107,6 +109,7 @@ class DocumentUploadService:
             employment_id=employment_id,
             uploaded_by_user_id=owner_user_id,
             document_type=payload.document_type.value,
+            evidence_role=payload.evidence_role,
             object_key=object_key,
             original_filename=safe_name,
             content_type=payload.content_type,
@@ -171,7 +174,7 @@ class DocumentUploadService:
         if doc.employment_id != employment_id:
             raise EmploymentWorkflowError("Document does not belong to this employment case")
 
-        emp = await self._employment.get_owned_active(doc.employment_id, owner_user_id)
+        emp = await self._employment.get_owned_active_for_update(doc.employment_id, owner_user_id)
         if emp is None:
             raise EmploymentCaseNotFoundError()
 
@@ -236,7 +239,7 @@ class DocumentUploadService:
         if doc.employment_id != employment_id:
             raise EmploymentWorkflowError("Document does not belong to this employment case")
 
-        emp = await self._employment.get_owned_active(employment_id, owner_user_id)
+        emp = await self._employment.get_owned_active_for_update(employment_id, owner_user_id)
         if emp is None:
             raise EmploymentCaseNotFoundError()
         if emp.verification_status not in (
@@ -246,6 +249,8 @@ class DocumentUploadService:
         ):
             raise EmploymentWorkflowError("Documents cannot be removed in the current workflow state")
 
+        from app.services.employment_evidence_eligibility import assert_evidence_editable
+        await assert_evidence_editable(self._session, employment_id)
         if doc.checksum_sha256 != PENDING_UPLOAD_CHECKSUM_HEX:
             await self._storage.delete_object_best_effort(object_key=doc.object_key)
 

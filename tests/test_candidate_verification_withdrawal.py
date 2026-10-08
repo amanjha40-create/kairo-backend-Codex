@@ -234,6 +234,7 @@ async def test_withdrawn_request_is_not_reused_when_candidate_starts_again() -> 
     actor_id = uuid4()
     employment_id = uuid4()
     document_id = uuid4()
+    second_document_id = uuid4()
     withdrawn_request = _request(
         actor_id,
         status=VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
@@ -249,6 +250,7 @@ async def test_withdrawn_request_is_not_reused_when_candidate_starts_again() -> 
     document = SimpleNamespace(id=document_id, document_type="employment_letter")
     created_requests = []
     service = VerificationRequestService.__new__(VerificationRequestService)
+    service._session = SimpleNamespace(scalar=AsyncMock(return_value=2))
 
     async def create_request(request):
         request.id = uuid4()
@@ -288,7 +290,7 @@ async def test_withdrawn_request_is_not_reused_when_candidate_starts_again() -> 
             contact_email="hr@example.com",
             contact_type=VerificationContactType.HR,
         ),
-        employment_document_ids=[document_id],
+        employment_document_ids=[document_id, second_document_id],
     )
 
     new_request = await service.create_employment_verification_draft(

@@ -215,6 +215,7 @@ async def test_education_draft_links_completed_owned_evidence() -> None:
 @pytest.mark.asyncio
 async def test_candidate_submission_only_enters_admin_review() -> None:
     service = VerificationRequestService.__new__(VerificationRequestService)
+    service._session = SimpleNamespace(scalar=AsyncMock(return_value=2))
     actor_id = uuid4()
     admin_role_calls: list[NotificationRequest] = []
     request = SimpleNamespace(
@@ -234,6 +235,9 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
         consent_version=None,
     )
     evidence = SimpleNamespace(employment_document_id=uuid4())
+    second_evidence = SimpleNamespace(employment_document_id=uuid4())
+    service._employments = SimpleNamespace(get_owned_active_for_update=AsyncMock(
+        return_value=SimpleNamespace(id=request.employment_id)))
     transitions: list[tuple[VerificationRequestStatus, str]] = []
 
     async def require_subject(*_args):
@@ -244,7 +248,7 @@ async def test_candidate_submission_only_enters_admin_review() -> None:
 
     class EvidenceRepository:
         async def list_for_request(self, _request_id):
-            return [evidence]
+            return [evidence, second_evidence]
 
     class ContactRepository:
         async def get_current(self, _request_id):

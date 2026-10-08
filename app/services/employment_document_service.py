@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.employment.document_catalog import build_document_upload_options
-from app.exceptions import EmploymentAccessDeniedError, EmploymentCaseNotFoundError, NotFoundError
+from app.exceptions import ConflictError, EmploymentAccessDeniedError, EmploymentCaseNotFoundError, NotFoundError
+from app.employment.enums import VerificationAuditAction
+from app.repositories.verification_audit import VerificationAuditRepository
+from app.services.employment_evidence_eligibility import assert_evidence_editable, primary_evidence_count
 from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.repositories.employment import EmploymentRepository
 from app.repositories.employment_document import EmploymentDocumentRepository
@@ -31,10 +34,49 @@ class EmploymentDocumentService:
     """Coordinates listing/metadata and composes `DocumentUploadService` for S3 flows."""
 
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        self._session = session
         self._uploads = DocumentUploadService(session, settings)
         self._settings = settings
         self._employment = EmploymentRepository(session)
         self._documents = EmploymentDocumentRepository(session)
+
+    async def eligibility(self, owner_user_id: UUID, employment_id: UUID):
+        if await self._employment.get_owned_active(employment_id, owner_user_id) is None:
+            raise EmploymentCaseNotFoundError()
+        count = await primary_evidence_count(self._session, employment_id, owner_user_id)
+        return {"eligible_primary_count": count, "minimum_required": 2, "eligible": count >= 2}
+
+    async def classify_legacy(self, owner_user_id: UUID, employment_id: UUID, document_id: UUID, role: str):
+        emp = await self._employment.get_owned_active_for_update(employment_id, owner_user_id)
+        if emp is None:
+            raise EmploymentCaseNotFoundError()
+        if emp.verification_status not in {"draft", "additional_info_requested"}:
+            raise ConflictError("Evidence classification is not allowed in the current workflow state")
+        await assert_evidence_editable(self._session, employment_id)
+        doc = await self._documents.get_active_for_employment(employment_id, document_id)
+        if doc is None or doc.uploaded_by_user_id != owner_user_id:
+            raise NotFoundError("Document not found")
+        if role not in {"primary", "supporting"}:
+            raise ConflictError("Invalid evidence role")
+        if doc.evidence_role is not None:
+            if doc.evidence_role == role:
+                return EmploymentDocumentPublic.model_validate(doc)
+            raise ConflictError("Only unclassified legacy evidence can be classified")
+        if doc.verification_status not in {"pending_review", "approved", "rejected"} or (
+            not doc.checksum_sha256 or doc.checksum_sha256 == "0" * 64
+        ):
+            raise ConflictError("Complete the document upload before classification")
+        doc.evidence_role = role
+        await VerificationAuditRepository(self._session).append(
+            employment_id=employment_id, actor_user_id=owner_user_id,
+            action=VerificationAuditAction.EMPLOYMENT_UPDATED.value,
+            previous_status=emp.verification_status, new_status=emp.verification_status,
+            metadata_payload={"operation": "legacy_evidence_classified", "document_id": str(document_id),
+                              "evidence_role": role},
+        )
+        await self._session.commit()
+        await self._session.refresh(doc)
+        return EmploymentDocumentPublic.model_validate(doc)
 
     def get_upload_options(self) -> DocumentUploadOptionsResponse:
         return DocumentUploadOptionsResponse.model_validate(build_document_upload_options(self._settings))

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +26,12 @@ class EmploymentDocument(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, B
     """Stored-file metadata; object bytes live in S3 under `object_key`."""
 
     __tablename__ = "employment_documents"
+    __table_args__ = (CheckConstraint(
+        "evidence_role IS NULL OR evidence_role IN ('primary', 'supporting')",
+        name="employment_document_evidence_role",
+    ),)
+
+    evidence_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     employment_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
