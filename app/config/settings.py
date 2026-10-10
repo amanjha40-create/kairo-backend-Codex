@@ -601,6 +601,13 @@ class Settings(BaseSettings):
     )
 
     # --- DigiLocker credentials (independent of login/session secrets) ---
+    permanent_address_enabled: bool = Field(default=False, validation_alias="PERMANENT_ADDRESS_ENABLED")
+    permanent_address_key_id: str | None = Field(default=None, validation_alias="PERMANENT_ADDRESS_KEY_ID")
+    permanent_address_keys: SecretStr | None = Field(default=None, repr=False, validation_alias="PERMANENT_ADDRESS_KEYS")
+    permanent_address_monthly_geocode_limit: int = Field(default=100, ge=1, le=1000, validation_alias="PERMANENT_ADDRESS_MONTHLY_GEOCODE_LIMIT")
+    permanent_address_radius_m: float = Field(default=100, gt=0, le=100, validation_alias="PERMANENT_ADDRESS_RADIUS_M")
+    permanent_address_approximate_radius_m: float = Field(default=150, gt=0, le=150, validation_alias="PERMANENT_ADDRESS_APPROXIMATE_RADIUS_M")
+
     digilocker_enabled: bool = Field(default=False, validation_alias="DIGILOCKER_ENABLED")
     digilocker_client_id: str | None = Field(default=None, validation_alias="DIGILOCKER_CLIENT_ID")
     digilocker_client_secret: SecretStr | None = Field(

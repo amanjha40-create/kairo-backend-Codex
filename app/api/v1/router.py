@@ -111,6 +111,10 @@ api_router.include_router(trust_registry.admin_router)
 api_router.include_router(trust_registry.internal_router)
 api_router.include_router(trust_safety.router)
 api_router.include_router(user_documents.router)
+
+from app.api.v1.routes import permanent_address  # noqa: E402
+
+api_router.include_router(permanent_address.router)
 api_router.include_router(educations.router)
 api_router.include_router(freelance_contracts.router)
 api_router.include_router(internships.router)

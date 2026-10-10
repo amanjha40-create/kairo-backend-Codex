@@ -191,3 +191,10 @@ __all__ = [
     "VerificationReviewCorrection",
     "VerificationReviewNote",
 ]
+
+from app.models.permanent_address import (  # noqa: E402,F401
+    PermanentAddressGeocodeBudget,
+    PermanentAddressReview,
+    PermanentAddressSession,
+    PermanentAddressVersion,
+)

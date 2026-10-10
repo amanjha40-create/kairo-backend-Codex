@@ -474,6 +474,13 @@ class AccountDeletionService:
             )
         )
 
+        from app.models.permanent_address import PermanentAddressVersion
+
+        # Address revisions cascade-delete their derived sessions/reviews. No raw
+        # coordinates survive logical account erasure in the private target store.
+        await self._session.execute(
+            delete(PermanentAddressVersion).where(PermanentAddressVersion.user_id == user.id)
+        )
         await self._session.execute(delete(UserDocument).where(UserDocument.user_id == user.id))
 
         await self._session.execute(
