@@ -5,7 +5,6 @@ import json
 import logging
 import math
 import os
-import re
 from dataclasses import asdict
 
 import boto3
@@ -14,7 +13,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.exceptions import ServiceUnavailableError
 from app.integrations.digilocker.crypto import parse_keyring
-from app.services.permanent_address_quality import POLICY_VERSION, evaluate_targets
+from app.services.permanent_address_quality import (
+    POLICY_VERSION,
+    STREET_UNAVAILABLE_RADIUS_M,
+    evaluate_targets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,30 +71,48 @@ class TargetCipher:
 
 
 def query_components(address):
+    if address.get("country") != "IN":
+        raise ServiceUnavailableError("Address lookup is temporarily unavailable")
     query = {
         "Country": "IND",
         "Region": address["state"],
         "Locality": address["city"],
         "PostalCode": address["postal_code"],
+        "Street": address["address_line_1"],
     }
-    line = address["address_line_1"]
-    match = re.fullmatch(r"([0-9][\w/-]{0,30})\s+(.+)", line)
-    if match:
-        query["AddressNumber"], query["Street"] = match.groups()
-    else:
-        query["Street"] = line
+    # V1 has no explicit address-number field; do not infer one from free text.
     if address.get("locality"):
         query["District"] = address["locality"]
     return query
 
 
+def query_text(address):
+    value = ", ".join(
+        part.strip()
+        for field in (
+            "address_line_1", "address_line_2", "locality", "city", "state",
+            "postal_code", "country",
+        )
+        if (part := address.get(field)) and part.strip()
+    )
+    # Preserve complete context or fail closed; never silently truncate an address.
+    if not 1 <= len(value) <= 200:
+        raise ServiceUnavailableError("Address lookup is temporarily unavailable")
+    return value
+
+
 class AmazonAddressGeocoder:
+    def __init__(self, *, street_unavailable_radius_m=STREET_UNAVAILABLE_RADIUS_M):
+        self.street_unavailable_radius_m = street_unavailable_radius_m
+
     async def geocode(self, address):
         query = query_components(address)
         try:
-            response = await asyncio.to_thread(self._request, query)
+            response = await asyncio.to_thread(self._request, query, query_text(address))
             items = response.get("ResultItems", [])
-            decision = evaluate_targets(items, query)
+            decision = evaluate_targets(
+                items, query, street_unavailable_radius_m=self.street_unavailable_radius_m
+            )
             metadata = asdict(decision)
             metadata.update(provider="amazon_location", policy_version=POLICY_VERSION)
             if not decision.eligible:
@@ -116,7 +137,7 @@ class AmazonAddressGeocoder:
             raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
 
     @staticmethod
-    def _request(query):
+    def _request(query, text):
         client = boto3.client(
             "geo-places",
             region_name="us-east-1",
@@ -125,6 +146,7 @@ class AmazonAddressGeocoder:
         logger.info("permanent_address.geocode_request", extra={"request_count": 1})
         return client.geocode(
             QueryComponents=query,
+            QueryText=text,
             Filter={"IncludeCountries": ["IND"]},
             MaxResults=10,
             IntendedUse="Storage",

@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 import pytest
 
-from app.services.permanent_address_quality import evaluate_targets
+from app.services.permanent_address_quality import STREET_UNAVAILABLE_QUALITY, evaluate_targets
 
 QUERY = {
     "Country": "IND",
@@ -169,10 +169,18 @@ def test_safe_decision_does_not_expose_infrastructure():
         assert forbidden not in output
 
 
-def test_missing_street_blocks_even_for_point_address():
+def test_missing_street_point_address_has_truthful_fallback():
     item = deepcopy(ITEM)
     del item["Address"]["Street"]
-    assert not evaluate_targets([item], QUERY).eligible
+    before = deepcopy(item)
+    result = evaluate_targets([item], QUERY)
+    assert result.eligible
+    assert result.classification == "GPS_TARGET_ELIGIBLE_STREET_UNAVAILABLE"
+    assert result.quality == STREET_UNAVAILABLE_QUALITY and result.radius_m == 75
+    assert result.street_status == "provider_unavailable"
+    assert result.candidates[0]["component_matches"]["street"] is False
+    assert result.warnings == ("provider_street_unavailable",)
+    assert item == before
 
 
 def test_truncated_candidate_set_fails_closed():
@@ -181,3 +189,84 @@ def test_truncated_candidate_set_fails_closed():
 
 def test_empty_results_require_review():
     assert not evaluate_targets([], QUERY).eligible
+
+
+def missing_street():
+    item = deepcopy(ITEM)
+    del item["Address"]["Street"]
+    return item
+
+
+@pytest.mark.parametrize("field,value", [
+    ("Street", "Conflicting Road"), ("PostalCode", "400051"),
+    ("Region", {"Name": "Maharashtra"}), ("Locality", "Mumbai"),
+    ("Country", {"Code3": "USA"}), ("Country", {"Code3": "IND", "Code2": "US"}),
+    ("AddressNumber", "999"), ("Street", 123), ("Street", "!!!"),
+])
+def test_fallback_never_waives_component_conflicts(field, value):
+    item = missing_street()
+    item["Address"][field] = value
+    assert not evaluate_targets([item], QUERY).eligible
+
+
+@pytest.mark.parametrize("field", ["Region", "Locality", "Street", "Country"])
+def test_fallback_requires_claimed_structure(field):
+    query = dict(QUERY)
+    query.pop(field)
+    assert not evaluate_targets([missing_street()], query).eligible
+
+
+@pytest.mark.parametrize("place_type", [
+    "InterpolatedAddress", "Street", "PostalCode", "Locality", "District", "Region",
+    "Country", "PointOfInterest", "SecondaryAddress", "InferredSecondaryAddress",
+])
+def test_missing_street_fallback_is_point_address_only(place_type):
+    item = missing_street()
+    item["PlaceType"] = place_type
+    assert not evaluate_targets([item], QUERY).eligible
+
+
+@pytest.mark.parametrize("position", [None, [], [0], [181, 0], [True, False], [float("nan"), 0]])
+def test_missing_street_cannot_qualify_without_real_usable_position(position):
+    item = missing_street()
+    item["Position"] = position
+    assert not evaluate_targets([item], QUERY).eligible
+
+
+def test_estimated_point_cannot_use_fallback():
+    item = missing_street()
+    item["EstimatedPointAddress"] = True
+    assert not evaluate_targets([item], QUERY).eligible
+
+
+@pytest.mark.parametrize("other_street", [None, "Synthetic Road", "Conflicting Road"])
+def test_comparable_point_competitors_block_fallback(other_street):
+    other = missing_street()
+    other["Address"]["Street"] = other_street
+    other["Position"] = [0.01, 0.01]
+    other["MatchScores"]["Overall"] = 0.01
+    assert evaluate_targets([missing_street(), other], QUERY).reasons == ("competing_candidates",)
+
+
+@pytest.mark.parametrize("overall", [0.0, 0.41, 0.9, 1.0, None])
+def test_fallback_has_no_overall_threshold(overall):
+    item = missing_street()
+    item["MatchScores"]["Overall"] = overall
+    assert evaluate_targets([item], QUERY).eligible
+
+
+@pytest.mark.parametrize("radius", [0, -1, 76, float("nan"), float("inf")])
+def test_fallback_radius_cannot_be_enlarged(radius):
+    with pytest.raises(ValueError):
+        evaluate_targets([missing_street()], QUERY, street_unavailable_radius_m=radius)
+
+
+def test_fallback_smaller_radius_and_no_number_inference():
+    query = dict(QUERY)
+    query.pop("AddressNumber")
+    result = evaluate_targets([missing_street()], query, street_unavailable_radius_m=60)
+    assert result.eligible and result.radius_m == 60
+    assert result.candidates[0]["number_mismatch"] is False
+    output = json.dumps(asdict(result))
+    for forbidden in ("302020", "Synthetic Road", "Jaipur", "Position", "latitude", "longitude"):
+        assert forbidden not in output

@@ -7,7 +7,9 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-POLICY_VERSION = "components-v1"
+POLICY_VERSION = "components-v1-street-unavailable"
+STREET_UNAVAILABLE_QUALITY = "precise_address_street_unavailable"
+STREET_UNAVAILABLE_RADIUS_M = 75
 # Only a full component match may substitute for an unrecognized textual variant.
 # This is not a replacement global score cutoff; explicit contradictions veto it.
 HIGH_COMPONENT_SCORE = 1.0
@@ -86,11 +88,12 @@ def _score(value: object) -> float | None:
 class TargetDecision:
     classification: str
     quality: str | None = None
-    radius_m: int | None = None
+    radius_m: float | None = None
     selected_index: int | None = None
     warnings: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     candidates: tuple[dict, ...] = field(default=(), repr=False)
+    street_status: str | None = None
 
     @property
     def eligible(self) -> bool:
@@ -158,7 +161,11 @@ def _candidate(item: dict, query: dict) -> dict:
         reasons.append("pin_mismatch_or_missing")
 
     expected_street = street_normalize(query.get("Street"))
-    returned_street = street_normalize(address.get("Street"))
+    raw_street = address.get("Street")
+    street_absent = raw_street is None or (
+        isinstance(raw_street, str) and not raw_street.strip()
+    )
+    returned_street = street_normalize(raw_street)
     checks["street"] = bool(
         expected_street and returned_street and expected_street == returned_street
     )
@@ -211,12 +218,37 @@ def _candidate(item: dict, query: dict) -> dict:
     )
     if not coordinates_ok:
         reasons.append("invalid_position")
+    street_status = "matched" if checks["street"] else "conflict"
+    if street_absent:
+        street_status = "provider_unavailable"
+    # Missing provider data is not agreement. Only this precise India tier may
+    # waive the missing-street reason; every other rejection still applies.
+    india_codes_consistent = all(
+        country.get(key) in (None, "", expected)
+        for key, expected in (("Code2", "IN"), ("Code3", "IND"))
+    )
+    fallback = (
+        street_absent
+        and quality == "precise_address"
+        and bool(expected_street and expected_region and expected_city)
+        and all(checks[k] for k in ("country", "state", "city", "pin"))
+        and india_codes_consistent
+        and not mismatch
+        and coordinates_ok
+        and reasons == ["street_missing_or_mismatch"]
+    )
+    if fallback:
+        reasons.remove("street_missing_or_mismatch")
+        warnings.append("provider_street_unavailable")
+        quality = STREET_UNAVAILABLE_QUALITY
     return {
         "place_type": place_type,
         "overall_score": _score(match.get("Overall")),
         "component_scores": scores,
         "component_matches": checks,
         "street_score_available": False,
+        "street_status": street_status,
+        "position_usable": coordinates_ok,
         "number_mismatch": mismatch,
         "quality": quality,
         "eligible": not reasons,
@@ -225,8 +257,13 @@ def _candidate(item: dict, query: dict) -> dict:
     }
 
 
-def evaluate_targets(items: list[dict], query: dict, *, max_results: int = 10) -> TargetDecision:
+def evaluate_targets(
+    items: list[dict], query: dict, *, max_results: int = 10,
+    street_unavailable_radius_m: float = STREET_UNAVAILABLE_RADIUS_M,
+) -> TargetDecision:
     """No coordinate/address values leave this safe decision object."""
+    if not 0 < street_unavailable_radius_m <= STREET_UNAVAILABLE_RADIUS_M:
+        raise ValueError("Unsafe street-unavailable radius")
     candidates = tuple(_candidate(item, query) for item in items)
     eligible = [i for i, value in enumerate(candidates) if value["eligible"]]
     if len(items) >= max_results:
@@ -250,7 +287,14 @@ def evaluate_targets(items: list[dict], query: dict, *, max_results: int = 10) -
     rivals = [
         i
         for i, v in enumerate(candidates)
-        if i != selected and v["quality"] and all(v["component_matches"].values())
+        if i != selected and v["quality"] and (
+            all(v["component_matches"].values())
+            or (
+                chosen["quality"] == STREET_UNAVAILABLE_QUALITY
+                and v["position_usable"]
+                and all(v["component_matches"][k] for k in ("country", "state", "city", "pin"))
+            )
+        )
     ]
     if rivals:
         return TargetDecision(
@@ -260,11 +304,16 @@ def evaluate_targets(items: list[dict], query: dict, *, max_results: int = 10) -
     classification = "GPS_TARGET_ELIGIBLE_WITH_CAUTION" if approximate else "GPS_TARGET_ELIGIBLE"
     if chosen["number_mismatch"]:
         classification = "GPS_TARGET_ELIGIBLE_WITH_NUMBER_WARNING"
+    radius = 150 if approximate else 100
+    if chosen["quality"] == STREET_UNAVAILABLE_QUALITY:
+        classification = "GPS_TARGET_ELIGIBLE_STREET_UNAVAILABLE"
+        radius = street_unavailable_radius_m
     return TargetDecision(
         classification,
         chosen["quality"],
-        150 if approximate else 100,
+        radius,
         selected,
         tuple(chosen["warnings"]),
         candidates=candidates,
+        street_status=chosen["street_status"],
     )

@@ -7,7 +7,12 @@ from statistics import median
 from zoneinfo import ZoneInfo
 
 from app.schemas.permanent_address import LocationSample
-from app.services.permanent_address_quality import normalize, street_normalize
+from app.services.permanent_address_quality import (
+    STREET_UNAVAILABLE_QUALITY,
+    STREET_UNAVAILABLE_RADIUS_M,
+    normalize,
+    street_normalize,
+)
 
 ADDRESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
@@ -16,6 +21,7 @@ ADDRESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
 class LocationPolicy:
     precise_radius_m: float = 100
     approximate_radius_m: float = 150
+    street_unavailable_radius_m: float = STREET_UNAVAILABLE_RADIUS_M
     maximum_accuracy_m: float = 50
     maximum_dispersion_m: float = 50
     min_seconds: int = 30
@@ -25,6 +31,7 @@ class LocationPolicy:
         if not (
             0 < self.precise_radius_m <= 100
             and 0 < self.approximate_radius_m <= 150
+            and 0 < self.street_unavailable_radius_m <= STREET_UNAVAILABLE_RADIUS_M
             and 0 < self.maximum_accuracy_m <= 50
             and 0 < self.maximum_dispersion_m <= 50
             and 30 <= self.min_seconds <= self.max_seconds <= 60
@@ -59,7 +66,7 @@ def evaluate_location(
     policy: LocationPolicy | None = None,
 ) -> LocationOutcome:
     policy = policy or LocationPolicy()
-    if quality not in {"precise_address", "approximate_address"}:
+    if quality not in {"precise_address", "approximate_address", STREET_UNAVAILABLE_QUALITY}:
         return LocationOutcome("NEEDS_REVIEW")
     if any(sample.mock_location for sample in samples):
         return LocationOutcome("NEEDS_REVIEW", sample_count=len(samples), mock_detected=True)
@@ -88,6 +95,8 @@ def evaluate_location(
     radius = (
         policy.approximate_radius_m if quality == "approximate_address" else policy.precise_radius_m
     )
+    if quality == STREET_UNAVAILABLE_QUALITY:
+        radius = policy.street_unavailable_radius_m
     # Reported inaccuracy can never enlarge the configured base radius.
     effective_radius = max(radius, min(accuracy, policy.maximum_accuracy_m))
     distance = metres(representative, target)

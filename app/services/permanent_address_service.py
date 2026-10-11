@@ -52,7 +52,9 @@ ALLOWED_EVIDENCE = {"address_proof", "driving_license", "passport", "voter_id", 
 class PermanentAddressService:
     def __init__(self, session, settings, *, geocoder=None, clock=None, storage=None):
         self.db, self.settings = session, settings
-        self.geocoder = geocoder or AmazonAddressGeocoder()
+        self.geocoder = geocoder or AmazonAddressGeocoder(
+            street_unavailable_radius_m=settings.permanent_address_street_unavailable_radius_m
+        )
         self.storage = storage or DocumentPackStorage(settings)
         self.clock = clock or (lambda: datetime.now(UTC))
         if clock is not None and str(settings.app_env) != "test":
@@ -463,6 +465,9 @@ class PermanentAddressService:
                 LocationPolicy(
                     precise_radius_m=self.settings.permanent_address_radius_m,
                     approximate_radius_m=self.settings.permanent_address_approximate_radius_m,
+                    street_unavailable_radius_m=(
+                        self.settings.permanent_address_street_unavailable_radius_m
+                    ),
                 ),
             )
             session.result, session.derived_evidence = outcome.result, asdict(outcome)

@@ -59,7 +59,9 @@ def samples(start, **changes):
     ]
 
 
-@pytest.mark.parametrize("kind", ["precise_address", "approximate_address"])
+@pytest.mark.parametrize("kind", [
+    "precise_address", "approximate_address", "precise_address_street_unavailable",
+])
 def test_multiple_samples_match(kind):
     assert (
         evaluate_location(samples(NOW), (0, 0), NOW, NOW + timedelta(seconds=33), kind).result
@@ -308,6 +310,220 @@ async def test_three_days_alone_not_verified_then_document_match(case):
         AddressReviewInput(document_id=document.id, outcome="MATCH", observed_address=ADDRESS),
     )
     assert (await svc.state(users[0].id)).status == "PERMANENT_ADDRESS_VERIFIED"
+
+
+@pytest.mark.parametrize("document_first", [False, True])
+async def test_fallback_requires_document_plus_three_days(case, document_first):
+    from dataclasses import asdict
+
+    from app.services.permanent_address_quality import evaluate_targets
+    from tests.test_permanent_address_quality import QUERY, missing_street
+
+    db, users, svc, clock, geo = case
+
+    async def fallback(address):
+        geo.calls += 1
+        return asdict(evaluate_targets([missing_street()], QUERY)), {
+            "position": [0.0, 0.0], "normalized_address": {},
+        }
+
+    geo.geocode = fallback
+    version = await prepare(case)
+    row = await db.get(PermanentAddressVersion, version)
+    assert row.claimed_address == ADDRESS.model_dump()
+    assert row.geocode_metadata["street_status"] == "provider_unavailable"
+    assert row.geocode_metadata["candidates"][0]["component_matches"]["street"] is False
+    assert row.target_encrypted and row.target_key_id
+    assert row.geocode_metadata["quality"] == "precise_address_street_unavailable"
+    state = await svc.state(users[0].id)
+    assert state.can_start_location and state.successful_gps_checks == 0
+    assert state.geocode_quality == "precise_address_street_unavailable"
+    assert state.status != "PERMANENT_ADDRESS_VERIFIED"
+
+    async def approve_document():
+        doc = await evidence(case, version)
+        await svc.review(users[2].id, version, AddressReviewInput(
+            document_id=doc.id, outcome="MATCH", observed_address=ADDRESS,
+        ))
+
+    if document_first:
+        await approve_document()
+    for offset in range(3):
+        clock[0] = NOW + timedelta(days=offset)
+        state, _, _ = await check(case, version)
+        if offset < 2 or not document_first:
+            assert state.status != "PERMANENT_ADDRESS_VERIFIED"
+    assert state.successful_gps_checks == 3
+    if not document_first:
+        assert state.status == "LOCATION_CONFIRMED"
+        await approve_document()
+    assert (await svc.state(users[0].id)).status == "PERMANENT_ADDRESS_VERIFIED"
+
+
+async def test_sanitized_fallback_metadata_without_target_never_enables_gps(case):
+    db, users, svc, _, _ = case
+    version = await prepare(case)
+    row = await db.get(PermanentAddressVersion, version)
+    row.geocode_metadata = {"quality": "precise_address_street_unavailable"}
+    row.target_encrypted = None
+    await db.flush()
+    assert not (await svc.state(users[0].id)).can_start_location
+    with pytest.raises(ConflictError):
+        await svc.start(users[0].id, version)
+
+
+async def test_service_enforces_configured_fallback_radius(case):
+    import math
+
+    db, users, svc, clock, _ = case
+    version = await prepare(case)
+    row = await db.get(PermanentAddressVersion, version)
+    row.geocode_metadata = {"quality": "precise_address_street_unavailable"}
+    svc.settings = svc.settings.model_copy(
+        update={"permanent_address_street_unavailable_radius_m": 60}
+    )
+    challenge = await svc.start(users[0].id, version)
+    values = samples(clock[0])
+    for value in values:
+        value.latitude = math.degrees(70 / 6371008.8)
+    clock[0] += timedelta(seconds=33)
+    state = await svc.finish(users[0].id, challenge.session_id,
+                             LocationCompleteInput(challenge=challenge.challenge, samples=values))
+    assert state.successful_gps_checks == 0
+    assert state.last_location_result == "OUTSIDE_EXPECTED_AREA"
+
+
+@pytest.mark.parametrize("scenario,eligible", [
+    ("precise", True), ("street_unavailable", True), ("street_conflict", False),
+    ("pin_conflict", False), ("broad", False), ("missing_position", False),
+    ("ambiguous", False),
+])
+async def test_real_geocoder_retention_boundary(case, monkeypatch, caplog, scenario, eligible):
+    import logging
+    from copy import deepcopy
+
+    from app.services.permanent_address_geocoder import AmazonAddressGeocoder
+    from tests.test_permanent_address_quality import ITEM
+
+    db, users, svc, _, _ = case
+    item = deepcopy(ITEM)
+    item["Address"]["Street"] = ADDRESS.address_line_1
+    item["Position"] = [76.9876543, 26.1234567]  # Synthetic test point only.
+    if scenario == "street_unavailable":
+        item["Address"].pop("Street")
+    elif scenario == "street_conflict":
+        item["Address"]["Street"] = "Conflicting Road"
+    elif scenario == "pin_conflict":
+        item["Address"]["PostalCode"] = "400051"
+    elif scenario == "broad":
+        item["PlaceType"] = "Locality"
+    elif scenario == "missing_position":
+        item.pop("Position")
+    items = [item, deepcopy(item)] if scenario == "ambiguous" else [item]
+    calls = []
+
+    def request(query, complete):
+        calls.append(True)
+        return {"ResultItems": items}
+
+    monkeypatch.setattr(AmazonAddressGeocoder, "_request", staticmethod(request))
+    svc.geocoder = AmazonAddressGeocoder()
+    with caplog.at_level(logging.INFO):
+        state = await svc.save_address(users[0].id, ADDRESS)
+    row = await db.get(PermanentAddressVersion, state.address_version_id)
+    assert calls == [True]
+    assert state.can_start_location is eligible
+    serialized = state.model_dump_json()
+    for forbidden in ("latitude", "longitude", "76.9876543", "26.1234567", '"position"',
+                      "target_encrypted", "target_key_id", "normalized_address"):
+        assert forbidden not in serialized
+        assert forbidden not in caplog.text
+        assert forbidden not in json.dumps(row.geocode_metadata)
+    assert row.claimed_address == ADDRESS.model_dump()
+    if eligible:
+        assert isinstance(row.target_encrypted, bytes)
+        assert row.target_key_id == svc.settings.permanent_address_key_id
+        assert b"76.9876543" not in row.target_encrypted
+        assert b"26.1234567" not in row.target_encrypted
+        decoded = TargetCipher(svc.settings).decrypt(
+            row.target_encrypted, row.target_key_id, users[0].id, row.id,
+        )
+        assert decoded["position"] == item["Position"]
+        await svc.start(users[0].id, row.id)
+    else:
+        assert row.target_encrypted is None and row.target_key_id is None
+        assert state.geocode_status == "NEEDS_REVIEW"
+        with pytest.raises(ConflictError):
+            await svc.start(users[0].id, row.id)
+
+
+async def test_state_serialization_never_decrypts_and_old_target_is_invalidated(case, monkeypatch):
+    db, users, svc, _, _ = case
+    version = await prepare(case)
+    original = (await db.get(PermanentAddressVersion, version)).target_encrypted
+
+    def no_decrypt(*args):
+        raise AssertionError("State serialization must not decrypt target")
+
+    monkeypatch.setattr(TargetCipher, "decrypt", no_decrypt)
+    assert (await svc.state(users[0].id)).can_start_location
+    replacement = ADDRESS.model_copy(update={"address_line_2": "Synthetic Unit B"})
+    state = await svc.save_address(users[0].id, replacement)
+    old = await db.get(PermanentAddressVersion, version)
+    assert old.invalidated_at is not None and old.target_encrypted == original
+    assert state.address_version == 2
+    with pytest.raises(NotFoundError):
+        await svc.start(users[0].id, version)
+
+
+def test_target_decrypt_calls_are_internal_verification_only():
+    import ast
+    from pathlib import Path
+
+    callers = set()
+    for path in Path("app").rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                receiver = node.func.value
+                if (node.func.attr == "decrypt" and isinstance(receiver, ast.Call)
+                        and isinstance(receiver.func, ast.Name)
+                        and receiver.func.id == "TargetCipher"):
+                    callers.add(path.as_posix())
+    assert callers == {"app/services/permanent_address_service.py"}
+
+
+@pytest.mark.parametrize("distance,expected", [(74, "MATCHED"), (76, "OUTSIDE_EXPECTED_AREA")])
+def test_fallback_75m_radius_not_precise_or_approximate_tier(distance, expected):
+    import math
+
+    latitude = math.degrees(distance / 6371008.8)
+    values = samples(NOW)
+    for sample in values:
+        sample.latitude = latitude
+        sample.accuracy_m = 50
+    result = evaluate_location(values, (0, 0), NOW, NOW + timedelta(seconds=33),
+                               "precise_address_street_unavailable")
+    assert result.result == expected
+
+
+def test_fallback_configurable_radius_accuracy_and_integrity():
+    from app.config.settings import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(PERMANENT_ADDRESS_STREET_UNAVAILABLE_RADIUS_M=76)
+    configured = Settings(PERMANENT_ADDRESS_STREET_UNAVAILABLE_RADIUS_M=60)
+    assert configured.permanent_address_street_unavailable_radius_m == 60
+    with pytest.raises(ValueError):
+        LocationPolicy(street_unavailable_radius_m=76)
+    values = samples(NOW)
+    for sample in values:
+        sample.accuracy_m = 51
+    assert evaluate_location(values, (0, 0), NOW, NOW + timedelta(seconds=33),
+                             "precise_address_street_unavailable").result == "RETRY_REQUIRED"
+    assert evaluate_location(samples(NOW, mock_location=True), (0, 0), NOW,
+                             NOW + timedelta(seconds=33),
+                             "precise_address_street_unavailable").result == "NEEDS_REVIEW"
 
 
 @pytest.mark.asyncio
