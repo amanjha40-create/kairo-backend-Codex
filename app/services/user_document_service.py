@@ -114,9 +114,16 @@ class UserDocumentService:
     ) -> UserDocument:
         """Mark the document as uploaded after client confirms S3 PUT."""
 
+        from app.services.evidence_review import invalidate_document_reviews, lock_review_subject
+
+        await lock_review_subject(self._session, user_id)
+
         doc = await self._docs.get_owned(document_id, user_id)
         if doc is None:
             raise NotFoundError("User document not found")
+        await self._session.refresh(doc)
+        if doc.checksum_sha256 != checksum_sha256:
+            await invalidate_document_reviews(self._session, "document_id", doc.id, user_id)
         doc.checksum_sha256 = checksum_sha256
         if doc.replaces_document_id is not None:
             previous = await self._docs.get_owned(doc.replaces_document_id, user_id)

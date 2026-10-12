@@ -258,11 +258,17 @@ async def test_pre_dispatch_rejection_never_finalizes_the_career_claim() -> None
 
 
 @pytest.mark.asyncio
-async def test_finalization_rejects_a_pre_dispatch_request() -> None:
+async def test_finalization_rejects_a_pre_dispatch_request(monkeypatch) -> None:
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
     request = _request(VerificationRequestStatus.PENDING_ADMIN_REVIEW)
     request.public_id = uuid4()
     service._get_required_request = AsyncMock(return_value=request)
+
+    service._session = object()
+    monkeypatch.setattr(
+        "app.services.verification_request_admin_review_service.lock_evidence_case",
+        AsyncMock(return_value=request),
+    )
 
     with pytest.raises(ConflictError, match="final quality review"):
         await service._finalize_request(

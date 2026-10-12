@@ -57,6 +57,7 @@ class VerificationRequestRepository:
             .options(*_LOCK_DETAIL_OPTIONS)
             .where(VerificationRequest.public_id == request_public_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 

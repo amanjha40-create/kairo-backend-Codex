@@ -42,6 +42,7 @@ from app.repositories.verification_request_evidence import VerificationRequestEv
 from app.repositories.verification_request_review import VerificationRequestReviewRepository
 from app.schemas.admin_review_workflow import (
     AdminEvidenceDownloadResponse,
+    AdminEvidenceReviewResponse,
     AdminOrganizationResolutionResponse,
     AdminRegistryResolutionResponse,
     AdminReviewAssignRequest,
@@ -78,6 +79,12 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineResponse,
 )
 from app.services.employer_verification_service import EmployerVerificationService
+from app.services.evidence_review import (
+    applicable_evidence,
+    lock_evidence_case,
+    record_evidence_review,
+    require_evidence_review_complete,
+)
 from app.services.notification_service import NotificationService
 from app.services.organization_registry_sync_service import OrganizationRegistrySyncService
 from app.services.public_institution_verification_service import (
@@ -269,6 +276,7 @@ class VerificationRequestAdminReviewService:
     async def get_detail(self, verification_request_public_id: UUID) -> AdminReviewDetailResponse:
         request = await self._get_required_request(verification_request_public_id)
         evidence_items = await self._evidence.list_for_request(request.id)
+        applicable_ids = {item.id for item in await applicable_evidence(self._session, request)}
         reviews = await self._reviews.list_reviews_for_request(request.id)
         open_corrections = await self._reviews.list_open_corrections_for_request(
             [review.id for review in reviews]
@@ -320,7 +328,9 @@ class VerificationRequestAdminReviewService:
             verification_contact_history=[
                 self._to_admin_contact_response(item) for item in contacts
             ],
-            evidence=[await self._to_admin_evidence_response(item) for item in evidence_items],
+            evidence=[await self._to_admin_evidence_response(
+                item, review_applicable=item.id in applicable_ids,
+            ) for item in evidence_items],
             reviews=[self._to_review_response(review) for review in reviews],
             open_corrections=[self._to_correction_response(item) for item in open_corrections],
             internal_notes=[
@@ -359,9 +369,39 @@ class VerificationRequestAdminReviewService:
             ),
         )
 
-    async def _to_admin_evidence_response(self, evidence) -> AdminReviewEvidenceResponse:  # noqa: ANN001
+    async def _to_admin_evidence_response(self, evidence, *, review_applicable=True) -> AdminReviewEvidenceResponse:  # noqa: ANN001
         base = await self._to_evidence_response(evidence)
-        return AdminReviewEvidenceResponse(**base.model_dump())
+        return AdminReviewEvidenceResponse(
+            **base.model_dump(), reviewed=getattr(evidence, "reviewed_at", None) is not None,
+            reviewed_at=getattr(evidence, "reviewed_at", None),
+            reviewed_by_user_id=getattr(evidence, "reviewed_by_user_id", None),
+            review_applicable=review_applicable,
+        )
+
+    async def review_evidence(self, actor_user_id: UUID, verification_request_public_id: UUID,
+                              evidence_public_id: UUID) -> AdminEvidenceReviewResponse:
+        actor = await self._users.get_by_id(actor_user_id)
+        if actor is None or not has_permission(actor.role, Permission.DISPATCH_VERIFICATION):
+            raise ForbiddenError("Admin evidence review permission required")
+        request = await lock_evidence_case(self._session, verification_request_public_id)
+        if request.status not in {
+            VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            VerificationRequestStatus.PENDING_ADMIN_RE_REVIEW,
+            VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW,
+        }:
+            raise ConflictError("Verification request is not awaiting Admin evidence review")
+        evidence = await self._evidence.get_by_public_id(evidence_public_id)
+        if evidence is None or evidence.verification_request_id != request.id:
+            raise NotFoundError("Verification request evidence not found")
+        if evidence not in await applicable_evidence(self._session, request):
+            raise ConflictError("Evidence is not currently applicable to this case")
+        await record_evidence_review(self._session, request, evidence, actor_user_id)
+        result = AdminEvidenceReviewResponse(
+            evidence_public_id=evidence.public_id, reviewed=True,
+            reviewed_at=evidence.reviewed_at, reviewed_by_user_id=evidence.reviewed_by_user_id,
+        )
+        await self._session.commit()
+        return result
 
     @staticmethod
     def _to_admin_contact_response(contact) -> AdminVerificationContactResponse:  # noqa: ANN001
@@ -1022,13 +1062,14 @@ class VerificationRequestAdminReviewService:
             "rejected": VerificationRequestStatus.REJECTED,
             "unable_to_verify": VerificationRequestStatus.UNABLE_TO_VERIFY,
         }[outcome]
-        request = await self._get_required_request(verification_request_public_id)
+        request = await lock_evidence_case(self._session, verification_request_public_id)
         if request.status == target_status:
             return await self._to_request_response(request)
         if request.status != VerificationRequestStatus.PENDING_ADMIN_QUALITY_REVIEW:
             raise ConflictError("Verification request is not awaiting final quality review")
 
         await self._require_linked_canonical_claim(request)
+        await require_evidence_review_complete(self._session, request)
         review = await self._get_or_create_review(request, actor_user_id)
         review.review_status = (
             VerificationRequestReviewStatus.APPROVED

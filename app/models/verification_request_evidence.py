@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -60,6 +61,10 @@ class VerificationRequestEvidence(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     education_document: Mapped["EducationDocument | None"] = relationship("EducationDocument")
     value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
     status: Mapped[VerificationRequestEvidenceStatus] = mapped_column(
         verification_request_evidence_status_enum,
         nullable=False,

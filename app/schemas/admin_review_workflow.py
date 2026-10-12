@@ -41,11 +41,22 @@ class AdminReviewerSummary(BaseModel):
 
 
 class AdminReviewEvidenceResponse(VerificationRequestEvidenceResponse):
+    reviewed: bool = False
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: UUID | None = None
+    review_applicable: bool = True
     document_type: str | None = None
     original_filename: str | None = None
     mime_type: str | None = None
     file_size: int | None = None
     upload_status: str | None = None
+
+
+class AdminEvidenceReviewResponse(BaseModel):
+    evidence_public_id: UUID
+    reviewed: bool
+    reviewed_at: datetime | None
+    reviewed_by_user_id: UUID | None
 
 
 class AdminEvidenceDownloadResponse(BaseModel):

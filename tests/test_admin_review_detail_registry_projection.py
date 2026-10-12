@@ -57,7 +57,8 @@ def _request_response(request_public_id) -> VerificationRequestResponse:  # noqa
 
 
 @pytest.mark.asyncio
-async def test_detail_projects_registry_link_from_resolved_org() -> None:
+async def test_detail_projects_registry_link_from_resolved_org(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.verification_request_admin_review_service.applicable_evidence", AsyncMock(return_value=[]))
     organization = SimpleNamespace(
         public_id=uuid4(),
         name="KDTU",
@@ -77,6 +78,7 @@ async def test_detail_projects_registry_link_from_resolved_org() -> None:
     request = _request(organization_id=uuid4(), registry_record_id=None)
 
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._session = object()
     service._get_required_request = AsyncMock(return_value=request)
     service._evidence = SimpleNamespace(list_for_request=AsyncMock(return_value=[]))
     service._reviews = SimpleNamespace(
@@ -107,7 +109,8 @@ async def test_detail_projects_registry_link_from_resolved_org() -> None:
 
 
 @pytest.mark.asyncio
-async def test_detail_includes_canonical_education_projection_when_linked() -> None:
+async def test_detail_includes_canonical_education_projection_when_linked(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.verification_request_admin_review_service.applicable_evidence", AsyncMock(return_value=[]))
     education = SimpleNamespace(
         id=uuid4(),
         user_id=uuid4(),
@@ -134,6 +137,7 @@ async def test_detail_includes_canonical_education_projection_when_linked() -> N
     request.education_id = education.id
 
     service = VerificationRequestAdminReviewService.__new__(VerificationRequestAdminReviewService)
+    service._session = object()
     service._get_required_request = AsyncMock(return_value=request)
     service._evidence = SimpleNamespace(list_for_request=AsyncMock(return_value=[]))
     service._reviews = SimpleNamespace(

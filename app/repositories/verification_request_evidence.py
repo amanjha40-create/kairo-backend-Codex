@@ -20,7 +20,9 @@ class VerificationRequestEvidenceRepository:
         return evidence
 
     async def get_by_public_id(self, evidence_public_id: UUID) -> VerificationRequestEvidence | None:
-        stmt = select(VerificationRequestEvidence).where(VerificationRequestEvidence.public_id == evidence_public_id)
+        stmt = (select(VerificationRequestEvidence)
+                .where(VerificationRequestEvidence.public_id == evidence_public_id)
+                .execution_options(populate_existing=True))
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_request(self, verification_request_id: UUID) -> list[VerificationRequestEvidence]:
@@ -28,6 +30,7 @@ class VerificationRequestEvidenceRepository:
             select(VerificationRequestEvidence)
             .where(VerificationRequestEvidence.verification_request_id == verification_request_id)
             .order_by(VerificationRequestEvidence.created_at.asc())
+            .execution_options(populate_existing=True)
         )
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())

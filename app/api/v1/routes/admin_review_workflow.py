@@ -23,6 +23,7 @@ from app.api.dependencies.verification_admin import (
 )
 from app.schemas.admin_review_workflow import (
     AdminEvidenceDownloadResponse,
+    AdminEvidenceReviewResponse,
     AdminReviewAssignRequest,
     AdminReviewCanonicalOrganizationCreateRequest,
     AdminReviewClarificationResponseRequest,
@@ -57,6 +58,19 @@ from app.services.verification_request_admin_review_service import (
 )
 
 router = APIRouter(prefix="/admin/verification-requests", tags=["admin-review-workflow"])
+
+
+@router.post(
+    "/{verification_request_public_id}/evidence/{evidence_public_id}/review",
+    response_model=AdminEvidenceReviewResponse,
+)
+async def review_admin_evidence(
+    verification_request_public_id: UUID,
+    evidence_public_id: UUID,
+    reviewer: Annotated[CurrentUser, Depends(require_dispatch)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> AdminEvidenceReviewResponse:
+    return await svc.review_evidence(reviewer.id, verification_request_public_id, evidence_public_id)
 
 
 @router.get("/queue", response_model=AdminReviewQueueResponse)

@@ -258,10 +258,16 @@ class EducationService:
         document_id: UUID,
         checksum_sha256: str,
     ) -> EducationDocument:
+        from app.services.evidence_review import invalidate_document_reviews, lock_review_subject
+
+        await lock_review_subject(self._session, user_id)
         await self.get_owned(user_id, education_id)
         doc = await self._documents.get_for_education(document_id, education_id)
         if doc is None:
             raise NotFoundError("Education document not found")
+        await self._session.refresh(doc)
+        if doc.checksum_sha256 != checksum_sha256:
+            await invalidate_document_reviews(self._session, "education_document_id", doc.id, user_id)
         doc.checksum_sha256 = checksum_sha256
         await self._session.commit()
         await self._session.refresh(doc)

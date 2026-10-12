@@ -819,6 +819,9 @@ class VerificationRequestService:
                 exclude_evidence_public_id=evidence.public_id,
             )
 
+        from app.services.evidence_review import content_identity, invalidate_changed_review
+
+        before_content = content_identity(evidence)
         if payload.evidence_type is not None:
             evidence.evidence_type = payload.evidence_type.strip().lower()
         if payload.field_key is not None:
@@ -838,6 +841,7 @@ class VerificationRequestService:
         if payload.value is not None:
             evidence.value = payload.value
         evidence.status = VerificationRequestEvidenceStatus.SUBMITTED
+        await invalidate_changed_review(self._session, request, evidence, before_content, actor_user_id)
         await self._workflow.record_action(
             request,
             actor_user_id=actor_user_id,
@@ -1504,6 +1508,9 @@ class VerificationRequestService:
         verification_request_public_id: UUID,
     ) -> VerificationRequest:
         request = await self._require_subject_request(actor_user_id, actor_email, verification_request_public_id)
+        from app.services.evidence_review import lock_evidence_case
+
+        request = await lock_evidence_case(self._session, request.public_id)
         if getattr(request, "employment_id", None) is not None:
             employment = await self._employments.get_owned_active_for_update(request.employment_id, actor_user_id)
             if employment is None:
