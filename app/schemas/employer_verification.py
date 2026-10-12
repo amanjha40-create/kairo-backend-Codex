@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.employment.enums import EmployerVerificationDecision
+from app.schemas.employment_reference import HRReference, ManagerValidation
 
 
 class EmployerVerificationRequestBody(BaseModel):
@@ -97,6 +98,7 @@ class EmployerPortalContact(BaseModel):
 
 
 class EmployerPortalWorkspace(BaseModel):
+    reporting_manager: dict | None = None
     employer_verification_public_id: uuid.UUID
     state: Literal["pending", "completed"]
     decision: EmployerVerificationDecision | None = None
@@ -111,6 +113,8 @@ class EmployerPortalWorkspace(BaseModel):
 
 
 class EmployerVerifyBody(BaseModel):
+    hr_reference: HRReference | None = None
+    manager_validation: ManagerValidation | None = None
     employment_existed: bool
     dates_correct: bool
     role_correct: bool

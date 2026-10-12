@@ -49,7 +49,12 @@ class SecurityHeadersMiddleware:
                         "strict-transport-security",
                         "max-age=31536000; includeSubDomains",
                     )
-                if path.startswith(self.no_store_prefixes):
+                if (
+                    path.startswith(self.no_store_prefixes)
+                    or "/public/manager-references/" in path
+                    or "/public/employer-verification" in path
+                    or "/references" in path
+                ):
                     headers["cache-control"] = "private, no-store, max-age=0, must-revalidate"
                     headers["pragma"] = "no-cache"
             await send(message)

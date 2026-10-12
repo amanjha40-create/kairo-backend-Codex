@@ -1,6 +1,7 @@
 """Erase private payloads while retaining restricted, non-content decisions."""
 
 from sqlalchemy import delete, or_, select, update
+from app.models.employment_reference import EmploymentReference
 
 from app.models import (
     DocumentSharePack,
@@ -22,6 +23,11 @@ from app.models import (
 
 
 async def revoke_and_scrub_related(session, user_id, snapshot, now):
+    # Retained employments must not retain private reference contacts, answers or tokens.
+    # Invitation/event rows cascade from the reference, not from the retained employment.
+    await session.execute(delete(EmploymentReference).where(
+        EmploymentReference.employment_id.in_(snapshot.employment_ids)
+    ))
     for model in (UserAccountEvent, VerificationAuditEvent):
         await session.execute(
             update(model).where(model.actor_user_id == user_id).values(actor_display_name=None)

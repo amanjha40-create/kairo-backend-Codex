@@ -94,6 +94,9 @@ async def test_public_employer_portal_contracts_and_fail_closed_states() -> None
     app.dependency_overrides.clear()
 
     assert workspace.status_code == 200
+    for response in (workspace, missing, expired, verified, rejected, clarification):
+        assert "no-store" in response.headers["cache-control"]
+        assert response.headers["referrer-policy"] == "no-referrer"
     assert "internal_notes" not in workspace.json()
     assert all("admin_note" not in event["event_type"] for event in workspace.json()["timeline"])
     assert missing.status_code == 404

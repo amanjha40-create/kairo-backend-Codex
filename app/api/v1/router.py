@@ -24,6 +24,7 @@ from app.api.v1.routes import (
     documents,
     educations,
     employment_documents,
+    employment_references,
     employments,
     freelance_contracts,
     gig_platforms,
@@ -85,6 +86,7 @@ api_router.include_router(workspace.router)
 api_router.include_router(trust_invitations.org_router)
 api_router.include_router(verification_requests.org_router)
 api_router.include_router(employments.router)
+api_router.include_router(employment_references.router)
 api_router.include_router(public_employer_verification.router)
 api_router.include_router(public_employer_portal.router)
 api_router.include_router(public_institution_verification.router)

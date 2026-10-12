@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies.services import get_employer_verification_service
+from app.api.dependencies.reference_capability import employer_capability
 from app.schemas.employer_verification import (
     EmployerDecisionBody,
     EmployerPortalActionResponse,
@@ -26,7 +27,7 @@ async def get_workspace(
     return await service.get_portal_workspace(token)
 
 
-@router.post("/{token}/verify", response_model=EmployerPortalActionResponse, operation_id="verifyEmployment")
+@router.post("/{token}/verify", response_model=EmployerPortalActionResponse, operation_id="verifyEmployment", dependencies=[Depends(employer_capability)])
 async def verify_employment(
     token: str,
     payload: EmployerVerifyBody,

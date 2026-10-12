@@ -9,6 +9,16 @@ from pythonjsonlogger.jsonlogger import JsonFormatter
 
 from app.config import get_settings
 from app.logging.filters import RequestContextFilter, ServiceMetadataFilter
+from app.logging.request_redaction import redact_request_credentials
+
+
+class CredentialRedactionFilter(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = redact_request_credentials(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_request_credentials(item) if isinstance(item, str) else item for item in record.args)
+        return True
 
 
 class KairoJsonFormatter(JsonFormatter):
@@ -84,6 +94,9 @@ def configure_logging() -> None:
     root.addHandler(handler)
 
     logging.getLogger("uvicorn").setLevel(level)
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, CredentialRedactionFilter) for item in access_logger.filters):
+        access_logger.addFilter(CredentialRedactionFilter())
     if settings.log_access_enabled:
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     else:

@@ -477,6 +477,19 @@ class Settings(BaseSettings):
         description="Admin frontend origin used for Admin access invitation links",
         validation_alias=AliasChoices("ADMIN_PORTAL_BASE_URL"),
     )
+    manager_reference_public_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MANAGER_REFERENCE_PUBLIC_BASE_URL"),
+        description="HTTPS API origin for manager reference pages; required before sending references",
+    )
+
+    @field_validator("manager_reference_public_base_url")
+    @classmethod
+    def validate_manager_reference_public_base_url(cls, value):
+        if value is not None and not _is_https_origin(value):
+            raise ValueError("Manager reference public base URL must be an HTTPS origin")
+        return value.rstrip("/") if value else None
+
     employer_verification_token_ttl_hours: int = Field(
         default=168,
         ge=24,

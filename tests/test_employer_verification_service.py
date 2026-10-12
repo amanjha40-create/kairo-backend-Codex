@@ -9,6 +9,7 @@ import pytest
 
 from app.employment.enums import EmployerVerificationDecision
 from app.services.employer_verification_service import EmployerVerificationService
+from app.schemas.employer_verification import EmployerVerifyBody
 from app.verification_requests.enums import VerificationRequestStatus
 
 
@@ -40,6 +41,7 @@ def _service_for_workspace(*, start_date: date | None, end_date: date | None) ->
     service._load_portal_token = AsyncMock(return_value=request)
     service._docs = SimpleNamespace(list_all_active_for_employment=AsyncMock(return_value=[]))
     service._verification_requests = SimpleNamespace()
+    service._references = SimpleNamespace(hr_context=AsyncMock(return_value=None))
     return service
 
 
@@ -92,6 +94,7 @@ def _service_for_portal_response(*, response: str = "pending"):
     service._verification_requests = SimpleNamespace(get_by_id=AsyncMock(return_value=request))
     service._notify_admin_quality_review_needed = AsyncMock()
     service._emit_audit = AsyncMock()
+    service._references = SimpleNamespace(record_hr=AsyncMock())
 
     async def transition(row, *, target_status, **_kwargs):
         row.status = target_status
@@ -127,7 +130,7 @@ async def test_portal_verify_transitions_to_admin_quality_review() -> None:
 
     response = await service.verify_from_portal(
         "token-value-long-enough",
-        SimpleNamespace(employment_existed=True, dates_correct=True, role_correct=True, comments=None),
+        EmployerVerifyBody(employment_existed=True, dates_correct=True, role_correct=True),
     )
 
     assert response.decision is EmployerVerificationDecision.CONFIRMED
@@ -175,9 +178,9 @@ async def test_portal_reject_replay_is_idempotent_without_duplicate_audit() -> N
 @pytest.mark.asyncio
 async def test_portal_reject_rolls_back_all_pending_writes_on_precommit_failure() -> None:
     service, session, _outreach, _request = _service_for_portal_response()
-    service._notify_admin_quality_review_needed = AsyncMock(side_effect=RuntimeError("notification failure"))
+    service._emit_audit = AsyncMock(side_effect=RuntimeError("audit failure"))
 
-    with pytest.raises(RuntimeError, match="notification failure"):
+    with pytest.raises(RuntimeError, match="audit failure"):
         await service.reject_from_portal(
             "token-value-long-enough",
             SimpleNamespace(reason="Dates do not match", comments=None),

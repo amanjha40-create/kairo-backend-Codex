@@ -13,6 +13,7 @@ from app.models.education_document import EducationDocument
 from app.models.email_delivery_log import EmailDeliveryLog
 from app.models.employer_verification_request import EmployerVerificationRequest
 from app.models.employment import Employment
+from app.models.employment_reference import EmploymentReference, EmploymentReferenceEvent, EmploymentReferenceInvitation
 from app.models.employment_document import EmploymentDocument
 from app.models.freelance_contract import FreelanceContract
 from app.models.freelance_contract_document import FreelanceContractDocument
@@ -112,6 +113,9 @@ __all__ = [
     "EmailDeliveryLog",
     "EmployerVerificationRequest",
     "Employment",
+    "EmploymentReference",
+    "EmploymentReferenceEvent",
+    "EmploymentReferenceInvitation",
     "EmploymentDocument",
     "FreelanceContract",
     "FreelanceContractDocument",

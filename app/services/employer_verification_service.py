@@ -56,6 +56,7 @@ from app.schemas.employer_verification import (
     EmployerVerifyBody,
 )
 from app.services.notification_service import NotificationService
+from app.services.employment_reference_service import EmploymentReferenceService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
@@ -102,6 +103,7 @@ class EmployerVerificationService:
         self._verification_requests = VerificationRequestRepository(session)
         self._workflow = VerificationRequestWorkflowService(self._verification_requests)
         self._email = get_email_sender(self._settings, session=session)
+        self._references = EmploymentReferenceService(session, self._settings)
 
     def _review_link(self, token: str) -> str:
         base = (self._settings.employer_portal_base_url or self._settings.app_public_base_url).rstrip("/")
@@ -140,6 +142,7 @@ class EmployerVerificationService:
         verification_request_id: UUID | None = None,
         commit: bool = True,
     ) -> EmployerVerificationRequestResponse:
+        await self._references.employment(employment_id, owner_user_id)
         row = await self._employment.get_owned_active(employment_id, owner_user_id)
         if row is None:
             raise EmploymentCaseNotFoundError()
@@ -153,8 +156,6 @@ class EmployerVerificationService:
         ttl = timedelta(hours=self._settings.employer_verification_token_ttl_hours)
         raw_token = secrets.token_urlsafe(32)
         token_hash = hash_refresh_token(raw_token)
-
-        row.verification_method = VerificationMethod.EMPLOYER_CONFIRMATION.value
 
         existing = await self._requests.get_by_employment_id(employment_id)
         if existing is None:
@@ -173,6 +174,7 @@ class EmployerVerificationService:
             await self._requests.create(req)
             active_request = req
         else:
+            await self._references.invalidate_factual_cycle(employment_id)
             existing.contact_name = payload.contact_name
             existing.verification_request_id = verification_request_id
             existing.verifier_email = verifier_email
@@ -189,6 +191,7 @@ class EmployerVerificationService:
             await self._requests.update(existing)
             active_request = existing
 
+        row.verification_method = VerificationMethod.EMPLOYER_CONFIRMATION.value
         await self._emit_audit(
             employment_id=employment_id,
             actor_user_id=owner_user_id,
@@ -366,6 +369,7 @@ class EmployerVerificationService:
 
         documents = await self._docs.list_all_active_for_employment(employment.id)
         return EmployerPortalWorkspace(
+            reporting_manager=await self._references.hr_context(employment.id),
             employer_verification_public_id=req.public_id,
             state="pending" if req.response == EmployerVerificationDecision.PENDING.value else "completed",
             decision=None if req.response == EmployerVerificationDecision.PENDING.value else EmployerVerificationDecision(req.response),
@@ -427,6 +431,7 @@ class EmployerVerificationService:
                 "dates_correct": payload.dates_correct,
                 "role_correct": payload.role_correct,
             },
+            reference_payload=payload,
         )
 
     async def reject_from_portal(
@@ -457,6 +462,8 @@ class EmployerVerificationService:
         req = await self._requests.get_by_public_id(public_id)
         if req is None:
             raise NotFoundError("Employer verification not found")
+        await EmploymentReferenceService(self._session, self._settings).employment(req.employment_id)
+        await self._session.refresh(req, with_for_update=True)
         if req.responded_at is not None:
             raise ConflictError("Completed employer verification links cannot be revoked")
         if req.revoked_at is None:
@@ -467,6 +474,10 @@ class EmployerVerificationService:
 
     async def _load_portal_token(self, raw_token: str) -> EmployerVerificationRequest:
         req = await self._load_by_token(raw_token)
+        await EmploymentReferenceService(self._session, self._settings).employment(req.employment_id)
+        await self._session.refresh(req)
+        if not secrets.compare_digest(req.token_hash, hash_refresh_token(raw_token)):
+            raise NotFoundError("This verification link is invalid")
         if req.revoked_at is not None:
             raise NotFoundError("This verification link is invalid")
         if datetime.now(tz=UTC) > req.expires_at:
@@ -476,6 +487,8 @@ class EmployerVerificationService:
     async def _load_portal_token_for_update(self, raw_token: str) -> EmployerVerificationRequest:
         if not raw_token or len(raw_token) < 16:
             raise NotFoundError("This verification link is invalid or has expired")
+        probe = await self._load_by_token(raw_token)
+        await EmploymentReferenceService(self._session, self._settings).employment(probe.employment_id)
         req = await self._requests.get_by_token_hash_for_update(hash_refresh_token(raw_token))
         if req is None or req.revoked_at is not None:
             raise NotFoundError("This verification link is invalid or has expired")
@@ -490,6 +503,7 @@ class EmployerVerificationService:
         *,
         remarks: str | None,
         metadata: dict,
+        reference_payload: EmployerVerifyBody | None = None,
     ) -> EmployerPortalActionResponse:
         try:
             req = await self._load_portal_token_for_update(raw_token)
@@ -511,6 +525,13 @@ class EmployerVerificationService:
             req.responded_at = now
             req.remarks = remarks
             req.response_metadata = metadata
+
+            if decision == EmployerVerificationDecision.CONFIRMED:
+                await self._references.record_hr(
+                    req,
+                    reference_payload.hr_reference if reference_payload else None,
+                    reference_payload.manager_validation if reference_payload else None,
+                )
 
             if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
                 await self._workflow.transition(
@@ -534,7 +555,6 @@ class EmployerVerificationService:
                         else "discrepancy",
                     },
                 )
-                await self._notify_admin_quality_review_needed(request)
             else:
                 await self._workflow.transition(
                     request,
@@ -566,7 +586,14 @@ class EmployerVerificationService:
                 metadata_payload={"decision": decision.value},
             )
             await self._session.commit()
-            return self._portal_action_response(req, employment, request)
+            action_response = self._portal_action_response(req, employment, request)
+            if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
+                try:
+                    await self._notify_admin_quality_review_needed(request)
+                except Exception:
+                    await self._session.rollback()
+                    logger.warning("employer_reference_postcommit_notification_failed")
+            return action_response
         except Exception:
             await self._session.rollback()
             raise

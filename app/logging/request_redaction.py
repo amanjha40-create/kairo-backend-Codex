@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 _SENSITIVE_PATHS = (
+    re.compile(r"(?P<prefix>(?:https?://[^/\s]+)?(?:/api/v1)?/public/manager-references/)(?P<credential>[^/?\s]+)"),
     re.compile(
         r"(?P<prefix>(?:https?://[^/\s]+)?(?:/api/v1)?/public/document-share-packs/)(?P<credential>[^/?\s]+)"
     ),
