@@ -19,6 +19,16 @@ def manager_capability(request: Request):
         raise ForbiddenError("Cross-origin reference submission is not allowed")
 
 
+def manager_form_capability(request: Request):
+    """Allow an incidental session header only on the trusted same-origin HTML form."""
+
+    origin = request.headers.get("origin")
+    expected = get_settings().manager_reference_public_base_url
+    if origin and expected and origin.rstrip("/") == expected.rstrip("/"):
+        return
+    manager_capability(request)
+
+
 def employer_capability(request: Request):
     capability_only(request)
     origin = request.headers.get("origin")

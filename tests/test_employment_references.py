@@ -671,10 +671,13 @@ async def test_manager_browser_rejection_is_safe_html_but_api_stays_json(case, s
         app.dependency_overrides.clear()
 
 
-@pytest.mark.parametrize("headers", [
-    {"Authorization": "Bearer synthetic-not-a-candidate-session"},
-    {"Origin": "https://untrusted.example.test"},
-])
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Authorization": "Bearer synthetic-not-a-candidate-session"},
+        {"Origin": "https://untrusted.example.test"},
+    ],
+)
 async def test_manager_browser_capability_guards_still_reject_before_service(case, headers):
     from app.api.v1.routes.employment_references import service
     from app.main import app
@@ -687,14 +690,48 @@ async def test_manager_browser_capability_guards_still_reject_before_service(cas
         ) as client:
             for method, suffix in (("GET", "/page"), ("POST", "/respond-form")):
                 result = await client.request(
-                    method, "/api/v1/public/manager-references/synthetic-invalid" + suffix,
-                    headers=headers, data={"action": "decline"},
+                    method,
+                    "/api/v1/public/manager-references/synthetic-invalid" + suffix,
+                    headers=headers,
+                    data={"action": "decline"},
                 )
                 assert result.status_code == 403
                 assert result.headers["content-type"].startswith("text/html")
                 assert "This reference link is no longer available." in result.text
             guarded.context.assert_not_awaited()
             guarded.respond.assert_not_awaited()
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_manager_browser_form_tolerates_same_origin_session_header_only(case, monkeypatch):
+    from app.api.v1.routes.employment_references import service
+    from app.main import app
+
+    row, _, token = await invited(case)
+    monkeypatch.setattr(
+        "app.api.dependencies.reference_capability.get_settings",
+        lambda: case.svc.settings,
+    )
+    app.dependency_overrides[service] = lambda: case.svc
+    headers = {
+        "Authorization": "Bearer incidental-browser-session",
+        "Origin": "https://api.example.test",
+    }
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://api.example.test"
+        ) as client:
+            path = f"/api/v1/public/manager-references/{token}"
+            data = response().model_dump(mode="json", exclude_none=True)
+            data.update(attested="yes", action="submit")
+            result = await client.post(path + "/respond-form", headers=headers, data=data)
+            assert result.status_code == 200
+            assert "Thank you. Your response has been recorded." in result.text
+            assert row.status == "completed"
+
+            api_result = await client.post(path + "/response", headers=headers, json=data)
+            assert api_result.status_code == 403
     finally:
         app.dependency_overrides.clear()
 

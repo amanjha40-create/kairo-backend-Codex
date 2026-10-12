@@ -9,7 +9,11 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
-from app.api.dependencies.reference_capability import employer_capability, manager_capability
+from app.api.dependencies.reference_capability import (
+    employer_capability,
+    manager_capability,
+    manager_form_capability,
+)
 from app.api.dependencies.services import get_employer_verification_service
 from app.api.dependencies.verification_admin import require_dispatch, require_view_cases
 from app.db.session import get_session
@@ -181,7 +185,7 @@ async def manager_page(token: str, request: Request, svc: Service):
 )
 async def manager_form(token: str, request: Request, svc: Service):
     try:
-        manager_capability(request)
+        manager_form_capability(request)
         form = dict(await request.form())
         action = form.pop("action", "submit")
         if action == "decline":
