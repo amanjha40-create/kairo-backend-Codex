@@ -672,13 +672,23 @@ async def test_manager_browser_rejection_is_safe_html_but_api_stays_json(case, s
 
 
 @pytest.mark.parametrize(
-    "headers",
+    ("method", "suffix", "headers"),
     [
-        {"Authorization": "Bearer synthetic-not-a-candidate-session"},
-        {"Origin": "https://untrusted.example.test"},
+        (
+            "GET",
+            "/page",
+            {"Authorization": "Bearer synthetic-not-a-candidate-session"},
+        ),
+        (
+            "POST",
+            "/respond-form",
+            {"Origin": "https://untrusted.example.test"},
+        ),
     ],
 )
-async def test_manager_browser_capability_guards_still_reject_before_service(case, headers):
+async def test_manager_browser_capability_guards_still_reject_before_service(
+    case, method, suffix, headers
+):
     from app.api.v1.routes.employment_references import service
     from app.main import app
 
@@ -688,23 +698,25 @@ async def test_manager_browser_capability_guards_still_reject_before_service(cas
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="https://api.example.test"
         ) as client:
-            for method, suffix in (("GET", "/page"), ("POST", "/respond-form")):
-                result = await client.request(
-                    method,
-                    "/api/v1/public/manager-references/synthetic-invalid" + suffix,
-                    headers=headers,
-                    data={"action": "decline"},
-                )
-                assert result.status_code == 403
-                assert result.headers["content-type"].startswith("text/html")
-                assert "This reference link is no longer available." in result.text
+            result = await client.request(
+                method,
+                "/api/v1/public/manager-references/synthetic-invalid" + suffix,
+                headers=headers,
+                data={"action": "decline"},
+            )
+            assert result.status_code == 403
+            assert result.headers["content-type"].startswith("text/html")
+            assert "This reference link is no longer available." in result.text
             guarded.context.assert_not_awaited()
             guarded.respond.assert_not_awaited()
     finally:
         app.dependency_overrides.clear()
 
 
-async def test_manager_browser_form_tolerates_same_origin_session_header_only(case, monkeypatch):
+@pytest.mark.parametrize("origin", ["https://api.example.test", None, "null"])
+async def test_manager_browser_form_tolerates_private_browser_session_headers(
+    case, monkeypatch, origin
+):
     from app.api.v1.routes.employment_references import service
     from app.main import app
 
@@ -714,10 +726,9 @@ async def test_manager_browser_form_tolerates_same_origin_session_header_only(ca
         lambda: case.svc.settings,
     )
     app.dependency_overrides[service] = lambda: case.svc
-    headers = {
-        "Authorization": "Bearer incidental-browser-session",
-        "Origin": "https://api.example.test",
-    }
+    headers = {"Authorization": "Bearer incidental-browser-session"}
+    if origin is not None:
+        headers["Origin"] = origin
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="https://api.example.test"
