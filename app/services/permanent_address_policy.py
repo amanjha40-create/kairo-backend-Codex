@@ -57,6 +57,41 @@ def metres(a, b):
     return 6371008.8 * 2 * math.asin(min(1, math.sqrt(max(0, value))))
 
 
+def assess_location_batch(
+    samples: list[LocationSample],
+    started_at: datetime,
+    now: datetime,
+    policy: LocationPolicy | None = None,
+):
+    """Return a safe outcome and an ephemeral representative; never persist the latter."""
+    policy = policy or LocationPolicy()
+    if any(sample.mock_location for sample in samples):
+        return LocationOutcome("NEEDS_REVIEW", sample_count=len(samples), mock_detected=True), None
+    elapsed = (now - started_at).total_seconds()
+    if not (policy.min_seconds <= elapsed <= 120) or not 5 <= len(samples) <= 10:
+        return LocationOutcome("RETRY_REQUIRED"), None
+    ordered = sorted(samples, key=lambda s: s.timestamp)
+    times = [sample.timestamp for sample in ordered]
+    if len(set(times)) != len(times) or any(
+        t < started_at - timedelta(seconds=2) or t > now + timedelta(seconds=2) for t in times
+    ):
+        return LocationOutcome("RETRY_REQUIRED"), None
+    if not policy.min_seconds <= (times[-1] - times[0]).total_seconds() <= policy.max_seconds:
+        return LocationOutcome("RETRY_REQUIRED"), None
+    good = [sample for sample in ordered if sample.accuracy_m <= policy.maximum_accuracy_m]
+    if (
+        len(good) < 5
+        or (good[-1].timestamp - good[0].timestamp).total_seconds() < policy.min_seconds
+    ):
+        return LocationOutcome("RETRY_REQUIRED", sample_count=len(good)), None
+    representative = (median(s.latitude for s in good), median(s.longitude for s in good))
+    spread = [metres(representative, (s.latitude, s.longitude)) for s in good]
+    if max(spread) > policy.maximum_dispersion_m:
+        return LocationOutcome("RETRY_REQUIRED", sample_count=len(good)), None
+    accuracy = median(s.accuracy_m for s in good)
+    return LocationOutcome("MATCHED", accuracy, sample_count=len(good)), representative
+
+
 def evaluate_location(
     samples: list[LocationSample],
     target: tuple[float, float],
@@ -68,30 +103,10 @@ def evaluate_location(
     policy = policy or LocationPolicy()
     if quality not in {"precise_address", "approximate_address", STREET_UNAVAILABLE_QUALITY}:
         return LocationOutcome("NEEDS_REVIEW")
-    if any(sample.mock_location for sample in samples):
-        return LocationOutcome("NEEDS_REVIEW", sample_count=len(samples), mock_detected=True)
-    elapsed = (now - started_at).total_seconds()
-    if not (policy.min_seconds <= elapsed <= 120) or not 5 <= len(samples) <= 10:
-        return LocationOutcome("RETRY_REQUIRED")
-    ordered = sorted(samples, key=lambda s: s.timestamp)
-    times = [sample.timestamp for sample in ordered]
-    if len(set(times)) != len(times) or any(
-        t < started_at - timedelta(seconds=2) or t > now + timedelta(seconds=2) for t in times
-    ):
-        return LocationOutcome("RETRY_REQUIRED")
-    if not policy.min_seconds <= (times[-1] - times[0]).total_seconds() <= policy.max_seconds:
-        return LocationOutcome("RETRY_REQUIRED")
-    good = [sample for sample in ordered if sample.accuracy_m <= policy.maximum_accuracy_m]
-    if (
-        len(good) < 5
-        or (good[-1].timestamp - good[0].timestamp).total_seconds() < policy.min_seconds
-    ):
-        return LocationOutcome("RETRY_REQUIRED", sample_count=len(good))
-    representative = (median(s.latitude for s in good), median(s.longitude for s in good))
-    spread = [metres(representative, (s.latitude, s.longitude)) for s in good]
-    if max(spread) > policy.maximum_dispersion_m:
-        return LocationOutcome("RETRY_REQUIRED", sample_count=len(good))
-    accuracy = median(s.accuracy_m for s in good)
+    outcome, representative = assess_location_batch(samples, started_at, now, policy)
+    if representative is None:
+        return outcome
+    accuracy = outcome.accuracy_m
     radius = (
         policy.approximate_radius_m if quality == "approximate_address" else policy.precise_radius_m
     )
@@ -104,7 +119,7 @@ def evaluate_location(
         "MATCHED" if distance <= effective_radius else "OUTSIDE_EXPECTED_AREA",
         round(accuracy, 1),
         round(distance, 1),
-        len(good),
+        outcome.sample_count,
     )
 
 

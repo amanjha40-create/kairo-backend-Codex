@@ -26,6 +26,14 @@ class PermanentAddressVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("user_id", "version"),
         CheckConstraint("version > 0 AND cycle > 0", name="positive_versions"),
+        CheckConstraint(
+            "target_source IN ('provider_geocode', 'onsite_confirmation')",
+            name="target_source_allowed",
+        ),
+        CheckConstraint(
+            "target_status IN ('active', 'confirmation_required', 'needs_review', 'superseded')",
+            name="target_status_allowed",
+        ),
     )
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
@@ -37,6 +45,10 @@ class PermanentAddressVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     geocode_status: Mapped[str] = mapped_column(String(32), default="REQUESTED")
     target_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     target_key_id: Mapped[str | None] = mapped_column(String(64))
+    target_source: Mapped[str | None] = mapped_column(String(32))
+    target_status: Mapped[str | None] = mapped_column(String(32))
+    target_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    target_confirmation_reason: Mapped[str | None] = mapped_column(String(64))
     geocode_metadata: Mapped[dict | None] = mapped_column(JSONB)
     geocoded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     document_id: Mapped[UUID | None] = mapped_column(

@@ -35,15 +35,18 @@ from app.models.user_document import UserDocument
 from app.schemas.permanent_address import LocationChallenge, PermanentAddressState
 from app.services.document_pack_storage import DocumentPackStorage
 from app.services.permanent_address_geocoder import AmazonAddressGeocoder, TargetCipher
+from app.services.permanent_address_onsite import ambiguous_area_valid
 from app.services.permanent_address_policy import (
+    LocationOutcome,
     LocationPolicy,
+    assess_location_batch,
     calendar_day,
     count_days,
     document_match,
     evaluate_location,
     overall_status,
 )
-from app.services.permanent_address_quality import normalize
+from app.services.permanent_address_quality import STREET_UNAVAILABLE_QUALITY, normalize
 from app.services.private_owner_guard import lock_private_owner
 
 ALLOWED_EVIDENCE = {"address_proof", "driving_license", "passport", "voter_id", "government_id"}
@@ -84,6 +87,20 @@ class PermanentAddressService:
         if row is None or row.id != version_id:
             raise NotFoundError()
         return row
+
+    @staticmethod
+    def confirmation_required(row):
+        return (
+            row.target_status == "confirmation_required"
+            and row.target_source != "onsite_confirmation"
+            and row.claimed_address.get("country") == "IN"
+            and row.target_confirmation_reason
+            in {
+                "provider_ambiguity",
+                "reviewed_provider_discrepancy",
+                "address_version_changed",
+            }
+        )
 
     async def evidence_valid(self, owner, row):
         if not row.document_id:
@@ -177,12 +194,15 @@ class PermanentAddressService:
         checking = any(s.result == "CHECKING" and s.expires_at > now for s in sessions)
         can_start = (
             geocode == "READY"
-            and row.target_encrypted is not None
+            and (row.target_encrypted is not None or self.confirmation_required(row))
+            and row.target_status not in {"needs_review", "superseded"}
             and not today
             and not checking
             and checks < 3
         )
         status = overall_status(doc_status, checks, geocode, checking=checking)
+        if row.target_status == "needs_review":
+            status = "NEEDS_REVIEW"
         return PermanentAddressState(
             enabled=True,
             status=status,
@@ -193,6 +213,9 @@ class PermanentAddressService:
             evidence_document_id=row.document_id,
             geocode_status=geocode,
             geocode_quality=(row.geocode_metadata or {}).get("quality"),
+            target_confirmation_required=self.confirmation_required(row),
+            target_source=row.target_source
+            or ("provider_geocode" if row.target_encrypted else None),
             successful_gps_checks=checks,
             today_complete=today,
             can_start_location=can_start,
@@ -237,6 +260,7 @@ class PermanentAddressService:
         budget.request_count += 1
         if previous:
             previous.invalidated_at = now
+            previous.target_status = "superseded"
         row = Version(
             id=uuid4(),
             user_id=owner,
@@ -266,9 +290,25 @@ class PermanentAddressService:
         row.geocode_metadata = metadata
         row.geocoded_at = self.clock()
         row.geocode_status = "READY" if target else "NEEDS_REVIEW"
+        row.target_source = "provider_geocode"
+        row.target_status = "active" if target else "needs_review"
         if target:
             row.target_key_id = cipher.active
             row.target_encrypted = cipher.encrypt(target, owner, row.id)
+        if ambiguous_area_valid(metadata):
+            row.geocode_status = "READY"
+            row.target_status = "confirmation_required"
+            row.target_confirmation_reason = "provider_ambiguity"
+        elif (
+            target
+            and previous
+            and (
+                previous.target_source == "onsite_confirmation"
+                or previous.target_confirmation_reason
+            )
+        ):
+            row.target_status = "confirmation_required"
+            row.target_confirmation_reason = "address_version_changed"
         await self.db.commit()
         return await self.state(owner)
 
@@ -410,7 +450,10 @@ class PermanentAddressService:
             or sum(s.started_at >= now - timedelta(hours=1) for s in history) >= 5
         ):
             raise RateLimitError("Location check limit reached; try again later")
-        TargetCipher(self.settings).decrypt(row.target_encrypted, row.target_key_id, owner, row.id)
+        if not self.confirmation_required(row):
+            TargetCipher(self.settings).decrypt(
+                row.target_encrypted, row.target_key_id, owner, row.id
+            )
         challenge = secrets.token_urlsafe(32)
         session = Session(
             id=uuid4(),
@@ -453,24 +496,40 @@ class PermanentAddressService:
         else:
             if row.geocode_status != "READY":
                 raise ConflictError("Review the address before checking location")
-            target = TargetCipher(self.settings).decrypt(
-                row.target_encrypted, row.target_key_id, owner, row.id
-            )["position"]
-            outcome = evaluate_location(
-                payload.samples,
-                (target[1], target[0]),
-                session.started_at,
-                now,
-                row.geocode_metadata["quality"],
-                LocationPolicy(
-                    precise_radius_m=self.settings.permanent_address_radius_m,
-                    approximate_radius_m=self.settings.permanent_address_approximate_radius_m,
-                    street_unavailable_radius_m=(
-                        self.settings.permanent_address_street_unavailable_radius_m
-                    ),
+            policy = LocationPolicy(
+                precise_radius_m=self.settings.permanent_address_radius_m,
+                approximate_radius_m=self.settings.permanent_address_approximate_radius_m,
+                street_unavailable_radius_m=(
+                    self.settings.permanent_address_street_unavailable_radius_m
                 ),
             )
+            if self.confirmation_required(row):
+                outcome = await self.enroll_target(
+                    owner, row, session, payload.samples, now, policy
+                )
+            else:
+                if row.target_status in {"needs_review", "superseded"}:
+                    raise ConflictError("Review the address before checking location")
+                target = TargetCipher(self.settings).decrypt(
+                    row.target_encrypted, row.target_key_id, owner, row.id
+                )["position"]
+                outcome = evaluate_location(
+                    payload.samples,
+                    (target[1], target[0]),
+                    session.started_at,
+                    now,
+                    STREET_UNAVAILABLE_QUALITY
+                    if row.target_source == "onsite_confirmation"
+                    else row.geocode_metadata["quality"],
+                    policy,
+                )
+            audit = session.derived_evidence or {}
             session.result, session.derived_evidence = outcome.result, asdict(outcome)
+            if "onsite_confirmation" in audit:
+                session.derived_evidence = {
+                    **session.derived_evidence,
+                    "onsite_confirmation": audit["onsite_confirmation"],
+                }
             if outcome.result == "MATCHED":
                 day = calendar_day(now)
                 if not any(s.counted_day == day for s in await self.sessions(row)):
@@ -489,3 +548,64 @@ class PermanentAddressService:
             row.completed_at = now
         await self.db.commit()
         return await self.state(owner)
+
+    async def enroll_target(self, owner, row, session, samples, now, policy):
+        outcome, representative = assess_location_batch(samples, session.started_at, now, policy)
+        if representative is None:
+            if outcome.result == "NEEDS_REVIEW":
+                row.target_status = "needs_review"
+            return outcome
+        outcome = LocationOutcome(
+            "MATCHED", round(outcome.accuracy_m, 1), sample_count=outcome.sample_count
+        )
+        cipher = TargetCipher(self.settings)
+        month = now.strftime("%Y-%m")
+        await self.db.execute(
+            insert(Budget).values(month=month, request_count=0).on_conflict_do_nothing()
+        )
+        budget = await self.db.scalar(select(Budget).where(Budget.month == month).with_for_update())
+        if budget.request_count >= self.settings.permanent_address_monthly_geocode_limit:
+            return LocationOutcome(
+                "NEEDS_REVIEW", outcome.accuracy_m, sample_count=outcome.sample_count
+            )
+        budget.request_count += 1
+        # Durable one-shot reservation. A crash, duplicate completion, or timeout
+        # leaves review required, never another provider call or silent recentering.
+        row.target_status = "needs_review"
+        session.result = "NEEDS_REVIEW"
+        session.completed_at = now
+        session.derived_evidence = {
+            **asdict(outcome),
+            "result": "NEEDS_REVIEW",
+            "onsite_confirmation": {"provider_call_reserved": True},
+        }
+        await self.db.commit()
+        try:
+            decision = await self.geocoder.confirm_area(row.claimed_address, representative)
+        except ServiceUnavailableError:
+            decision = {"accepted": False, "reason": "provider_unavailable"}
+        # An address edit or deletion while AWS was in flight cannot enroll the old version.
+        await lock_private_owner(self.db, owner)
+        await self.db.refresh(row)
+        await self.db.refresh(session)
+        await self.active(owner, row.id)
+        if row.target_status != "needs_review" or row.target_source == "onsite_confirmation":
+            raise ConflictError("Address target state changed during confirmation")
+        session.derived_evidence = {
+            "onsite_confirmation": {**decision, "provider_call_reserved": True}
+        }
+        if not decision["accepted"]:
+            return LocationOutcome(
+                "NEEDS_REVIEW", outcome.accuracy_m, sample_count=outcome.sample_count
+            )
+        row.target_encrypted = cipher.encrypt(
+            {"position": [representative[1], representative[0]]},
+            owner,
+            row.id,
+        )
+        row.target_key_id = cipher.active
+        row.target_source = "onsite_confirmation"
+        row.target_status = "active"
+        row.target_confirmed_at = self.clock()
+        row.geocode_metadata = {**(row.geocode_metadata or {}), "provider_target_superseded": True}
+        return outcome

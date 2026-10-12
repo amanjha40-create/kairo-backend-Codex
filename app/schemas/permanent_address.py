@@ -87,6 +87,8 @@ class PermanentAddressState(BaseModel):
     evidence_document_id: UUID | None = None
     geocode_status: str = "NOT_STARTED"
     geocode_quality: str | None = None
+    target_confirmation_required: bool = False
+    target_source: Literal["provider_geocode", "onsite_confirmation"] | None = None
     successful_gps_checks: int = 0
     required_gps_checks: int = 3
     today_complete: bool = False

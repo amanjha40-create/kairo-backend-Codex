@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.exceptions import ServiceUnavailableError
 from app.integrations.digilocker.crypto import parse_keyring
+from app.services.permanent_address_onsite import area_decision
 from app.services.permanent_address_quality import (
     POLICY_VERSION,
     STREET_UNAVAILABLE_RADIUS_M,
@@ -90,8 +91,13 @@ def query_text(address):
     value = ", ".join(
         part.strip()
         for field in (
-            "address_line_1", "address_line_2", "locality", "city", "state",
-            "postal_code", "country",
+            "address_line_1",
+            "address_line_2",
+            "locality",
+            "city",
+            "state",
+            "postal_code",
+            "country",
         )
         if (part := address.get(field)) and part.strip()
     )
@@ -104,6 +110,28 @@ def query_text(address):
 class AmazonAddressGeocoder:
     def __init__(self, *, street_unavailable_radius_m=STREET_UNAVAILABLE_RADIUS_M):
         self.street_unavailable_radius_m = street_unavailable_radius_m
+
+    async def confirm_area(self, address, representative):
+        try:
+            response = await asyncio.to_thread(self._reverse_request, representative)
+            return area_decision(address, response.get("ResultItems", []))
+        except Exception:
+            raise ServiceUnavailableError("Address area confirmation is unavailable") from None
+
+    @staticmethod
+    def _reverse_request(representative):
+        client = boto3.client(
+            "geo-places",
+            region_name="us-east-1",
+            config=Config(connect_timeout=3, read_timeout=10, retries={"total_max_attempts": 1}),
+        )
+        return client.reverse_geocode(
+            QueryPosition=[representative[1], representative[0]],
+            QueryRadius=75,
+            MaxResults=1,
+            IntendedUse="SingleUse",
+            Language="en",
+        )
 
     async def geocode(self, address):
         query = query_components(address)

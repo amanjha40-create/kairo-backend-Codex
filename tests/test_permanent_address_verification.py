@@ -432,7 +432,7 @@ async def test_real_geocoder_retention_boundary(case, monkeypatch, caplog, scena
         state = await svc.save_address(users[0].id, ADDRESS)
     row = await db.get(PermanentAddressVersion, state.address_version_id)
     assert calls == [True]
-    assert state.can_start_location is eligible
+    assert state.can_start_location is (eligible or scenario == "ambiguous")
     serialized = state.model_dump_json()
     for forbidden in ("latitude", "longitude", "76.9876543", "26.1234567", '"position"',
                       "target_encrypted", "target_key_id", "normalized_address"):
@@ -449,6 +449,10 @@ async def test_real_geocoder_retention_boundary(case, monkeypatch, caplog, scena
             row.target_encrypted, row.target_key_id, users[0].id, row.id,
         )
         assert decoded["position"] == item["Position"]
+        await svc.start(users[0].id, row.id)
+    elif scenario == "ambiguous":
+        assert row.target_encrypted is None and row.target_key_id is None
+        assert state.target_confirmation_required and state.geocode_status == "READY"
         await svc.start(users[0].id, row.id)
     else:
         assert row.target_encrypted is None and row.target_key_id is None
