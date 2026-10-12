@@ -627,6 +627,129 @@ async def test_public_authorization_errors_headers_and_page(case):
         app.dependency_overrides.clear()
 
 
+@pytest.mark.parametrize("state", ["invalid", "expired", "revoked"])
+async def test_manager_browser_rejection_is_safe_html_but_api_stays_json(case, state):
+    from app.api.v1.routes.employment_references import service
+    from app.main import app
+
+    row, _, token = await invited(case)
+    invitation = await case.svc.invitation(row.id)
+    if state == "invalid":
+        token = "synthetic-unknown-capability-" + uuid4().hex
+    elif state == "expired":
+        invitation.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    else:
+        invitation.revoked_at = datetime.now(UTC)
+    await case.db.commit()
+    app.dependency_overrides[service] = lambda: case.svc
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://api.example.test"
+        ) as client:
+            path = f"/api/v1/public/manager-references/{token}"
+            for method, suffix in (("GET", "/page"), ("POST", "/respond-form")):
+                result = await client.request(method, path + suffix, data={"action": "decline"})
+                assert result.status_code == 404
+                assert result.headers["content-type"].startswith("text/html")
+                assert "This reference link is no longer available." in result.text
+                assert "<form" not in result.text and '"error"' not in result.text
+                for private in (token, str(row.id), str(invitation.id), str(case.emp.id)):
+                    assert private not in result.text
+                assert "no-store" in result.headers["cache-control"]
+                assert result.headers["referrer-policy"] == "no-referrer"
+                assert "default-src 'none'" in result.headers["content-security-policy"]
+            for method, suffix in (("GET", ""), ("POST", "/decline"), ("POST", "/response")):
+                result = await client.request(
+                    method, path + suffix, json=response().model_dump(mode="json")
+                )
+                assert result.status_code == 404
+                assert result.headers["content-type"].startswith("application/json")
+                assert result.json()["error"]["code"] == "not_found"
+            assert invitation.opened_at is None
+            assert row.answers == {} and row.completed_at is None
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("headers", [
+    {"Authorization": "Bearer synthetic-not-a-candidate-session"},
+    {"Origin": "https://untrusted.example.test"},
+])
+async def test_manager_browser_capability_guards_still_reject_before_service(case, headers):
+    from app.api.v1.routes.employment_references import service
+    from app.main import app
+
+    guarded = SimpleNamespace(context=AsyncMock(), respond=AsyncMock())
+    app.dependency_overrides[service] = lambda: guarded
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://api.example.test"
+        ) as client:
+            for method, suffix in (("GET", "/page"), ("POST", "/respond-form")):
+                result = await client.request(
+                    method, "/api/v1/public/manager-references/synthetic-invalid" + suffix,
+                    headers=headers, data={"action": "decline"},
+                )
+                assert result.status_code == 403
+                assert result.headers["content-type"].startswith("text/html")
+                assert "This reference link is no longer available." in result.text
+            guarded.context.assert_not_awaited()
+            guarded.respond.assert_not_awaited()
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_manager_valid_browser_submission_and_completed_state_unchanged(case):
+    from app.api.v1.routes.employment_references import service
+    from app.main import app
+
+    row, _, token = await invited(case)
+    app.dependency_overrides[service] = lambda: case.svc
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://api.example.test"
+        ) as client:
+            path = f"/api/v1/public/manager-references/{token}"
+            page = await client.get(path + "/page")
+            assert page.status_code == 200 and "A short professional reference" in page.text
+            assert "action='respond-form'" in page.text
+            assert token not in page.text
+            data = response().model_dump(mode="json", exclude_none=True)
+            data.update(attested="yes", action="submit")
+            result = await client.post(path + "/respond-form", data=data)
+            assert result.status_code == 200
+            assert "Thank you. Your response has been recorded." in result.text
+            assert row.status == "completed"
+            page = await client.get(path + "/page")
+            assert page.status_code == 200
+            assert "Your response has already been recorded." in page.text
+            assert "<form" not in page.text and token not in page.text
+            assert page.headers["content-type"].startswith("text/html")
+            context = await client.get(path)
+            assert context.json()["status"] == "completed"
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_manager_browser_error_never_reflects_domain_details(case):
+    from app.api.v1.routes.employment_references import service
+    from app.main import app
+
+    private = "<script>private-database-id</script>"
+    stub = SimpleNamespace(context=AsyncMock(side_effect=NotFoundError(private)))
+    app.dependency_overrides[service] = lambda: stub
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://api.example.test"
+        ) as client:
+            result = await client.get("/api/v1/public/manager-references/synthetic-invalid/page")
+            assert result.status_code == 404
+            assert "private-database-id" not in result.text
+            assert "<script>" not in result.text
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_configured_origin_validation_and_proxy_safe_checks(monkeypatch):
     from starlette.requests import Request
 

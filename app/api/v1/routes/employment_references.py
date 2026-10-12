@@ -14,6 +14,7 @@ from app.api.dependencies.services import get_employer_verification_service
 from app.api.dependencies.verification_admin import require_dispatch, require_view_cases
 from app.db.session import get_session
 from app.exceptions import AppException
+from app.exceptions.handlers import app_exception_handler
 from app.integrations.email.manager_reference_page import render_manager_page, render_manager_result
 from app.schemas.employment_reference import (
     CandidateReferences,
@@ -145,25 +146,44 @@ PAGE_HEADERS = {
 }
 
 
+async def manager_link_error(request: Request, exc: AppException):
+    # Keep the API's status/retry policy, but never render its error details.
+    error = await app_exception_handler(request, exc)
+    headers = dict(PAGE_HEADERS)
+    if "retry-after" in error.headers:
+        headers["Retry-After"] = error.headers["retry-after"]
+    return HTMLResponse(
+        render_manager_result(
+            "This reference link is no longer available. "
+            "The link may be invalid, expired, revoked, or already completed."
+        ),
+        status_code=error.status_code,
+        headers=headers,
+    )
+
+
 @router.get(
     "/public/manager-references/{token}/page",
     response_class=HTMLResponse,
-    dependencies=[Depends(manager_capability)],
 )
-async def manager_page(token: str, svc: Service):
-    context = await svc.context(token)
+async def manager_page(token: str, request: Request, svc: Service):
+    try:
+        manager_capability(request)
+        context = await svc.context(token)
+    except AppException as exc:
+        return await manager_link_error(request, exc)
     return HTMLResponse(render_manager_page(context), headers=PAGE_HEADERS)
 
 
 @router.post(
     "/public/manager-references/{token}/respond-form",
     response_class=HTMLResponse,
-    dependencies=[Depends(manager_capability)],
 )
 async def manager_form(token: str, request: Request, svc: Service):
-    form = dict(await request.form())
-    action = form.pop("action", "submit")
     try:
+        manager_capability(request)
+        form = dict(await request.form())
+        action = form.pop("action", "submit")
         if action == "decline":
             result = await svc.respond(token, decline=True)
         else:
@@ -191,8 +211,8 @@ async def manager_form(token: str, request: Request, svc: Service):
             status_code=422,
             headers=PAGE_HEADERS,
         )
-    except AppException:
-        raise
+    except AppException as exc:
+        return await manager_link_error(request, exc)
     return HTMLResponse(
         render_manager_result(
             "Thank you. Your response has been recorded."
