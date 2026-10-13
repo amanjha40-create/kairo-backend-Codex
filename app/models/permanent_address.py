@@ -27,7 +27,8 @@ class PermanentAddressVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("user_id", "version"),
         CheckConstraint("version > 0 AND cycle > 0", name="positive_versions"),
         CheckConstraint(
-            "target_source IN ('provider_geocode', 'onsite_confirmation')",
+            "target_source IN ('provider_geocode', 'onsite_confirmation', "
+            "'onsite_confirmation_manual_review')",
             name="target_source_allowed",
         ),
         CheckConstraint(
@@ -45,7 +46,7 @@ class PermanentAddressVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     geocode_status: Mapped[str] = mapped_column(String(32), default="REQUESTED")
     target_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     target_key_id: Mapped[str | None] = mapped_column(String(64))
-    target_source: Mapped[str | None] = mapped_column(String(32))
+    target_source: Mapped[str | None] = mapped_column(String(64))
     target_status: Mapped[str | None] = mapped_column(String(32))
     target_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     target_confirmation_reason: Mapped[str | None] = mapped_column(String(64))
@@ -66,7 +67,20 @@ class PermanentAddressSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "permanent_address_sessions"
     __table_args__ = (
         UniqueConstraint("address_version_id", "cycle", "counted_day"),
-        CheckConstraint("counted_day IS NULL OR result = 'MATCHED'", name="counted_only_matched"),
+        CheckConstraint(
+            "counted_day IS NULL OR result = 'MATCHED' OR "
+            "(result = 'NEEDS_REVIEW' AND COALESCE(manual_review_status = 'approved', false))",
+            name="counted_only_matched",
+        ),
+        CheckConstraint(
+            "(pending_target_encrypted IS NULL) = (pending_target_key_id IS NULL)",
+            name="pending_target_pair",
+        ),
+        CheckConstraint(
+            "manual_review_status IN ('pending', 'additional_evidence_requested', "
+            "'approved', 'rejected', 'correction_requested', 'invalidated')",
+            name="manual_review_status_allowed",
+        ),
     )
     address_version_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -81,6 +95,10 @@ class PermanentAddressSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     result: Mapped[str] = mapped_column(String(32), default="CHECKING")
     counted_day: Mapped[date | None] = mapped_column(Date)
     derived_evidence: Mapped[dict | None] = mapped_column(JSONB)
+    pending_target_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    pending_target_key_id: Mapped[str | None] = mapped_column(String(64))
+    manual_review_status: Mapped[str | None] = mapped_column(String(32))
+    manual_resolutions: Mapped[list | None] = mapped_column(JSONB)
 
 
 class PermanentAddressReview(UUIDPrimaryKeyMixin, TimestampMixin, Base):

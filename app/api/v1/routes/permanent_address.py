@@ -21,6 +21,10 @@ from app.schemas.permanent_address import (
     LocationReviewResolution,
     LocationReviewResolutionInput,
     LocationStartInput,
+    ManualLocationDetail,
+    ManualLocationQueue,
+    ManualLocationResolution,
+    ManualLocationReviewInput,
     PermanentAddressInput,
     PermanentAddressState,
 )
@@ -126,3 +130,31 @@ async def resolve_location_review(
     svc: Service,
 ):
     return await svc.resolve_location_review(reviewer.id, version_id, session_id, payload)
+
+
+@router.get("/location-reviews", response_model=ManualLocationQueue)
+async def manual_location_queue(reviewer: Reviewer, svc: Service):
+    return await svc.manual_location_queue(reviewer.id)
+
+
+@router.get(
+    "/location-reviews/{version_id}/sessions/{session_id}", response_model=ManualLocationDetail
+)
+async def manual_location_detail(
+    version_id: UUID, session_id: UUID, reviewer: Reviewer, svc: Service
+):
+    return await svc.manual_location_detail(reviewer.id, version_id, session_id)
+
+
+@router.post(
+    "/location-reviews/{version_id}/sessions/{session_id}/resolution",
+    response_model=ManualLocationResolution,
+)
+async def resolve_manual_location(
+    version_id: UUID,
+    session_id: UUID,
+    payload: ManualLocationReviewInput,
+    reviewer: Reviewer,
+    svc: Service,
+):
+    return await svc.resolve_manual_location(reviewer.id, version_id, session_id, payload)

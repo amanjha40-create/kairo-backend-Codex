@@ -39,6 +39,14 @@ from app.models.user_document import UserDocument
 from app.schemas.permanent_address import LocationChallenge, PermanentAddressState
 from app.services.document_pack_storage import DocumentPackStorage
 from app.services.permanent_address_geocoder import AmazonAddressGeocoder, TargetCipher
+from app.services.permanent_address_manual_review import (
+    LOCKED_SOURCES,
+    REVIEWABLE,
+    ManualLocationReviewMixin,
+    PendingTargetCipher,
+    discard_pending,
+    manual_eligible,
+)
 from app.services.permanent_address_onsite import ambiguous_area_valid
 from app.services.permanent_address_policy import (
     LocationOutcome,
@@ -56,7 +64,7 @@ from app.services.private_owner_guard import lock_private_owner
 ALLOWED_EVIDENCE = {"address_proof", "driving_license", "passport", "voter_id", "government_id"}
 
 
-class PermanentAddressService:
+class PermanentAddressService(ManualLocationReviewMixin):
     def __init__(self, session, settings, *, geocoder=None, clock=None, storage=None):
         self.db, self.settings = session, settings
         self.geocoder = geocoder or AmazonAddressGeocoder(
@@ -96,7 +104,7 @@ class PermanentAddressService:
     def confirmation_required(row):
         return (
             row.target_status == "confirmation_required"
-            and row.target_source != "onsite_confirmation"
+            and row.target_source not in LOCKED_SOURCES
             and row.claimed_address.get("country") == "IN"
             and row.target_confirmation_reason
             in {
@@ -184,7 +192,7 @@ class PermanentAddressService:
             return PermanentAddressState(enabled=True, status="NOT_STARTED")
         now = self.clock()
         sessions = await self.sessions(row)
-        days = [s.counted_day for s in sessions if s.result == "MATCHED" and s.counted_day]
+        days = [s.counted_day for s in sessions if s.counted_day]
         checks = 3 if row.completed_at else count_days(days, row.window_started_at, now)
         doc_status = row.document_status
         if row.document_id and not await self.evidence_valid(owner, row):
@@ -220,6 +228,9 @@ class PermanentAddressService:
             target_confirmation_required=self.confirmation_required(row),
             target_source=row.target_source
             or ("provider_geocode" if row.target_encrypted else None),
+            manual_review_status=await self.manual_review_label(
+                row, sessions[-1] if sessions else None
+            ),
             successful_gps_checks=checks,
             today_complete=today,
             can_start_location=can_start,
@@ -265,6 +276,14 @@ class PermanentAddressService:
         if previous:
             previous.invalidated_at = now
             previous.target_status = "superseded"
+            attempts = (
+                await self.db.scalars(
+                    select(Session).where(Session.address_version_id == previous.id)
+                )
+            ).all()
+            for attempt in attempts:
+                if attempt.manual_review_status in REVIEWABLE:
+                    discard_pending(attempt, "invalidated")
         row = Version(
             id=uuid4(),
             user_id=owner,
@@ -306,10 +325,7 @@ class PermanentAddressService:
         elif (
             target
             and previous
-            and (
-                previous.target_source == "onsite_confirmation"
-                or previous.target_confirmation_reason
-            )
+            and (previous.target_source in LOCKED_SOURCES or previous.target_confirmation_reason)
         ):
             row.target_status = "confirmation_required"
             row.target_confirmation_reason = "address_version_changed"
@@ -468,6 +484,7 @@ class PermanentAddressService:
         history = await self.sessions(row)
         if (
             payload.resolution != "retry_allowed"
+            or attempt.manual_review_status is not None
             or not history
             or history[-1].id != attempt.id
             or attempt.cycle != row.cycle
@@ -600,7 +617,7 @@ class PermanentAddressService:
                     session.started_at,
                     now,
                     STREET_UNAVAILABLE_QUALITY
-                    if row.target_source == "onsite_confirmation"
+                    if row.target_source in LOCKED_SOURCES
                     else row.geocode_metadata["quality"],
                     policy,
                 )
@@ -670,12 +687,21 @@ class PermanentAddressService:
         await self.db.refresh(row)
         await self.db.refresh(session)
         await self.active(owner, row.id)
-        if row.target_status != "needs_review" or row.target_source == "onsite_confirmation":
+        if row.target_status != "needs_review" or row.target_source in LOCKED_SOURCES:
             raise ConflictError("Address target state changed during confirmation")
         session.derived_evidence = {
             "onsite_confirmation": {**decision, "provider_call_reserved": True}
         }
         if not decision["accepted"]:
+            if manual_eligible(decision):
+                pending = PendingTargetCipher(self.settings, session.id)
+                session.pending_target_encrypted = pending.encrypt(
+                    {"position": [representative[1], representative[0]]},
+                    owner,
+                    row.id,
+                )
+                session.pending_target_key_id = pending.active
+                session.manual_review_status = "pending"
             return LocationOutcome(
                 "NEEDS_REVIEW", outcome.accuracy_m, sample_count=outcome.sample_count
             )

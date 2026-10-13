@@ -79,6 +79,76 @@ class LocationReviewResolution(BaseModel):
     audit_event_id: UUID
 
 
+class ManualLocationReviewInput(StrictInput):
+    candidate_id: UUID
+    idempotency_key: UUID
+    outcome: Literal[
+        "APPROVE_ONSITE_LOCATION",
+        "REJECT_ONSITE_LOCATION",
+        "REQUEST_ADDRESS_CORRECTION",
+        "REQUEST_ADDITIONAL_EVIDENCE",
+    ]
+
+
+class ManualLocationResolution(BaseModel):
+    outcome: str
+    reviewed_at: datetime
+    reviewer_id: UUID
+    audit_event_id: UUID
+    idempotency_key: UUID
+
+
+class ManualLocationComparison(BaseModel):
+    country_match: bool | None = None
+    state_match: bool | None = None
+    city_match: bool | None = None
+    postal_code_match: bool | None = None
+    provider_postal_code_present: bool | None = None
+    reverse_place_type: str | None = None
+    reverse_estimated_point_address: bool | None = None
+    reverse_precision_supported: bool | None = None
+    street_match: bool | None = None
+    street_decision_reason: str | None = None
+    address_number_state: str | None = None
+
+
+class ManualLocationHistory(BaseModel):
+    session_id: UUID
+    attempted_at: datetime
+    automatic_result: str
+    manual_review_status: str | None
+
+
+class ManualLocationQueueItem(BaseModel):
+    candidate_id: UUID
+    address_version_id: UUID
+    session_id: UUID
+    attempted_at: datetime
+    manual_review_status: str | None
+
+
+class ManualLocationQueue(BaseModel):
+    items: list[ManualLocationQueueItem]
+
+
+class ManualLocationDetail(ManualLocationQueueItem):
+    address_version: int
+    current_address_version: bool
+    pending_target_available: bool
+    approval_eligible: bool
+    gps_quality: str
+    accepted_sample_count: int | None
+    accuracy_m: float | None
+    candidate_count: int
+    candidate_comparisons: list[ManualLocationComparison]
+    automatic_result: str
+    automatic_failure_reason: str | None
+    document_status: str
+    prior_attempt_count: int
+    history: list[ManualLocationHistory]
+    resolutions: list[ManualLocationResolution]
+
+
 class LocationChallenge(BaseModel):
     session_id: UUID
     challenge: str = Field(repr=False)
@@ -100,7 +170,11 @@ class PermanentAddressState(BaseModel):
     geocode_status: str = "NOT_STARTED"
     geocode_quality: str | None = None
     target_confirmation_required: bool = False
-    target_source: Literal["provider_geocode", "onsite_confirmation"] | None = None
+    target_source: (
+        Literal["provider_geocode", "onsite_confirmation", "onsite_confirmation_manual_review"]
+        | None
+    ) = None
+    manual_review_status: str | None = None
     successful_gps_checks: int = 0
     required_gps_checks: int = 3
     today_complete: bool = False
