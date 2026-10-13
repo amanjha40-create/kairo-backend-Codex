@@ -10,11 +10,102 @@ from app.services.permanent_address_quality import (
     street_normalize,
 )
 
+_REVERSE_PLACE_TYPES = frozenset(
+    {
+        "Locality",
+        "Intersection",
+        "Street",
+        "PointAddress",
+        "InterpolatedAddress",
+        "SecondaryAddress",
+        "PointOfInterest",
+    }
+)
+
+
+def _diagnostics(claimed, items, checks=None, street="unavailable", number="unavailable"):
+    """Internal flags only; never retain provider strings or location values."""
+    item = items[0] if items else {}
+    address = item.get("Address") or {}
+    place_type = item.get("PlaceType")
+    estimated = item.get("EstimatedPointAddress")
+    supported_type = place_type in {"PointAddress", "InterpolatedAddress"}
+    estimated_rejected = bool(item.get("EstimatedPointAddress", False))
+    if not items:
+        precision_reason = "no_result"
+    elif not supported_type and estimated_rejected:
+        precision_reason = "unsupported_place_type_and_estimated"
+    elif not supported_type:
+        precision_reason = "unsupported_place_type"
+    elif estimated_rejected:
+        precision_reason = "estimated_point_address"
+    else:
+        precision_reason = "supported"
+    raw_street = address.get("Street")
+    normalized_street = street_normalize(raw_street)
+    lines = [street_normalize(claimed.get(k)) for k in ("address_line_1", "address_line_2")]
+    matches = [
+        bool(
+            isinstance(raw_street, str)
+            and normalized_street
+            and f" {normalized_street} " in f" {line} "
+        )
+        for line in lines
+    ]
+    checks = checks or {}
+    return {
+        "reverse_result_present": bool(items),
+        "reverse_result_count": len(items),
+        "reverse_place_type": (
+            place_type
+            if isinstance(place_type, str) and place_type in _REVERSE_PLACE_TYPES
+            else "missing"
+            if place_type is None
+            else "other"
+        ),
+        "reverse_estimated_point_address": estimated if type(estimated) is bool else None,
+        "reverse_estimated_point_address_valid": estimated is None or type(estimated) is bool,
+        "reverse_precision_supported": bool(items) and supported_type and not estimated_rejected,
+        "reverse_precision_decision_reason": precision_reason,
+        **{
+            "provider_" + label + "_present": bool(address.get(field))
+            for label, field in (
+                ("country", "Country"),
+                ("state", "Region"),
+                ("city", "Locality"),
+                ("postal_code", "PostalCode"),
+                ("address_number", "AddressNumber"),
+            )
+        },
+        "provider_street_present": raw_street is not None
+        and not (isinstance(raw_street, str) and not raw_street.strip()),
+        "country_match": checks.get("country"),
+        "state_match": checks.get("state"),
+        "city_match": checks.get("city"),
+        "postal_code_match": checks.get("pin"),
+        "street_match": street == "matched",
+        "address_number_state": number,
+        "claimed_line1_normalized_nonempty": bool(lines[0]),
+        "claimed_line2_normalized_nonempty": bool(lines[1]),
+        "provider_street_normalized_nonempty": bool(normalized_street),
+        "street_phrase_match_line1": matches[0],
+        "street_phrase_match_line2": matches[1],
+        "street_decision_reason": {
+            "unavailable": "street_unavailable",
+            "matched": "street_exact_normalized_phrase_match",
+            "conflict": "street_text_present_but_no_contiguous_phrase_match",
+        }[street],
+    }
+
 
 def area_decision(claimed, items):
     # Use the closest result, never search for a more convenient matching address.
     if not items:
-        return {"accepted": False, "reason": "no_result"}
+        return {
+            "accepted": False,
+            "reason": "no_result",
+            "diagnostics": _diagnostics(claimed, items),
+        }
     item = items[0]
     address = item.get("Address") or {}
     country = address.get("Country") or {}
@@ -90,6 +181,7 @@ def area_decision(claimed, items):
         "street_status": street,
         "number_status": number_status,
         "policy": "india-onsite-v1",
+        "diagnostics": _diagnostics(claimed, items, checks, street, number_status),
     }
 
 
