@@ -146,6 +146,7 @@ async def manager_decline(token: str, svc: Service):
 
 PAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+    "img-src data:; font-src data:; "
     "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 }
 
@@ -159,7 +160,9 @@ async def manager_link_error(request: Request, exc: AppException):
     return HTMLResponse(
         render_manager_result(
             "This reference link is no longer available. "
-            "The link may be invalid, expired, revoked, or already completed."
+            "The link may be invalid, expired, revoked, or already completed.",
+            title="Reference link unavailable",
+            error=True,
         ),
         status_code=error.status_code,
         headers=headers,
@@ -210,7 +213,9 @@ async def manager_form(token: str, request: Request, svc: Service):
         return HTMLResponse(
             render_manager_result(
                 "Please check the dates, ratings and confirmation. "
-                "Use your browser's Back button to correct the form."
+                "Use your browser's Back button to correct the form.",
+                title="Check your response",
+                error=True,
             ),
             status_code=422,
             headers=PAGE_HEADERS,

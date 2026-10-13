@@ -759,7 +759,7 @@ async def test_manager_valid_browser_submission_and_completed_state_unchanged(ca
         ) as client:
             path = f"/api/v1/public/manager-references/{token}"
             page = await client.get(path + "/page")
-            assert page.status_code == 200 and "A short professional reference" in page.text
+            assert page.status_code == 200 and "Professional reference" in page.text
             assert "action='respond-form'" in page.text
             assert token not in page.text
             data = response().model_dump(mode="json", exclude_none=True)
@@ -767,10 +767,12 @@ async def test_manager_valid_browser_submission_and_completed_state_unchanged(ca
             result = await client.post(path + "/respond-form", data=data)
             assert result.status_code == 200
             assert "Thank you. Your response has been recorded." in result.text
+            assert "Reference submitted" in result.text and 'role="status"' in result.text
             assert row.status == "completed"
             page = await client.get(path + "/page")
             assert page.status_code == 200
             assert "Your response has already been recorded." in page.text
+            assert "Reference already submitted" in page.text
             assert "<form" not in page.text and token not in page.text
             assert page.headers["content-type"].startswith("text/html")
             context = await client.get(path)
