@@ -89,6 +89,10 @@ class AddressDocumentMixin:
     async def document_state(self, owner, version_id):
         self.require_enabled()
         row = await self.active(owner, version_id)
+        return await self.document_state_for_version(row)
+
+    async def document_state_for_version(self, row):
+        """Shared read projection; caller establishes owner/version authorization."""
         latest = await self.db.scalar(
             select(Evidence)
             .where(Evidence.address_version_id == row.id)

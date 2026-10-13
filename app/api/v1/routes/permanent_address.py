@@ -3,14 +3,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import CurrentUser, get_current_user, require_permission
 from app.config import Settings, get_settings
 from app.core.permissions import Permission
-from app.db.session import get_session
+from app.db.session import engine, get_session
 from app.exceptions import ForbiddenError
 from app.schemas.permanent_address import (
     AddressDocumentCompleteInput,
@@ -34,6 +34,8 @@ from app.schemas.permanent_address import (
     PermanentAddressInput,
     PermanentAddressState,
 )
+from app.schemas.permanent_address_admin import AdminAddressDetail, AdminAddressDiscovery
+from app.services.permanent_address_admin import PermanentAddressAdminRead
 from app.services.permanent_address_service import PermanentAddressService
 
 
@@ -64,6 +66,44 @@ def candidate(current: Annotated[CurrentUser, Depends(get_current_user)]):
 Candidate = Annotated[CurrentUser, Depends(candidate)]
 Service = Annotated[PermanentAddressService, Depends(service)]
 Reviewer = Annotated[CurrentUser, Depends(require_permission(Permission.REVIEW_VERIFICATION))]
+
+
+async def admin_read_service(settings: Annotated[Settings, Depends(get_settings)]):
+    # One consistent, database-enforced read-only snapshot, separate from auth.
+    async with engine.connect() as connection:
+        await connection.execution_options(
+            isolation_level="REPEATABLE READ", postgresql_readonly=True
+        )
+        async with AsyncSession(bind=connection, autoflush=False) as db:
+            yield PermanentAddressService(db, settings)
+
+
+AdminReadService = Annotated[PermanentAddressService, Depends(admin_read_service)]
+
+
+@router.get("/admin/reviews", response_model=AdminAddressDiscovery)
+async def admin_address_discovery(
+    reviewer: Reviewer,
+    svc: AdminReadService,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    candidate_id: UUID | None = None,
+):
+    return await PermanentAddressAdminRead(svc).discover(
+        reviewer.id, limit=limit, offset=offset, candidate_id=candidate_id
+    )
+
+
+@router.get("/admin/candidates/{candidate_id}", response_model=AdminAddressDetail)
+async def admin_address_detail(
+    candidate_id: UUID,
+    reviewer: Reviewer,
+    svc: AdminReadService,
+    address_version_id: UUID | None = None,
+):
+    return await PermanentAddressAdminRead(svc).detail(
+        reviewer.id, candidate_id, address_version_id=address_version_id
+    )
 
 
 @router.get("", response_model=PermanentAddressState)
