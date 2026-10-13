@@ -50,6 +50,7 @@ from app.schemas.public_passport import (
     PublicPassportTrustScore,
 )
 from app.services.passport_sharing_policy import resolve_policy
+from app.services.address_document_privacy import private_address_document
 from app.services.trust_score_service import TrustScoreService
 from app.services.user_service import UserService
 
@@ -365,7 +366,7 @@ class PublicPassportService:
         if permissions.include_user_documents and show_documents:
             rows = (await self._session.execute(
                 select(UserDocument)
-                .where(UserDocument.user_id == user_id, UserDocument.deleted_at.is_(None))
+                .where(UserDocument.user_id == user_id, UserDocument.deleted_at.is_(None), ~private_address_document(UserDocument.id))
                 .order_by(UserDocument.created_at.desc())
             )).scalars().all()
             user_documents = [

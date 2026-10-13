@@ -13,6 +13,12 @@ from app.core.permissions import Permission
 from app.db.session import get_session
 from app.exceptions import ForbiddenError
 from app.schemas.permanent_address import (
+    AddressDocumentCompleteInput,
+    AddressDocumentReviewInput,
+    AddressDocumentState,
+    AddressDocumentSubmitInput,
+    AddressDocumentUploadInput,
+    AddressDocumentUploadResponse,
     AddressEvidenceInput,
     AddressReviewInput,
     LocationCancelInput,
@@ -78,6 +84,41 @@ async def evidence(payload: AddressEvidenceInput, current: Candidate, svc: Servi
 @router.get("/evidence")
 async def available_evidence(current: Candidate, svc: Service):
     return await svc.available_evidence(current.id)
+
+
+@router.get("/document-types")
+async def document_types(current: Candidate, svc: Service):
+    return svc.document_types()
+
+
+@router.get("/{version_id}/document", response_model=AddressDocumentState)
+async def document_state(version_id: UUID, current: Candidate, svc: Service):
+    return await svc.document_state(current.id, version_id)
+
+
+@router.post("/documents/upload-intent", response_model=AddressDocumentUploadResponse)
+async def document_upload(payload: AddressDocumentUploadInput, current: Candidate, svc: Service):
+    return await svc.upload_address_document(current.id, payload)
+
+
+@router.post("/documents/{document_id}/complete-upload", response_model=AddressDocumentState)
+async def document_complete(document_id: UUID, payload: AddressDocumentCompleteInput, current: Candidate, svc: Service):
+    return await svc.complete_address_document(current.id, document_id, payload)
+
+
+@router.post("/documents/submit", response_model=PermanentAddressState)
+async def document_submit(payload: AddressDocumentSubmitInput, current: Candidate, svc: Service):
+    return await svc.submit_address_document(current.id, payload)
+
+
+@router.get("/document-reviews/{version_id}")
+async def document_review_detail(version_id: UUID, reviewer: Reviewer, svc: Service):
+    return await svc.document_review_projection(reviewer.id, version_id)
+
+
+@router.post("/document-reviews/{version_id}/decision")
+async def document_decision(version_id: UUID, payload: AddressDocumentReviewInput, reviewer: Reviewer, svc: Service):
+    return await svc.decide_address_document(reviewer.id, version_id, payload)
 
 
 @router.get("/reviews")

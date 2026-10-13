@@ -235,6 +235,8 @@ async def case():
                 User(email=f"{uuid4()}@example.test", role="user", is_active=True) for _ in range(3)
             ]
             db.add_all(users)
+            users[2].role = "admin"
+            users[2].email_verified_at = NOW
             await db.flush()
             clock = [NOW]
             geocoder = FakeGeocoder()

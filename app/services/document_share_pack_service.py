@@ -21,6 +21,7 @@ from app.schemas.document_share_pack import (
 )
 from app.services.document_pack_sources import DocumentPackSources
 from app.services.document_pack_storage import DocumentPackStorage
+from app.services.address_document_privacy import private_address_document
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,9 @@ class DocumentSharePackService:
         pack = (await self.session.execute(query)).scalar_one_or_none()
         if pack is None or self.state(pack) != "active":
             raise NotFoundError("Document pack unavailable")
+        for item in pack.items:
+            if item.source_type == "vault" and await self.session.scalar(select(private_address_document(item.source_id))):
+                raise NotFoundError("Document pack unavailable")
         return pack
 
     async def recipient(self, token):

@@ -615,6 +615,9 @@ class Settings(BaseSettings):
 
     # --- DigiLocker credentials (independent of login/session secrets) ---
     permanent_address_enabled: bool = Field(default=False, validation_alias="PERMANENT_ADDRESS_ENABLED")
+    permanent_address_document_max_age_days: dict[str, int] = Field(
+        default_factory=dict, validation_alias="PERMANENT_ADDRESS_DOCUMENT_MAX_AGE_DAYS"
+    )
     permanent_address_key_id: str | None = Field(default=None, validation_alias="PERMANENT_ADDRESS_KEY_ID")
     permanent_address_keys: SecretStr | None = Field(default=None, repr=False, validation_alias="PERMANENT_ADDRESS_KEYS")
     permanent_address_monthly_geocode_limit: int = Field(default=100, ge=1, le=1000, validation_alias="PERMANENT_ADDRESS_MONTHLY_GEOCODE_LIMIT")

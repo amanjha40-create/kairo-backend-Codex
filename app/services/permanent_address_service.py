@@ -38,6 +38,7 @@ from app.models.user_account_event import UserAccountEvent
 from app.models.user_document import UserDocument
 from app.schemas.permanent_address import LocationChallenge, PermanentAddressState
 from app.services.document_pack_storage import DocumentPackStorage
+from app.services.permanent_address_documents import AddressDocumentMixin
 from app.services.permanent_address_geocoder import AmazonAddressGeocoder, TargetCipher
 from app.services.permanent_address_manual_review import (
     LOCKED_SOURCES,
@@ -64,7 +65,7 @@ from app.services.private_owner_guard import lock_private_owner
 ALLOWED_EVIDENCE = {"address_proof", "driving_license", "passport", "voter_id", "government_id"}
 
 
-class PermanentAddressService(ManualLocationReviewMixin):
+class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
     def __init__(self, session, settings, *, geocoder=None, clock=None, storage=None):
         self.db, self.settings = session, settings
         self.geocoder = geocoder or AmazonAddressGeocoder(
@@ -131,6 +132,10 @@ class PermanentAddressService(ManualLocationReviewMixin):
         ):
             return None
         try:
+            evidence = await self.document_record(doc.id)
+            if evidence and evidence.address_version_id != row.id:
+                return None
+            self.check_document_freshness(doc, evidence)
             if await self.document_binding(doc) != row.evidence_binding:
                 return None
         except (NotFoundError, ServiceUnavailableError, ValidationAppError):
@@ -274,6 +279,8 @@ class PermanentAddressService(ManualLocationReviewMixin):
             raise RateLimitError("Address lookup limit reached; try again later")
         budget.request_count += 1
         if previous:
+            if previous.document_id:
+                self.document_event(previous, previous.document_id, "approval_invalidated_by_address_edit")
             previous.invalidated_at = now
             previous.target_status = "superseded"
             attempts = (
@@ -353,6 +360,9 @@ class PermanentAddressService(ManualLocationReviewMixin):
             and row.evidence_binding == binding
         ):
             return await self.state(owner)
+        if row.completed_at or row.document_status == "MATCH":
+            raise ConflictError("The current address document is already approved")
+        await self.bind_address_document(row, doc, binding)
         row.document_id, row.document_checksum = doc.id, doc.checksum_sha256
         row.evidence_binding = binding
         # Current extractors do not certify structured addresses. A human review
@@ -363,7 +373,7 @@ class PermanentAddressService(ManualLocationReviewMixin):
         return await self.state(owner)
 
     async def review_queue(self, reviewer):
-        self.require_enabled()
+        await self.manual_actor(reviewer)
         rows = (
             await self.db.scalars(
                 select(Version)
@@ -383,7 +393,7 @@ class PermanentAddressService(ManualLocationReviewMixin):
         }
 
     async def review_detail(self, reviewer, version_id, *, content=False):
-        self.require_enabled()
+        await self.manual_actor(reviewer)
         row = await self.db.get(Version, version_id)
         if row is None or row.invalidated_at or row.user_id == reviewer:
             raise NotFoundError()
@@ -411,7 +421,7 @@ class PermanentAddressService(ManualLocationReviewMixin):
         return chunks, headers, doc.content_type
 
     async def review(self, reviewer, version_id, payload):
-        self.require_enabled()
+        await self.manual_actor(reviewer)
         row = await self.db.get(Version, version_id)
         if row is None:
             raise NotFoundError()
@@ -427,6 +437,10 @@ class PermanentAddressService(ManualLocationReviewMixin):
                 raise ValidationAppError("A reviewed structured document address is required")
             outcome = document_match(row.claimed_address, payload.observed_address.model_dump())
         row.document_status = outcome
+        evidence = await self.document_record(doc.id)
+        if evidence:
+            evidence.status = {"MATCH": "MATCH", "MISMATCH": "REJECTED", "NEEDS_REVIEW": "NEEDS_CORRECTION"}[outcome]
+        self.document_event(row, doc.id, "legacy_review_" + outcome.lower(), reviewer)
         row.completed_at = None
         self.db.add(
             Review(

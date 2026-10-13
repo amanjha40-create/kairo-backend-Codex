@@ -1,10 +1,12 @@
 """Owner-only address input and safe outcome DTOs; never serialize target points."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.user_document import UserDocumentUploadIntentRequest
 
 
 class StrictInput(BaseModel):
@@ -65,6 +67,50 @@ class AddressReviewInput(StrictInput):
     document_id: UUID
     outcome: Literal["MATCH", "MISMATCH", "NEEDS_REVIEW"]
     observed_address: PermanentAddressInput | None = None
+
+
+class AddressDocumentUploadInput(UserDocumentUploadIntentRequest):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    address_version_id: UUID
+    issued_on: date | None = None
+    document_number: None = None
+    replaces_document_id: None = None
+
+
+class AddressDocumentCompleteInput(StrictInput):
+    address_version_id: UUID
+    checksum_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class AddressDocumentSubmitInput(AddressEvidenceInput):
+    confirms_current_address: Literal[True]
+
+
+class AddressDocumentReviewInput(StrictInput):
+    document_id: UUID
+    idempotency_key: UUID
+    outcome: Literal[
+        "APPROVE_MATCHING", "REJECT", "REQUEST_CORRECTION", "REQUEST_DIFFERENT_DOCUMENT"
+    ]
+    inspected_document: Literal[True]
+    candidate_identity_matches: bool = False
+    document_acceptable: bool = False
+    address_matches: bool = False
+
+
+class AddressDocumentUploadResponse(BaseModel):
+    document_id: UUID
+    upload_url: str = Field(repr=False)
+    expires_in_seconds: int
+    headers_required: dict[str, str]
+
+
+class AddressDocumentState(BaseModel):
+    document_id: UUID | None = None
+    document_type: str | None = None
+    status: str = "REQUIRED"
+    uploaded_at: datetime | None = None
+    issued_on: date | None = None
 
 
 class LocationReviewResolutionInput(StrictInput):

@@ -103,6 +103,13 @@ class PermanentAddressSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class PermanentAddressReview(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "permanent_address_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "address_version_id",
+            "idempotency_key",
+            name="uq_permanent_address_reviews_address_version_id_idempotency_key",
+        ),
+    )
     address_version_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("permanent_address_versions.id", ondelete="CASCADE"),
@@ -116,6 +123,37 @@ class PermanentAddressReview(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     document_checksum: Mapped[str] = mapped_column(String(64))
     outcome: Mapped[str] = mapped_column(String(32))
+    idempotency_key: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    request_digest: Mapped[str | None] = mapped_column(String(64))
+
+
+class PermanentAddressDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Version-bound workflow only; canonical UserDocument owns the private file."""
+
+    __tablename__ = "permanent_address_documents"
+    __table_args__ = (
+        UniqueConstraint("document_id"),
+        CheckConstraint(
+            "status IN ('UPLOADING', 'UPLOADED', 'UNDER_REVIEW', 'MATCH', "
+            "'REJECTED', 'NEEDS_CORRECTION', 'SUPERSEDED')",
+            name="status_allowed",
+        ),
+    )
+    address_version_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("permanent_address_versions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("user_documents.id", ondelete="CASCADE"),
+    )
+    status: Mapped[str] = mapped_column(String(32))
+    upload_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    issued_on: Mapped[date | None] = mapped_column(Date)
+    binding: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class PermanentAddressGeocodeBudget(Base):

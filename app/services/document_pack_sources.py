@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.schemas.document_share_pack import SelectableDocument
 from app.services.document_pack_storage import DocumentPackStorage, ObjectBinding
+from app.services.address_document_privacy import private_address_document
 
 IDENTITY_LABELS = {
     "aadhaar": "Aadhaar",
@@ -55,6 +56,7 @@ class DocumentPackSources:
                 UserDocument.user_id == owner,
                 UserDocument.deleted_at.is_(None),
                 UserDocument.superseded_at.is_(None),
+                ~private_address_document(UserDocument.id),
                 ~exists().where(evidence.document_id == UserDocument.id),
             ),
             "employment": select(EmploymentDocument, Employment)
