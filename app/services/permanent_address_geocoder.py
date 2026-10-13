@@ -13,7 +13,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.exceptions import ServiceUnavailableError
 from app.integrations.digilocker.crypto import parse_keyring
-from app.services.permanent_address_onsite import area_decision
+from app.services.permanent_address_onsite import (
+    MAX_PRECISE_RESULTS,
+    PRECISE_PLACE_TYPES,
+    precise_area_decision,
+)
 from app.services.permanent_address_quality import (
     POLICY_VERSION,
     STREET_UNAVAILABLE_RADIUS_M,
@@ -114,7 +118,7 @@ class AmazonAddressGeocoder:
     async def confirm_area(self, address, representative):
         try:
             response = await asyncio.to_thread(self._reverse_request, representative)
-            return area_decision(address, response.get("ResultItems", []))
+            return precise_area_decision(address, response.get("ResultItems", []))
         except Exception:
             raise ServiceUnavailableError("Address area confirmation is unavailable") from None
 
@@ -128,7 +132,8 @@ class AmazonAddressGeocoder:
         return client.reverse_geocode(
             QueryPosition=[representative[1], representative[0]],
             QueryRadius=75,
-            MaxResults=1,
+            MaxResults=MAX_PRECISE_RESULTS,
+            Filter={"IncludePlaceTypes": list(PRECISE_PLACE_TYPES)},
             IntendedUse="SingleUse",
             Language="en",
         )

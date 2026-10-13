@@ -322,9 +322,12 @@ def test_provider_contract_one_send_no_forward_geocode(monkeypatch):
     client.reverse_geocode.assert_called_once_with(
         QueryPosition=[77.6, 12.3],
         QueryRadius=75,
-        MaxResults=1,
+        MaxResults=5,
+        Filter={"IncludePlaceTypes": ["PointAddress", "InterpolatedAddress"]},
         IntendedUse="SingleUse",
         Language="en",
     )
     assert factory.call_args.kwargs["config"].retries["total_max_attempts"] == 1
+    assert factory.call_args.kwargs["config"].connect_timeout == 3
+    assert factory.call_args.kwargs["config"].read_timeout == 10
     client.geocode.assert_not_called()

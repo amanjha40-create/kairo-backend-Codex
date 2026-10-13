@@ -21,6 +21,53 @@ _REVERSE_PLACE_TYPES = frozenset(
         "PointOfInterest",
     }
 )
+PRECISE_PLACE_TYPES = ("PointAddress", "InterpolatedAddress")
+MAX_PRECISE_RESULTS = 5
+
+
+def precise_area_decision(claimed, items):
+    """Apply unchanged per-address rules to a bounded, provider-ordered list."""
+    bounded = items[:MAX_PRECISE_RESULTS]
+    precise = [
+        (rank, item)
+        for rank, item in enumerate(bounded, start=1)
+        if item.get("PlaceType") in PRECISE_PLACE_TYPES
+    ]
+    evaluations = []
+    first_failure = None
+    selected = None
+    selected_rank = None
+    for rank, item in precise:
+        decision = area_decision(claimed, [item])
+        evaluations.append(
+            {
+                "provider_rank": rank,
+                **decision["diagnostics"],
+                "accepted": decision["accepted"],
+                "reason": decision["reason"],
+            }
+        )
+        if decision["accepted"]:
+            selected, selected_rank = decision, rank
+            break
+        if first_failure is None:
+            first_failure = decision
+    if selected is not None:
+        outcome = selected
+    elif first_failure is not None:
+        outcome = first_failure
+    else:
+        outcome = area_decision(claimed, [])
+        outcome["reason"] = "no_supported_precision_result"
+    outcome["diagnostics"] = {
+        **outcome["diagnostics"],
+        "bounded_result_count": len(bounded),
+        "precise_candidate_count": len(precise),
+        "evaluated_candidate_count": len(evaluations),
+        "selected_candidate_rank": selected_rank,
+        "candidate_evaluations": evaluations,
+    }
+    return outcome
 
 
 def _diagnostics(claimed, items, checks=None, street="unavailable", number="unavailable"):
@@ -99,7 +146,7 @@ def _diagnostics(claimed, items, checks=None, street="unavailable", number="unav
 
 
 def area_decision(claimed, items):
-    # Use the closest result, never search for a more convenient matching address.
+    # Single-candidate policy; provider-order selection is handled separately.
     if not items:
         return {
             "accepted": False,
