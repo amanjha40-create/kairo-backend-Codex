@@ -67,6 +67,18 @@ class AddressReviewInput(StrictInput):
     observed_address: PermanentAddressInput | None = None
 
 
+class LocationReviewResolutionInput(StrictInput):
+    candidate_id: UUID
+    resolution: Literal["retry_allowed"]
+
+
+class LocationReviewResolution(BaseModel):
+    resolution: Literal["retry_allowed"]
+    reviewed_at: datetime
+    reviewer_id: UUID
+    audit_event_id: UUID
+
+
 class LocationChallenge(BaseModel):
     session_id: UUID
     challenge: str = Field(repr=False)

@@ -18,6 +18,8 @@ from app.schemas.permanent_address import (
     LocationCancelInput,
     LocationChallenge,
     LocationCompleteInput,
+    LocationReviewResolution,
+    LocationReviewResolutionInput,
     LocationStartInput,
     PermanentAddressInput,
     PermanentAddressState,
@@ -110,3 +112,17 @@ async def cancel(session_id: UUID, payload: LocationCancelInput, current: Candid
 @router.post("/{version_id}/review")
 async def review(version_id: UUID, payload: AddressReviewInput, svc: Service, reviewer: Reviewer):
     return await svc.review(reviewer.id, version_id, payload)
+
+
+@router.post(
+    "/reviews/{version_id}/sessions/{session_id}/resolution",
+    response_model=LocationReviewResolution,
+)
+async def resolve_location_review(
+    version_id: UUID,
+    session_id: UUID,
+    payload: LocationReviewResolutionInput,
+    reviewer: Reviewer,
+    svc: Service,
+):
+    return await svc.resolve_location_review(reviewer.id, version_id, session_id, payload)

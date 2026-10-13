@@ -11,6 +11,8 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.constants import Role
+from app.core.permissions import Permission, has_permission
 from app.exceptions import (
     ConflictError,
     ForbiddenError,
@@ -31,6 +33,8 @@ from app.models.permanent_address import (
 from app.models.permanent_address import (
     PermanentAddressVersion as Version,
 )
+from app.models.user import User
+from app.models.user_account_event import UserAccountEvent
 from app.models.user_document import UserDocument
 from app.schemas.permanent_address import LocationChallenge, PermanentAddressState
 from app.services.document_pack_storage import DocumentPackStorage
@@ -429,6 +433,83 @@ class PermanentAddressService:
             row.completed_at = now
         await self.db.commit()
         return {"document_status": outcome}
+
+    async def resolve_location_review(self, reviewer, version_id, session_id, payload):
+        self.require_enabled()
+        actor = await self.db.get(User, reviewer)
+        if (
+            actor is None
+            or not actor.is_active
+            or actor.email_verified_at is None
+            or actor.role not in {Role.ADMIN, Role.SUPERADMIN}
+            or not has_permission(actor.role, Permission.REVIEW_VERIFICATION)
+        ):
+            raise ForbiddenError("Authorized review access required")
+        if reviewer == payload.candidate_id:
+            raise ForbiddenError("Self-review is not permitted")
+        row = await self.active(payload.candidate_id, version_id)
+        await self.db.refresh(row)
+        attempt = await self.db.scalar(
+            select(Session)
+            .where(Session.id == session_id, Session.address_version_id == row.id)
+            .execution_options(populate_existing=True)
+        )
+        if attempt is None:
+            raise NotFoundError()
+        if attempt.result != "NEEDS_REVIEW" or attempt.completed_at is None:
+            raise ConflictError("This location attempt is not reviewable")
+        evidence = attempt.derived_evidence or {}
+        previous = evidence.get("review_resolution")
+        if previous is not None:
+            # Replay acknowledges the original disposition; it never rearms a later attempt.
+            if previous.get("resolution") != payload.resolution:
+                raise ConflictError("This location review is already resolved")
+            return previous
+        history = await self.sessions(row)
+        if (
+            payload.resolution != "retry_allowed"
+            or not history
+            or history[-1].id != attempt.id
+            or attempt.cycle != row.cycle
+            or any(s.counted_day or s.result == "CHECKING" for s in history)
+            or row.completed_at
+            or row.target_confirmed_at
+            or row.target_source != "provider_geocode"
+            or row.target_status != "needs_review"
+            or row.geocode_status != "READY"
+            or not row.target_encrypted
+            or row.claimed_address.get("country") != "IN"
+        ):
+            raise ConflictError("The current address is not eligible for this review resolution")
+        now, event_id = self.clock(), uuid4()
+        resolution = {
+            "resolution": "retry_allowed",
+            "reviewed_at": now.isoformat(),
+            "reviewer_id": str(reviewer),
+            "audit_event_id": str(event_id),
+        }
+        attempt.derived_evidence = {**evidence, "review_resolution": resolution}
+        row.target_status = "confirmation_required"
+        row.target_confirmation_reason = "reviewed_provider_discrepancy"
+        self.db.add(
+            UserAccountEvent(
+                id=event_id,
+                user_id=row.user_id,
+                actor_user_id=reviewer,
+                actor_role=actor.role,
+                event_type="permanent_address_retry_allowed",
+                title="Manual location review resolved - retry allowed",
+                metadata_payload={
+                    "address_version_id": str(row.id),
+                    "session_id": str(attempt.id),
+                    "resolution": "retry_allowed",
+                    "previous_result": "NEEDS_REVIEW",
+                },
+                created_at=now,
+            )
+        )
+        await self.db.commit()
+        return resolution
 
     async def start(self, owner, version_id):
         self.require_enabled()
