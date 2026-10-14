@@ -44,12 +44,17 @@ def completion_page(settings, outcome: str) -> HTMLResponse:
         else ""
     )
     # A session-scoped iOS return, never an OAuth credential or connection assertion.
-    # Keep this additive and Staging-only; Production needs its own explicit approval.
+    # Only explicitly supported environments receive an iOS auth-session return.
+    # Never derive a scheme from request input or fall back across environments.
+    iphone_scheme = {
+        "staging": "com.kairoid.staging.digilocker",
+        "production": "com.kairoid.digilocker",
+    }.get(settings.app_env.value)
     iphone_action = (
-        '<p><a class="action" href="com.kairoid.staging.digilocker://complete?result='
+        f'<p><a class="action" href="{iphone_scheme}://complete?result='
         + outcome
         + '">Return to KairoID on iPhone</a></p>'
-        if settings.app_env.value == "staging"
+        if iphone_scheme is not None
         else ""
     )
     body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
