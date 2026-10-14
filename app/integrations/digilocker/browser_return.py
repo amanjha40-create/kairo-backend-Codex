@@ -21,7 +21,7 @@ def completion_page(settings, outcome: str) -> HTMLResponse:
     origin = urlsplit(settings.digilocker_redirect_uri or "")
     # The destination comes only from validated server configuration, never Host or input.
     host = origin.netloc
-    package = "com.kairo.app.staging" if settings.app_env.value == "staging" else "com.kairo.app"
+    package = "com.kairo.app.staging" if settings.app_env.value == "staging" else "com.kairoid.app"
     intent = f"intent://{host}{COMPLETE_PATH}?digilocker_result={outcome}#Intent;scheme=https;package={package};end"
     title = "Return to KairoID" if outcome == "connected" else "Couldn't connect DigiLocker"
     message = (

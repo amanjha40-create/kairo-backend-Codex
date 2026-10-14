@@ -23,7 +23,7 @@ def test_iphone_return_is_fixed_staging_only_and_preserves_other_actions(outcome
     else:
         assert "com.kairoid.staging.digilocker" not in html
         assert "on iPhone" not in html
-    package = "com.kairo.app.staging" if environment == "staging" else "com.kairo.app"
+    package = "com.kairo.app.staging" if environment == "staging" else "com.kairoid.app"
     assert f"package={package};end" in html
     assert "intent://staging-api.example.invalid/" in html
     assert "Continue in KairoID web" in html
