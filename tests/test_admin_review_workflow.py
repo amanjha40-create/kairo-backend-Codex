@@ -28,14 +28,14 @@ from app.schemas.admin_review_workflow import (
     AdminReviewTimelineResponse,
     AdminReviewWorkflowEnvelope,
     AdminVerificationContactReviewRequest,
+    AdminVerificationTimelineEventResponse as VerificationRequestTimelineEventResponse,
+    AdminVerificationTimelineResponse as VerificationRequestTimelineResponse,
 )
 from app.schemas.pagination import ListQueryParams
 from app.schemas.verification_request import (
     VerificationRequestCorrectionResponse,
     VerificationRequestEvidenceResponse,
     VerificationRequestResponse,
-    VerificationRequestTimelineEventResponse,
-    VerificationRequestTimelineResponse,
 )
 from app.services.verification_request_admin_review_service import (
     VerificationRequestAdminReviewService,

@@ -21,6 +21,7 @@ from app.schemas.verification_request import (
     VerificationRequestEvidenceResponse,
     VerificationRequestPriorityRequest,
     VerificationRequestResponse,
+    VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
 from app.verification_requests.enums import VerificationContactReviewStatus
@@ -161,6 +162,17 @@ class AdminReviewFinalizationRequest(AdminReviewDecisionRequest):
     outcome: Literal["verified", "rejected", "unable_to_verify"]
 
 
+class AdminReviewDirectConfirmationRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    confirmation_method: Literal["phone", "email", "video_call", "in_person", "other"]
+    confirmed_by: str = Field(min_length=1, max_length=255)
+    verifier_role: str = Field(min_length=1, max_length=255)
+    contact_detail_used: str = Field(min_length=1, max_length=320)
+    confirmation_outcome: Literal["details_confirmed", "details_confirmed_with_discrepancy"]
+    internal_note: str = Field(min_length=1, max_length=5000)
+
+
 class AdminReviewClarificationResponseRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -273,5 +285,14 @@ class AdminReviewWorkflowEnvelope(BaseModel):
     review: AdminReviewCycleResponse
 
 
+class AdminVerificationTimelineEventResponse(VerificationRequestTimelineEventResponse):
+    actor_display_name: str | None = None
+    actor_email: str | None = None
+
+
+class AdminVerificationTimelineResponse(VerificationRequestTimelineResponse):
+    items: list[AdminVerificationTimelineEventResponse]
+
+
 class AdminReviewTimelineResponse(BaseModel):
-    timeline: VerificationRequestTimelineResponse
+    timeline: AdminVerificationTimelineResponse

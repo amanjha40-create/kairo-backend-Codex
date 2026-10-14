@@ -30,6 +30,7 @@ from app.schemas.admin_review_workflow import (
     AdminReviewCorrectionRequest,
     AdminReviewDecisionRequest,
     AdminReviewDetailResponse,
+    AdminReviewDirectConfirmationRequest,
     AdminReviewFinalizationRequest,
     AdminReviewNoteCreateRequest,
     AdminReviewNoteResponse,
@@ -58,6 +59,16 @@ from app.services.verification_request_admin_review_service import (
 )
 
 router = APIRouter(prefix="/admin/verification-requests", tags=["admin-review-workflow"])
+
+
+@router.post("/{verification_request_public_id}/direct-confirmation", response_model=VerificationRequestResponse)
+async def direct_confirm_admin_review(
+    verification_request_public_id: UUID,
+    payload: AdminReviewDirectConfirmationRequest,
+    reviewer: Annotated[CurrentUser, Depends(require_finalizer)],
+    svc: Annotated[VerificationRequestAdminReviewService, Depends(get_verification_request_admin_review_service)],
+) -> VerificationRequestResponse:
+    return await svc.direct_confirm(reviewer.id, verification_request_public_id, payload)
 
 
 @router.post(
