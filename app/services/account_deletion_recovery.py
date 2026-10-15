@@ -19,10 +19,30 @@ CATEGORIES = {
     "legacy_evidence_unresolved",
 }
 RELEASE_ACTION = "account_deletion_storage_review_released"
+# Reserved recovery namespace from the original operator CLI (0x4B414D452C99454C).
+# Retain the identity so older session-lock operators also exclude new dry-runs.
+LOCK_ID = 5422700385827112268
 
 
 class RecoveryRefused(Exception):
     """Only fixed, non-sensitive reason codes may cross the CLI boundary."""
+
+
+class ReconciliationOverlap(RecoveryRefused):
+    """A competing reconciliation/recovery owns the shared lock."""
+
+
+async def begin_readonly(session):
+    await session.execute(text("SET TRANSACTION READ ONLY"))
+    if await session.scalar(text("SHOW transaction_read_only")) != "on":
+        raise RecoveryRefused("read_only_not_confirmed")
+    await session.execute(text("SET LOCAL statement_timeout = '5s'"))
+    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+
+
+async def acquire_reconciliation_lock(session):
+    if not await session.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": LOCK_ID}):
+        raise ReconciliationOverlap("another_recovery_running")
 
 
 def safe_category(value):
@@ -34,17 +54,17 @@ def validate_bounds(limit, older_than):
         raise RecoveryRefused("invalid_bounds")
 
 
-async def audit_recovery(session, *, limit=1, older_than=0, deletion_id=None, now=None):
+async def audit_recovery(
+    session, *, limit=1, older_than=0, deletion_id=None, now=None, acquire_lock=False
+):
     validate_bounds(limit, older_than)
     if session.in_transaction():
         raise RecoveryRefused("fresh_session_required")
     now = now or datetime.now(UTC)
     try:
-        await session.execute(text("SET TRANSACTION READ ONLY"))
-        if await session.scalar(text("SHOW transaction_read_only")) != "on":
-            raise RecoveryRefused("read_only_not_confirmed")
-        await session.execute(text("SET LOCAL statement_timeout = '5s'"))
-        await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+        await begin_readonly(session)
+        if acquire_lock:
+            await acquire_reconciliation_lock(session)
         statuses = dict(
             (
                 await session.execute(
