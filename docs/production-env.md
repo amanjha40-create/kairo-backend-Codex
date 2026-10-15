@@ -77,7 +77,10 @@ SIGNUP_OTP_MAX_SENDS_PER_HOUR=5
 SIGNUP_PENDING_TTL_HOURS=24
 
 APP_PUBLIC_BASE_URL=https://api.kairoid.com
-EMPLOYER_PORTAL_BASE_URL=https://app.kairoid.com
+CANDIDATE_PORTAL_BASE_URL=https://app.kairoid.com
+EMPLOYER_PORTAL_BASE_URL=https://hr.kairoid.com
+DOCUMENT_PACK_PUBLIC_BASE_URL=https://app.kairoid.com
+MANAGER_REFERENCE_PUBLIC_BASE_URL=https://api.kairoid.com
 INSTITUTION_PORTAL_BASE_URL=https://institution.kairoid.com
 ADMIN_PORTAL_BASE_URL=https://admin.kairoid.com
 EMPLOYER_VERIFICATION_TOKEN_TTL_HOURS=168
@@ -100,8 +103,19 @@ SQS_MAIN_QUEUE_URL=<production-main-queue-url>
 
 ## Variables That Must Point to HTTPS Hosts
 
+Document Packs never inherit the employer origin. Production requires an explicit
+`DOCUMENT_PACK_PUBLIC_BASE_URL` matching `CANDIDATE_PORTAL_BASE_URL`, distinct from
+HR/employer origins. Staging pack creation also requires the dedicated setting;
+before deploying this RC there, preserve the certified recipient host with
+`DOCUMENT_PACK_PUBLIC_BASE_URL=https://d3kpvsn9kfajzc.cloudfront.net`.
+The HR and manager origins remain separate. No environment update is implied by
+this documentation. Missing staging configuration fails before pack persistence.
+Only test/development may fall back to Candidate or app-public origin.
+
 - `APP_PUBLIC_BASE_URL`
 - `EMPLOYER_PORTAL_BASE_URL`
+- `DOCUMENT_PACK_PUBLIC_BASE_URL` (required; must match Candidate, never HR or Staging)
+- `MANAGER_REFERENCE_PUBLIC_BASE_URL` (API-hosted HTML, not the HR frontend)
 - `INSTITUTION_PORTAL_BASE_URL`
 - any production web app origin included in `CORS_ORIGINS`
 - any production OAuth redirect targets

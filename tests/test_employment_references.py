@@ -137,10 +137,26 @@ async def invited(case):
     assert result["delivery_status"] == "sent"
     message = case.svc.provider.send.call_args.args[0]
     match = re.search(
-        r"https://api.example.test/api/v1/public/manager-references/([^/]+)/page", message.text_body
+        re.escape(case.svc.settings.manager_reference_public_base_url)
+        + r"/api/v1/public/manager-references/([^/]+)/page", message.text_body
     )
     assert match
     return row, payload, match.group(1)
+
+
+async def test_manager_origin_remains_independent(case, caplog):
+    case.svc.settings = case.svc.settings.model_copy(update={
+        "employer_portal_base_url": "https://hr.kairoid.com",
+        "document_pack_public_base_url": "https://app.kairoid.com",
+        "manager_reference_public_base_url": "https://api.kairoid.com",
+    })
+    _, _, token = await invited(case)
+    message = case.svc.provider.send.call_args.args[0]
+    expected = f"https://api.kairoid.com/api/v1/public/manager-references/{token}/page"
+    assert expected in message.text_body
+    assert "https://app.kairoid.com" not in message.text_body
+    assert "https://hr.kairoid.com" not in message.text_body
+    assert token not in caplog.text
 
 
 def response(**overrides):
@@ -453,7 +469,13 @@ async def test_hr_correction_rechecks_distinct_identity(case, email_source):
     assert error.value.code == "reference_identity_conflict"
 
 
-async def test_renew_expired_hr_capability_preserves_factual_decision(case):
+@pytest.mark.parametrize("pack_origin", ["https://app.kairoid.com", "https://candidate.example.test"])
+async def test_renew_expired_hr_capability_preserves_factual_decision(case, pack_origin):
+    case.svc.settings = case.svc.settings.model_copy(update={
+        "employer_portal_base_url": "https://hr.kairoid.com/",
+        "document_pack_public_base_url": pack_origin,
+        "manager_reference_public_base_url": "https://api.kairoid.com",
+    })
     old, _, manager_token = await invited(case)
     case.hr.expires_at = datetime.now(UTC) - timedelta(days=1)
     case.hr.remarks = "Original factual response"
@@ -467,6 +489,8 @@ async def test_renew_expired_hr_capability_preserves_factual_decision(case):
     assert (await case.svc.renew_hr_link(case.emp.id, payload))["delivery_status"] == "sent"
     message = case.svc.provider.send.call_args.args[0]
     token = re.search(r"/employer-verification/([^\s]+)", message.text_body).group(1)
+    assert f"https://hr.kairoid.com/employer-verification/{token}" in message.text_body
+    assert pack_origin not in message.text_body
     employer = EmployerVerificationService(case.db, case.svc.settings)
     with pytest.raises(NotFoundError):
         await employer._load_portal_token_for_update(case.token)

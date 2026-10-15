@@ -467,6 +467,30 @@ class Settings(BaseSettings):
         description="Frontend origin used for employer verification magic links",
         validation_alias=AliasChoices("EMPLOYER_PORTAL_BASE_URL"),
     )
+    document_pack_public_base_url: str | None = Field(
+        default=None,
+        description="Candidate HTTPS origin for public Document Pack recipient links",
+        validation_alias=AliasChoices("DOCUMENT_PACK_PUBLIC_BASE_URL"),
+    )
+
+    @field_validator("document_pack_public_base_url")
+    @classmethod
+    def validate_document_pack_public_base_url(cls, value):
+        if value is not None:
+            try:
+                valid = (
+                    _is_https_origin(value)
+                    and urlparse(value).port is None
+                    and not any(char.isspace() or ord(char) < 32 for char in value)
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError(
+                    "DOCUMENT_PACK_PUBLIC_BASE_URL must be an HTTPS origin without a port"
+                )
+        return value.rstrip("/") if value else None
+
     institution_portal_base_url: str | None = Field(
         default=None,
         description="Frontend origin used for public institution verification magic links",
@@ -935,6 +959,27 @@ class Settings(BaseSettings):
             if self.hr_portal_base_url and not _is_https_origin(self.hr_portal_base_url):
                 raise ValueError(
                     "HR_PORTAL_BASE_URL must be an HTTPS origin in APP_ENV=production."
+                )
+            pack_origin = self.document_pack_public_base_url
+            candidate_origin = (self.candidate_portal_base_url or "").rstrip("/")
+            if not pack_origin or pack_origin != candidate_origin:
+                raise ValueError(
+                    "DOCUMENT_PACK_PUBLIC_BASE_URL must explicitly match "
+                    "CANDIDATE_PORTAL_BASE_URL in APP_ENV=production."
+                )
+            hr_origins = {
+                value.rstrip("/").lower()
+                for value in (self.employer_portal_base_url, self.hr_portal_base_url)
+                if value
+            }
+            hostname = urlparse(pack_origin).hostname or ""
+            if pack_origin.lower() in hr_origins or any(
+                label == "staging" or label.startswith("staging-") or label.endswith("-staging")
+                for label in hostname.split(".")
+            ):
+                raise ValueError(
+                    "DOCUMENT_PACK_PUBLIC_BASE_URL must not use an HR or Staging origin "
+                    "in APP_ENV=production."
                 )
             if not _is_https_origin(self.admin_portal_base_url):
                 raise ValueError(

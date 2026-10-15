@@ -22,6 +22,7 @@ def production_settings(**overrides: object) -> Settings:
         "aws_region": "us-east-1",
         "app_public_base_url": "https://api.kairoid.com",
         "candidate_portal_base_url": "https://candidate.example.com",
+        "document_pack_public_base_url": "https://candidate.example.com",
         "hr_portal_base_url": "https://hr.kairoid.com",
         "institution_portal_base_url": "https://institution.kairoid.com",
         "admin_portal_base_url": "https://admin.kairoid.com",
@@ -43,6 +44,47 @@ def test_explicit_production_dependencies_are_accepted() -> None:
 
     assert settings.app_env == "production"
     assert settings.runtime_database_url.startswith("postgresql+asyncpg://")
+
+
+def test_production_public_origin_ownership_matrix() -> None:
+    settings = production_settings(
+        employer_portal_base_url="https://hr.kairoid.com",
+        candidate_portal_base_url="https://app.kairoid.com/",
+        document_pack_public_base_url="https://app.kairoid.com/",
+        manager_reference_public_base_url="https://api.kairoid.com/",
+    )
+    assert settings.document_pack_public_base_url == "https://app.kairoid.com"
+    assert settings.employer_portal_base_url == "https://hr.kairoid.com"
+    assert settings.manager_reference_public_base_url == "https://api.kairoid.com"
+
+
+@pytest.mark.parametrize("origin", [
+    None, "", "http://candidate.example.com", "https://hr.kairoid.com",
+    "https://candidate.example.com/document-pack", "https://candidate.example.com//",
+    "https://candidate.example.com?token=synthetic", "https://candidate.example.com#token=synthetic",
+    "https://user:synthetic@candidate.example.com", "https://localhost",
+    "https://candidate.example.com:443", "https://candidate.example.com:invalid",
+    " https://candidate.example.com", "https://candidate.example.com\n",
+])
+def test_production_rejects_missing_or_wrong_pack_origin(origin):
+    with pytest.raises(ValidationError, match="DOCUMENT_PACK_PUBLIC_BASE_URL"):
+        production_settings(document_pack_public_base_url=origin)
+
+
+@pytest.mark.parametrize("origin", [
+    "https://staging.example.test", "https://candidate-staging.example.test",
+    "https://staging-candidate.example.test", "https://hr.kairoid.com",
+    "https://HR.KAIROID.COM",
+])
+def test_production_rejects_hr_or_staging_even_if_candidate_origin_is_misconfigured(origin):
+    with pytest.raises(ValidationError, match="DOCUMENT_PACK_PUBLIC_BASE_URL"):
+        production_settings(candidate_portal_base_url=origin, document_pack_public_base_url=origin)
+
+
+def test_document_pack_environment_alias(monkeypatch):
+    monkeypatch.setenv("DOCUMENT_PACK_PUBLIC_BASE_URL", "https://candidate.example.com/")
+    settings = Settings(app_env="test", _env_file=None)
+    assert settings.document_pack_public_base_url == "https://candidate.example.com"
 
 
 def test_msg91_production_phone_otp_is_accepted_when_fully_configured() -> None:

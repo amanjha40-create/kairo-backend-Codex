@@ -11,7 +11,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.exceptions import NotFoundError, ValidationAppError
+from app.exceptions import NotFoundError, ServiceUnavailableError, ValidationAppError
 from app.models import DocumentSharePack, DocumentSharePackItem, User
 from app.schemas.document_share_pack import (
     DocumentPackCreated,
@@ -61,6 +61,12 @@ class DocumentSharePackService:
     async def create(self, owner, payload):
         from app.services.private_owner_guard import lock_private_owner
 
+        origin = self.settings.document_pack_public_base_url
+        if not origin:
+            if self.settings.app_env in {"production", "staging"}:
+                raise ServiceUnavailableError("Document Pack sharing is not configured")
+            origin = self.settings.candidate_portal_base_url or self.settings.app_public_base_url
+        origin = origin.rstrip("/")
         await lock_private_owner(self.session, owner)
         now = datetime.now(UTC)
         token = secrets.token_urlsafe(32)
@@ -128,9 +134,6 @@ class DocumentSharePackService:
                     logger.error("document_pack.snapshot_cleanup_failed")
             raise
         # A fragment keeps the credential out of frontend hosting access logs and referrers.
-        origin = (
-            self.settings.employer_portal_base_url or self.settings.app_public_base_url
-        ).rstrip("/")
         return DocumentPackCreated(
             **self.response(pack).model_dump(), share_url=f"{origin}/document-pack#token={token}"
         )

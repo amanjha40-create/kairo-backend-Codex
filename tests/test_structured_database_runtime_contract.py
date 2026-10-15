@@ -95,6 +95,8 @@ def test_production_shape_accepts_structured_runtime_without_database_url() -> N
         phone_otp_backend="sns",
         aws_region="us-east-1",
         app_public_base_url="https://api.kairoid.com",
+        candidate_portal_base_url="https://app.kairoid.com",
+        document_pack_public_base_url="https://app.kairoid.com",
         admin_portal_base_url="https://admin.kairoid.com",
         cors_origins=["https://admin.kairoid.com"],
         docs_enabled=False,

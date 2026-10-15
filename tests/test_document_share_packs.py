@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.v1.routes.document_share_packs import service as service_dependency
 from app.config import Settings
-from app.exceptions import NotFoundError, ValidationAppError
+from app.exceptions import NotFoundError, ServiceUnavailableError, ValidationAppError
 from app.logging.request_redaction import redact_request_credentials
 from app.main import app
 from app.models import DocumentSharePack, User, UserDocument, Employment, VerificationRequest
@@ -80,7 +80,8 @@ async def setup(monkeypatch):
         jwt_secret_key="test-jwt-secret-key-32-chars-minimum!!",
         s3_documents_bucket="synthetic-private",
         s3_document_key_prefix="staging",
-        employer_portal_base_url="https://recipient.example.test",
+        employer_portal_base_url="https://hr.example.test",
+        document_pack_public_base_url="https://recipient.example.test",
     )
     storage = MemoryS3()
     monkeypatch.setattr("app.services.document_pack_storage.get_s3_client", lambda _: storage)
@@ -155,6 +156,85 @@ async def payload_for(ctx, *, count=1):
 
 def token_from(created):
     return parse_qs(urlsplit(created.share_url).fragment)["token"][0]
+
+
+@pytest.mark.parametrize("employer_origin", ["https://hr.kairoid.com", "https://other-hr.example.test"])
+@pytest.mark.parametrize("pack_origin", ["https://app.kairoid.com/", "https://candidate.example.test/"])
+async def test_document_pack_origin_split(setup, caplog, employer_origin, pack_origin):
+    from app.services.employer_verification_service import EmployerVerificationService
+
+    settings = Settings(
+        **{
+            **setup.settings.model_dump(),
+            "employer_portal_base_url": employer_origin + "/",
+            "document_pack_public_base_url": pack_origin,
+            "manager_reference_public_base_url": "https://api.kairoid.com",
+        }
+    )
+    svc = DocumentSharePackService(setup.session, settings)
+    created = await svc.create(setup.owner.id, await payload_for(setup))
+    token = token_from(created)
+    assert created.share_url == f"{pack_origin.rstrip('/')}/document-pack#token={token}"
+    assert not urlsplit(created.share_url).query
+    assert token not in caplog.text
+    employer = EmployerVerificationService(setup.session, settings)
+    assert employer._review_link("synthetic-hr-capability") == (
+        employer_origin + "/employer-verification/synthetic-hr-capability"
+    )
+    assert settings.manager_reference_public_base_url == "https://api.kairoid.com"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+async def test_missing_pack_origin_fails_before_owner_lock_or_persistence(
+    setup, monkeypatch, environment
+):
+    from unittest.mock import AsyncMock
+
+    owner_lock = AsyncMock()
+    monkeypatch.setattr("app.services.private_owner_guard.lock_private_owner", owner_lock)
+    settings = setup.settings.model_copy(
+        update={"app_env": environment, "document_pack_public_base_url": None}
+    )
+    svc = DocumentSharePackService(setup.session, settings)
+    snapshot = AsyncMock()
+    monkeypatch.setattr(svc.storage, "snapshot", snapshot)
+    with pytest.raises(ServiceUnavailableError):
+        await svc.create(setup.owner.id, await payload_for(setup))
+    owner_lock.assert_not_awaited()
+    snapshot.assert_not_awaited()
+    assert await setup.session.scalar(
+        select(func.count()).select_from(DocumentSharePack).where(
+            DocumentSharePack.owner_user_id == setup.owner.id
+        )
+    ) == 0
+
+
+@pytest.mark.parametrize("environment", ["test", "development"])
+async def test_local_fallback_is_candidate_not_employer(setup, environment):
+    settings = setup.settings.model_copy(update={
+        "app_env": environment,
+        "document_pack_public_base_url": None,
+        "candidate_portal_base_url": "https://local-candidate.example.test/",
+        "employer_portal_base_url": "https://wrong-hr.example.test",
+    })
+    created = await DocumentSharePackService(setup.session, settings).create(
+        setup.owner.id, await payload_for(setup)
+    )
+    assert created.share_url.startswith("https://local-candidate.example.test/document-pack#token=")
+
+
+async def test_explicit_staging_origin_preserves_certified_recipient_host(setup):
+    settings = setup.settings.model_copy(update={
+        "app_env": "staging",
+        "document_pack_public_base_url": "https://d3kpvsn9kfajzc.cloudfront.net",
+        "employer_portal_base_url": "https://hr-v1-finalization.d2lt5cu333z82d.amplifyapp.com",
+        "candidate_portal_base_url": "https://candidate-staging.d34cf2thrzkrsb.amplifyapp.com",
+    })
+    created = await DocumentSharePackService(setup.session, settings).create(
+        setup.owner.id, await payload_for(setup)
+    )
+    assert created.share_url.startswith("https://d3kpvsn9kfajzc.cloudfront.net/document-pack#token=")
+    assert "kairoid.com" not in created.share_url
 
 
 @pytest.mark.parametrize(
