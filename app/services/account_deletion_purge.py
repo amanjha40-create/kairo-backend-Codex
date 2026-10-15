@@ -141,7 +141,9 @@ def assert_owned_reference(request, item):
 
 
 @observe_sweep
-async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id=None, now=None):
+async def sweep_deletions(
+    session, settings, redis, *, storage=None, deletion_id=None, now=None, recovery_only=False
+):
     """Process one committed request. Caller must supply a fresh session.
 
     Row locks serialize duplicate deliveries. New discoveries are committed as
@@ -154,6 +156,8 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
     metrics = current_metrics()
     try:
         query = select(AccountDeletion).where(AccountDeletion.next_attempt_at <= now)
+        if recovery_only:
+            query = query.where(AccountDeletion.status.in_({"purge_pending", "purge_partial"}))
         if deletion_id is not None:
             query = query.where(AccountDeletion.id == deletion_id)
         request = await session.scalar(
@@ -175,6 +179,23 @@ async def sweep_deletions(session, settings, redis, *, storage=None, deletion_id
             ).all()
         )
         by_hash = {item.identity_hash: item for item in items}
+        if recovery_only:
+            # Recheck under the canonical row lock; a prior read-only audit is not authority.
+            if not owner_erased or not items or any(item.status == "review" for item in items):
+                raise UnsafeReference()
+            for item in items:
+                if item.status == "complete":
+                    continue
+                if item.kind == "otp" and isinstance(item.source_id, UUID):
+                    continue
+                if item.kind not in {"object", "namespace"}:
+                    raise UnsafeReference()
+                assert_owned_reference(request, item)
+                if (
+                    not request.storage_bucket
+                    or request.storage_bucket != settings.s3_documents_bucket
+                ):
+                    raise UnsafeReference()
         request.purge_started_at = request.purge_started_at or now
         request.last_error_category = None
         # Construct S3 lazily: OTP-only work and guarded malformed references need none.
