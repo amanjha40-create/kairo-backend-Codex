@@ -318,7 +318,7 @@ def test_provider_contract_one_send_no_forward_geocode(monkeypatch):
     client = Mock()
     factory = Mock(return_value=client)
     monkeypatch.setattr("app.services.permanent_address_geocoder.boto3.client", factory)
-    AmazonAddressGeocoder._reverse_request((12.3, 77.6))
+    AmazonAddressGeocoder()._reverse_request((12.3, 77.6))
     client.reverse_geocode.assert_called_once_with(
         QueryPosition=[77.6, 12.3],
         QueryRadius=75,

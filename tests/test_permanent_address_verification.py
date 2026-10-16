@@ -721,9 +721,12 @@ def test_test_clock_cannot_be_injected_into_live_service(environment):
         )
 
 
-def test_production_cannot_enable_v1():
+def test_production_cannot_enable_with_test_keyring():
+    from app.config.permanent_address import PermanentAddressConfigurationError
+
     svc = PermanentAddressService(None, settings().model_copy(update={"app_env": "production"}))
-    assert not svc.enabled()
+    with pytest.raises(PermanentAddressConfigurationError):
+        svc.enabled()
 
 
 @pytest.mark.asyncio

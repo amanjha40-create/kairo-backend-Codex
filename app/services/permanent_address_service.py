@@ -11,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.config.permanent_address import validate_configuration
 from app.core.constants import Role
 from app.core.permissions import Permission, has_permission
 from app.exceptions import (
@@ -69,6 +70,7 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
     def __init__(self, session, settings, *, geocoder=None, clock=None, storage=None):
         self.db, self.settings = session, settings
         self.geocoder = geocoder or AmazonAddressGeocoder(
+            region=settings.permanent_address_places_region,
             street_unavailable_radius_m=settings.permanent_address_street_unavailable_radius_m
         )
         self.storage = storage or DocumentPackStorage(settings)
@@ -77,10 +79,8 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
             raise ValueError("Test clock is unavailable outside tests")
 
     def enabled(self):
-        return self.settings.permanent_address_enabled and str(self.settings.app_env) in {
-            "test",
-            "staging",
-        }
+        validate_configuration(self.settings)
+        return self.settings.permanent_address_enabled
 
     def require_enabled(self):
         if not self.enabled():

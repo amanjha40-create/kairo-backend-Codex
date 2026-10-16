@@ -112,7 +112,8 @@ def query_text(address):
 
 
 class AmazonAddressGeocoder:
-    def __init__(self, *, street_unavailable_radius_m=STREET_UNAVAILABLE_RADIUS_M):
+    def __init__(self, *, region="us-east-1", street_unavailable_radius_m=STREET_UNAVAILABLE_RADIUS_M):
+        self.region = region
         self.street_unavailable_radius_m = street_unavailable_radius_m
 
     async def confirm_area(self, address, representative):
@@ -122,11 +123,10 @@ class AmazonAddressGeocoder:
         except Exception:
             raise ServiceUnavailableError("Address area confirmation is unavailable") from None
 
-    @staticmethod
-    def _reverse_request(representative):
+    def _reverse_request(self, representative):
         client = boto3.client(
             "geo-places",
-            region_name="us-east-1",
+            region_name=self.region,
             config=Config(connect_timeout=3, read_timeout=10, retries={"total_max_attempts": 1}),
         )
         return client.reverse_geocode(
@@ -169,11 +169,10 @@ class AmazonAddressGeocoder:
         except Exception:
             raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
 
-    @staticmethod
-    def _request(query, text):
+    def _request(self, query, text):
         client = boto3.client(
             "geo-places",
-            region_name="us-east-1",
+            region_name=self.region,
             config=Config(connect_timeout=5, read_timeout=15, retries={"total_max_attempts": 1}),
         )
         logger.info("permanent_address.geocode_request", extra={"request_count": 1})
