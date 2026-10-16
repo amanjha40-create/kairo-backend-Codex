@@ -19,8 +19,12 @@ class DigiLockerIdentityVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "provider_reference_fingerprint",
             name="uq_digilocker_identity_document",
         ),
-        CheckConstraint("document_type IN ('PANCR','DRVLC')", name="document_type"),
-        CheckConstraint("source = 'digilocker' AND source_type = 'issued_document'", name="source"),
+        CheckConstraint("document_type IN ('PANCR','DRVLC','EAADHAAR')", name="document_type"),
+        CheckConstraint(
+            "source = 'digilocker' AND ((document_type IN ('PANCR','DRVLC') "
+            "AND source_type = 'issued_document') OR "
+            "(document_type = 'EAADHAAR' AND source_type = 'eaadhaar'))", name="source"
+        ),
         CheckConstraint(
             "consent_purpose = 'identity_verification' AND consent_version = 'v1'", name="consent"
         ),

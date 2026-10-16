@@ -21,6 +21,7 @@ from app.models import (
 from app.schemas.document_share_pack import SelectableDocument
 from app.services.document_pack_storage import DocumentPackStorage, ObjectBinding
 from app.services.address_document_privacy import private_address_document
+from app.user_documents.privacy import display_filename
 
 IDENTITY_LABELS = {
     "aadhaar": "Aadhaar",
@@ -149,7 +150,7 @@ class DocumentPackSources:
             category=source.category,
             title=source.title[:512],
             context=source.context[:512] if source.context else None,
-            filename=source.row.original_filename,
+            filename=display_filename(source.row),
             content_type=binding.content_type,
             byte_size=binding.size,
         )

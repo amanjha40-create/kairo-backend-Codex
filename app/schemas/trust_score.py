@@ -35,7 +35,7 @@ class TrustScoreComponentBreakdown(BaseModel):
 
 class IdentityTrustSource(BaseModel):
     source: Literal["kairo", "digilocker"]
-    document_type: Literal["identity", "PANCR", "DRVLC"]
+    document_type: Literal["identity", "PANCR", "DRVLC", "EAADHAAR"]
     current: bool
     match_result: Literal["VERIFIED_MATCH", "PARTIAL_MATCH", "MISMATCH", "UNABLE_TO_VERIFY"]
     reason: Literal["NAME_MISMATCH", "DOB_MISMATCH", "NAME_AND_DOB_MISMATCH", "REQUIRED_FIELD_MISSING", "OTHER"] | None = None

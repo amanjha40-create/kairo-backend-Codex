@@ -369,11 +369,13 @@ class PublicPassportService:
                 .where(UserDocument.user_id == user_id, UserDocument.deleted_at.is_(None), ~private_address_document(UserDocument.id))
                 .order_by(UserDocument.created_at.desc())
             )).scalars().all()
+            from app.user_documents.privacy import display_filename
+
             user_documents = [
                 PublicPassportUserDocument(
                     id=row.id,
                     document_type=row.document_type,
-                    original_filename=row.original_filename,
+                    original_filename=display_filename(row),
                     byte_size=row.byte_size,
                     verification_status=row.verification_status,
                     expires_at=row.expires_at,

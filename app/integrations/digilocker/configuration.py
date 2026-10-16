@@ -57,6 +57,14 @@ def validate_configuration(settings):
             settings.digilocker_revoke_url,
         ):
             _url(value)
+        for field, path in (
+            ("digilocker_issued_documents_url", "/public/oauth2/2/files/issued"),
+            ("digilocker_user_details_url", "/public/oauth2/1/user"),
+            ("digilocker_eaadhaar_url", "/public/oauth2/2/xml/eaadhaar"),
+        ):
+            endpoint = _url(getattr(settings, field))
+            if endpoint.hostname != "digilocker.meripehchaan.gov.in" or endpoint.path != path:
+                raise ValueError()
         callback = _url(settings.digilocker_redirect_uri)
         if callback.path != settings.api_v1_prefix + "/integrations/digilocker/callback":
             raise ValueError()

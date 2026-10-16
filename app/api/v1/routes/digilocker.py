@@ -1,6 +1,6 @@
 """Requester OAuth lifecycle, with only safe connection metadata exposed to clients."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -17,6 +17,7 @@ from app.infrastructure.redis.deps import get_redis
 from app.integrations.digilocker.browser_return import browser_redirect, completion_page
 from app.schemas.trust_score import IdentityTrustResponse
 from app.services.digilocker_document_service import DigiLockerDocumentService
+from app.services.digilocker_eaadhaar_service import DigiLockerEAadhaarService
 from app.services.digilocker_identity_service import DigiLockerIdentityService
 from app.services.digilocker_service import DigiLockerService, flow_error
 
@@ -74,6 +75,62 @@ def get_identity_service(
 
 
 IdentityService = Annotated[DigiLockerIdentityService, Depends(get_identity_service)]
+
+
+def get_eaadhaar_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[Redis, Depends(get_redis)],
+):
+    return DigiLockerEAadhaarService(session, settings, redis)
+
+
+EAadhaarService = Annotated[DigiLockerEAadhaarService, Depends(get_eaadhaar_service)]
+
+
+class EAadhaarVerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    consent: StrictBool
+    consent_version: Literal["v1"]
+
+
+class EAadhaarAvailabilityResponse(BaseModel):
+    available: bool
+    entitlement_confirmed: Literal[False]
+
+
+class EAadhaarVerificationResponse(BaseModel):
+    id: str
+    source: Literal["digilocker"]
+    source_type: Literal["eaadhaar"]
+    document_type: Literal["EAADHAAR"]
+    integrity_result: Literal["verified"]
+    match_result: Literal["VERIFIED_MATCH", "PARTIAL_MATCH", "MISMATCH", "UNABLE_TO_VERIFY"]
+    match_reason: Literal[
+        "NAME_MISMATCH", "DOB_MISMATCH", "NAME_AND_DOB_MISMATCH", "REQUIRED_FIELD_MISSING", "OTHER"
+    ] | None
+    verified_at: datetime | None
+    document_valid_until: date | None
+    consent_purpose: Literal["identity_verification"]
+    consent_version: Literal["v1"]
+    consented_at: datetime
+    current: bool
+
+
+@router.get("/eaadhaar/availability", response_model=EAadhaarAvailabilityResponse)
+async def eaadhaar_availability(response: Response, user: Principal, service: EAadhaarService):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.availability(user.id)
+
+
+@router.post("/eaadhaar/verify", response_model=EAadhaarVerificationResponse)
+async def verify_eaadhaar(
+    body: EAadhaarVerificationRequest, response: Response, user: Principal, service: EAadhaarService
+):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.verify_aadhaar(
+        user.id, consent=body.consent, consent_version=body.consent_version
+    )
 
 
 class IdentityVerificationRequest(BaseModel):

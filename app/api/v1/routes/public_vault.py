@@ -237,11 +237,13 @@ async def get_public_vault(
         .order_by(UserDocument.created_at.desc())
     )).scalars().all()
 
+    from app.user_documents.privacy import display_filename
+
     user_documents = [
         PublicUserDoc(
             id=d.id,
             document_type=d.document_type,
-            original_filename=d.original_filename,
+            original_filename=display_filename(d),
             byte_size=d.byte_size,
             verification_status=d.verification_status,
         )

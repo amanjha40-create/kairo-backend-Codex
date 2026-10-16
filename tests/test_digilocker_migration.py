@@ -11,7 +11,7 @@ from app.models import DigiLockerConnection
 
 def test_bounded_migration_and_single_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["090"]
+    assert script.get_heads() == ["091"]
     revision = script.get_revision("080")
     assert revision.down_revision == "079"
     tree = ast.parse(Path(revision.path).read_text())
@@ -83,3 +83,26 @@ def test_083_only_widens_match_reason_constraint(monkeypatch):
         "drop_constraint",
         "create_check_constraint",
     }
+
+
+def test_091_changes_only_type_source_checks_and_refuses_lossy_downgrade(monkeypatch):
+    from unittest.mock import Mock
+    import pytest
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("091")
+    assert revision.down_revision == "090"
+    migration = revision.module
+    operations = Mock()
+    operations.f.side_effect = lambda name: name
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+    names = {c.args[0] for c in operations.drop_constraint.call_args_list}
+    assert names == {"ck_digilocker_identity_verifications_document_type", "ck_digilocker_identity_verifications_source"}
+    assert operations.create_check_constraint.call_count == 2
+    assert {c[0] for c in operations.mock_calls} == {"f", "drop_constraint", "create_check_constraint"}
+    operations.reset_mock()
+    operations.get_bind.return_value.execute.return_value.scalar.return_value = True
+    with pytest.raises(RuntimeError, match="Cannot downgrade 091"):
+        migration.downgrade()
+    operations.drop_constraint.assert_not_called()
+    operations.create_check_constraint.assert_not_called()
+    operations.execute.assert_called_once_with("LOCK TABLE digilocker_identity_verifications IN ACCESS EXCLUSIVE MODE")

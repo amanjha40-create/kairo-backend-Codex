@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.exceptions import NotFoundError
 from app.services.document_pack_storage import ALLOWED_MIME, DocumentPackStorage
+from app.user_documents.privacy import display_filename
 
 CONTENT_RESPONSES = {
     200: {
@@ -30,7 +31,7 @@ async def private_document_content(settings, document, *, completed: bool):
     binding = await storage.inspect(document.object_key)
     if binding.content_type != document.content_type or binding.size != document.byte_size:
         raise NotFoundError("Private document is unavailable")
-    filename = (document.original_filename or "document").replace("\\", "/").rsplit("/", 1)[-1]
+    filename = (display_filename(document) or "document").replace("\\", "/").rsplit("/", 1)[-1]
     filename = re.sub(r"[\x00-\x1f\x7f]", "", filename).strip()[:200] or "document"
     chunks, headers = await storage.open(
         SimpleNamespace(

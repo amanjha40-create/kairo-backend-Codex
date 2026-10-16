@@ -653,6 +653,24 @@ class Settings(BaseSettings):
     )
 
     digilocker_enabled: bool = Field(default=False, validation_alias="DIGILOCKER_ENABLED")
+    digilocker_eaadhaar_enabled: bool = Field(
+        default=False, validation_alias="DIGILOCKER_EAADHAAR_ENABLED"
+    )
+    digilocker_eaadhaar_entitlement_certified: bool = Field(
+        default=False, validation_alias="DIGILOCKER_EAADHAAR_ENTITLEMENT_CERTIFIED"
+    )
+    digilocker_issued_documents_url: str = Field(
+        default="https://digilocker.meripehchaan.gov.in/public/oauth2/2/files/issued",
+        validation_alias="DIGILOCKER_ISSUED_DOCUMENTS_URL",
+    )
+    digilocker_user_details_url: str = Field(
+        default="https://digilocker.meripehchaan.gov.in/public/oauth2/1/user",
+        validation_alias="DIGILOCKER_USER_DETAILS_URL",
+    )
+    digilocker_eaadhaar_url: str = Field(
+        default="https://digilocker.meripehchaan.gov.in/public/oauth2/2/xml/eaadhaar",
+        validation_alias="DIGILOCKER_EAADHAAR_URL",
+    )
     digilocker_client_id: str | None = Field(default=None, validation_alias="DIGILOCKER_CLIENT_ID")
     digilocker_client_secret: SecretStr | None = Field(
         default=None, repr=False, validation_alias="DIGILOCKER_CLIENT_SECRET"
@@ -698,6 +716,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_digilocker_encryption(self) -> Self:
+        if self.digilocker_eaadhaar_enabled and not self.digilocker_enabled:
+            raise ValueError("e-Aadhaar requires DigiLocker")
+        if (
+            self.app_env.value == "production"
+            and self.digilocker_eaadhaar_enabled
+            and not self.digilocker_eaadhaar_entitlement_certified
+        ):
+            raise ValueError("Production e-Aadhaar requires entitlement certification")
         if self.digilocker_enabled:
             from app.integrations.digilocker.crypto import parse_keyring
 

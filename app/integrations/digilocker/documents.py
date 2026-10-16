@@ -166,7 +166,7 @@ class DigiLockerDocuments:
                 asyncio.timeout(20),
                 client.stream(
                     "GET",
-                    (XML_URL if xml else FILE_URL) + uri if uri is not None else ISSUED_URL,
+                    (XML_URL if xml else FILE_URL) + uri if uri is not None else self.settings.digilocker_issued_documents_url,
                     headers={
                         "Authorization": "Bearer " + token.get_secret_value(),
                         "Accept-Encoding": "identity",

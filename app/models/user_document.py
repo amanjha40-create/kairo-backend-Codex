@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, Text, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,3 +67,14 @@ class UserDocument(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     def __repr__(self) -> str:
         return f"UserDocument(id={self.id}, type={self.document_type!r})"
+
+
+@event.listens_for(UserDocument, "before_insert")
+@event.listens_for(UserDocument, "before_update")
+def minimize_aadhaar_metadata(mapper, connection, target):
+    """ORM persistence guard; no Aadhaar number/extraction is needed for manual review."""
+    if target.document_type == "aadhaar":
+        target.document_number = None
+        target.extracted_payload = None
+        target.reviewer_note = None
+        target.original_filename = "aadhaar-document"

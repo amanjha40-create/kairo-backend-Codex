@@ -26,6 +26,9 @@ async def test_owner_proxy_and_legacy_metadata_never_return_storage_location(
     doc.content_type = mime
     doc.original_filename = "../private\\safe\r\nname.pdf"
     await c.session.commit()
+    # Simulate historical metadata without a write/backfill or ORM insert guard.
+    from sqlalchemy.orm.attributes import set_committed_value
+    set_committed_value(doc, "original_filename", "000000000000.pdf")
     original_head = c.storage.head_object
     monkeypatch.setattr(
         c.storage, "head_object", lambda **kw: {**original_head(**kw), "ContentType": mime}
@@ -48,7 +51,8 @@ async def test_owner_proxy_and_legacy_metadata_never_return_storage_location(
             assert "private" in response.headers["cache-control"]
             assert "sandbox" in response.headers["content-security-policy"]
             disposition = unquote(response.headers["content-disposition"])
-            assert "safename.pdf" in disposition
+            assert "aadhaar-document" in disposition
+            assert "private" not in disposition and "safename.pdf" not in disposition
             assert "\r" not in disposition and "\n" not in disposition and "../" not in disposition
             assert "location" not in response.headers
             metadata = await client.get(f"/api/v1/user-documents/{doc.id}/download-url")
@@ -63,6 +67,7 @@ async def test_owner_proxy_and_legacy_metadata_never_return_storage_location(
             assert doc.object_key not in safe_output
             assert c.settings.s3_documents_bucket not in safe_output
             assert "amazonaws.com" not in safe_output
+            assert "000000000000" not in safe_output
     finally:
         app.dependency_overrides.pop(get_user_document_service, None)
         app.dependency_overrides.pop(get_current_user, None)

@@ -66,17 +66,19 @@ class UserDocumentService:
                 raise NotFoundError("Document to replace is no longer current")
 
         document_id = uuid.uuid4()
+        is_aadhaar = payload.document_type.value == "aadhaar"
+        filename = "aadhaar-document" if is_aadhaar else payload.original_filename
         prefix = self._settings.s3_document_key_prefix.rstrip("/")
-        object_key = f"{prefix}/user-documents/{user_id}/{document_id}/{payload.original_filename}"
+        object_key = f"{prefix}/user-documents/{user_id}/{document_id}/{filename}"
 
         # Persist a "pending upload" row first (so we don't have orphan S3 objects)
         doc = UserDocument(
             id=document_id,
             user_id=user_id,
             document_type=payload.document_type.value,
-            document_number=payload.document_number,
+            document_number=None if is_aadhaar else payload.document_number,
             object_key=object_key,
-            original_filename=payload.original_filename,
+            original_filename=filename,
             content_type=payload.content_type,
             byte_size=payload.byte_size,
             checksum_sha256="",  # filled at complete-upload step
@@ -143,7 +145,9 @@ class UserDocumentService:
         doc = await self._docs.get_owned(document_id, user_id)
         if doc is None:
             raise NotFoundError("User document not found")
-        if payload.document_number is not None:
+        if doc.document_type == "aadhaar":
+            doc.document_number = None
+        elif payload.document_number is not None:
             doc.document_number = payload.document_number
         if payload.expires_at is not None:
             doc.expires_at = payload.expires_at
@@ -183,7 +187,9 @@ class UserDocumentService:
         binding = await storage.inspect(doc.object_key)
         if binding.content_type != doc.content_type or binding.size != doc.byte_size:
             raise NotFoundError("User document is unavailable")
-        filename = doc.original_filename.replace("\\", "/").rsplit("/", 1)[-1]
+        from app.user_documents.privacy import display_filename
+
+        filename = display_filename(doc).replace("\\", "/").rsplit("/", 1)[-1]
         filename = re.sub(r"[\x00-\x1f\x7f]", "", filename).strip()[:200] or "document"
         item = SimpleNamespace(
             object_key=binding.key,

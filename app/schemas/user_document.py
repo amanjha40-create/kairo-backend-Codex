@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.user_documents.enums import UserDocumentType, UserDocumentVerificationStatus
 
@@ -35,6 +35,15 @@ class UserDocumentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @model_validator(mode="after")
+    def minimize_aadhaar(self):
+        if self.document_type == UserDocumentType.AADHAAR:
+            self.document_number = None
+            self.extracted_payload = None
+            self.reviewer_note = None
+            self.original_filename = "aadhaar-document"
+        return self
+
 
 class UserDocumentUploadIntentRequest(BaseModel):
     document_type: UserDocumentType
@@ -44,6 +53,15 @@ class UserDocumentUploadIntentRequest(BaseModel):
     document_number: str | None = Field(default=None, max_length=128)
     expires_at: date | None = None
     replaces_document_id: uuid.UUID | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def minimize_aadhaar(cls, data):
+        if isinstance(data, dict) and data.get("document_type") == UserDocumentType.AADHAAR:
+            data = dict(data)
+            data["document_number"] = None
+            data["original_filename"] = "aadhaar-document"
+        return data
 
     @field_validator("original_filename")
     @classmethod
