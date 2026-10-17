@@ -9,6 +9,7 @@ from pythonjsonlogger.jsonlogger import JsonFormatter
 
 from app.config import get_settings
 from app.logging.filters import RequestContextFilter, ServiceMetadataFilter
+from app.logging.places import configure_places_logging
 from app.logging.request_redaction import redact_request_credentials
 
 
@@ -92,6 +93,7 @@ def configure_logging() -> None:
     )
     handler.addFilter(RequestContextFilter())
     root.addHandler(handler)
+    configure_places_logging(settings.app_env.value)
 
     logging.getLogger("uvicorn").setLevel(level)
     access_logger = logging.getLogger("uvicorn.access")

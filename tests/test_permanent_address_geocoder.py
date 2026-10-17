@@ -1,10 +1,12 @@
 import copy
-import logging
+import io
+import json
 from unittest.mock import Mock
 
 import pytest
 
 from app.exceptions import ServiceUnavailableError
+from app.logging.places import configure_places_logging, logger
 from app.schemas.permanent_address import PermanentAddressInput
 from app.services import permanent_address_geocoder as module
 
@@ -89,27 +91,36 @@ async def test_overlong_query_is_not_truncated_or_sent(provider):
 
 
 @pytest.mark.parametrize("fails", [False, True])
-async def test_no_address_in_logs_metadata_or_public_error(provider, caplog, fails):
+async def test_no_address_in_logs_metadata_or_public_error(provider, monkeypatch, fails):
     client, _ = provider
     private = module.query_text(ADDRESS)
     if fails:
         client.geocode.side_effect = RuntimeError(private)
-    with caplog.at_level(logging.INFO, logger=module.__name__):
+    stream = io.StringIO()
+    old_handlers = logger.handlers[:]
+    old_level = logger.level
+    monkeypatch.setattr("app.logging.places.sys.stdout", stream)
+    configure_places_logging("test")
+    try:
         if fails:
             with pytest.raises(ServiceUnavailableError) as error:
                 await module.AmazonAddressGeocoder().geocode(ADDRESS)
             output = str(error.value)
         else:
             output = repr(await module.AmazonAddressGeocoder().geocode(ADDRESS))
-    assert len(caplog.records) == 1
-    record = caplog.records[0]
-    assert record.getMessage() == "permanent_address.geocode_request"
-    assert record.request_count == 1
-    assert not record.exc_info
+    finally:
+        logger.handlers[:] = old_handlers
+        logger.setLevel(old_level)
+    records = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert len(records) == 2
+    assert [record["outcome"] for record in records] == [
+        "started", "failed" if fails else "succeeded",
+    ]
+    assert all(record["operation"] == "geocode" for record in records)
     for key, value in ADDRESS.items():
         if key == "country":
             continue
-        assert value not in output + repr(record.__dict__)
+        assert value not in output + stream.getvalue()
     client.geocode.assert_called_once()
 
 

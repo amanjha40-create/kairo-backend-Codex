@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 import math
 import os
 from dataclasses import asdict
@@ -13,6 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.exceptions import ServiceUnavailableError
 from app.integrations.digilocker.crypto import parse_keyring
+from app.logging.places import places_call
 from app.services.permanent_address_onsite import (
     MAX_PRECISE_RESULTS,
     PRECISE_PLACE_TYPES,
@@ -23,8 +23,6 @@ from app.services.permanent_address_quality import (
     STREET_UNAVAILABLE_RADIUS_M,
     evaluate_targets,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class TargetCipher:
@@ -129,14 +127,15 @@ class AmazonAddressGeocoder:
             region_name=self.region,
             config=Config(connect_timeout=3, read_timeout=10, retries={"total_max_attempts": 1}),
         )
-        return client.reverse_geocode(
-            QueryPosition=[representative[1], representative[0]],
-            QueryRadius=75,
-            MaxResults=MAX_PRECISE_RESULTS,
-            Filter={"IncludePlaceTypes": list(PRECISE_PLACE_TYPES)},
-            IntendedUse="SingleUse",
-            Language="en",
-        )
+        with places_call("reverse_geocode"):
+            return client.reverse_geocode(
+                QueryPosition=[representative[1], representative[0]],
+                QueryRadius=75,
+                MaxResults=MAX_PRECISE_RESULTS,
+                Filter={"IncludePlaceTypes": list(PRECISE_PLACE_TYPES)},
+                IntendedUse="SingleUse",
+                Language="en",
+            )
 
     async def geocode(self, address):
         query = query_components(address)
@@ -175,12 +174,12 @@ class AmazonAddressGeocoder:
             region_name=self.region,
             config=Config(connect_timeout=5, read_timeout=15, retries={"total_max_attempts": 1}),
         )
-        logger.info("permanent_address.geocode_request", extra={"request_count": 1})
-        return client.geocode(
-            QueryComponents=query,
-            QueryText=text,
-            Filter={"IncludeCountries": ["IND"]},
-            MaxResults=10,
-            IntendedUse="Storage",
-            Language="en",
-        )
+        with places_call("geocode"):
+            return client.geocode(
+                QueryComponents=query,
+                QueryText=text,
+                Filter={"IncludeCountries": ["IND"]},
+                MaxResults=10,
+                IntendedUse="Storage",
+                Language="en",
+            )
