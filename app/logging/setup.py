@@ -15,10 +15,8 @@ from app.logging.request_redaction import redact_request_credentials
 
 class CredentialRedactionFilter(logging.Filter):
     def filter(self, record):
-        if isinstance(record.msg, str):
-            record.msg = redact_request_credentials(record.msg)
-        if isinstance(record.args, tuple):
-            record.args = tuple(redact_request_credentials(item) if isinstance(item, str) else item for item in record.args)
+        record.msg = redact_request_credentials(record.getMessage())
+        record.args = ()
         return True
 
 
@@ -92,6 +90,7 @@ def configure_logging() -> None:
         ServiceMetadataFilter(service=settings.app_name, environment=settings.app_env.value),
     )
     handler.addFilter(RequestContextFilter())
+    handler.addFilter(CredentialRedactionFilter())
     root.addHandler(handler)
     configure_places_logging(settings.app_env.value)
 

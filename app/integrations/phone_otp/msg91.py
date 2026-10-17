@@ -107,12 +107,12 @@ def _raise_send_or_retry_error(sanitized: dict[str, str | int]) -> None:
         _contains_hint(detail, _INVALID_PHONE_HINTS)
         or str(sanitized.get("provider_error_code")) == "202"
     ):
-        raise ValidationAppError("Phone number must be a valid E.164 number")
+        raise ValidationAppError("Phone number must be a valid E.164 number") from None
     if _contains_hint(detail, _RETRY_EXHAUSTED_HINTS):
-        raise RateLimitError("Retry limit reached. Request a new verification code later.")
+        raise RateLimitError("Retry limit reached. Request a new verification code later.") from None
     if _contains_hint(detail, _RATE_LIMIT_HINTS):
-        raise RateLimitError("Too many verification codes sent. Try again later.")
-    raise ServiceUnavailableError("Phone verification is temporarily unavailable")
+        raise RateLimitError("Too many verification codes sent. Try again later.") from None
+    raise ServiceUnavailableError("Phone verification is temporarily unavailable") from None
 
 
 def _raise_verify_error(sanitized: dict[str, str | int]) -> None:
@@ -121,10 +121,10 @@ def _raise_verify_error(sanitized: dict[str, str | int]) -> None:
         f"{sanitized.get('provider_error_message', '')}"
     )
     if _contains_hint(detail, _INVALID_OTP_HINTS) or _contains_hint(detail, _EXPIRED_OTP_HINTS):
-        raise UnauthorizedError("Invalid or expired verification code")
+        raise UnauthorizedError("Invalid or expired verification code") from None
     if _contains_hint(detail, _RATE_LIMIT_HINTS):
-        raise RateLimitError("Too many verification attempts. Try again later.")
-    raise ServiceUnavailableError("Phone verification is temporarily unavailable")
+        raise RateLimitError("Too many verification attempts. Try again later.") from None
+    raise ServiceUnavailableError("Phone verification is temporarily unavailable") from None
 
 
 def _sanitize_msg91_payload(payload: Any) -> dict[str, str]:
@@ -158,7 +158,7 @@ class Msg91PhoneOtpProvider:
         self._settings = settings or get_settings()
         self._client = client
 
-    async def send_signup_otp(self, *, to_phone: str) -> Msg91DispatchResult:
+    async def send_signup_otp(self, *, to_phone: str, code: str | None = None) -> Msg91DispatchResult:
         payload = await self._request(
             "POST",
             "/otp",
@@ -168,11 +168,19 @@ class Msg91PhoneOtpProvider:
                 "template_id": self._settings.msg91_template_id or "",
                 "otp_length": _MSG91_SIGNUP_OTP_LENGTH,
                 "otp_expiry": str(self._settings.msg91_otp_expiry_minutes),
+                **({"otp": code} if code is not None else {}),
             },
             log_event="otp_provider_accepted",
             log_phone=to_phone,
             action="send",
+            log_on_success=False,
         )
+        if not isinstance(payload, dict) or payload.get("type") != "success":
+            safe = _sanitize_msg91_payload(payload)
+            _raise_send_or_retry_error({
+                "provider_error_code": safe.get("type", "unknown"),
+                "provider_error_message": safe.get("message", ""),
+            })
         request_id = _extract_request_id(payload)
         if not request_id:
             logger.warning(
@@ -180,14 +188,14 @@ class Msg91PhoneOtpProvider:
                 extra={
                     "event": "msg91_send_missing_request_id",
                     "provider": self.provider_name,
-                    "response_keys": (
-                        sorted(payload.keys())[:10]
-                        if isinstance(payload, dict)
-                        else []
-                    ),
+                    "response_is_object": isinstance(payload, dict),
                 },
             )
             raise ServiceUnavailableError("Phone verification is temporarily unavailable")
+        logger.info("otp_provider_accepted", extra={
+            "event": "otp_provider_accepted", "provider": self.provider_name,
+            "action": "send", "request_id_present": True,
+        })
         return Msg91DispatchResult(provider=self.provider_name, request_id=request_id)
 
     async def resend_signup_otp(
@@ -215,11 +223,7 @@ class Msg91PhoneOtpProvider:
                 extra={
                     "event": "msg91_resend_missing_request_id",
                     "provider": self.provider_name,
-                    "response_keys": (
-                        sorted(payload.keys())[:10]
-                        if isinstance(payload, dict)
-                        else []
-                    ),
+                    "response_is_object": isinstance(payload, dict),
                 },
             )
             raise ServiceUnavailableError("Phone verification is temporarily unavailable")
@@ -256,9 +260,7 @@ class Msg91PhoneOtpProvider:
             return
 
         sanitized = _sanitize_msg91_payload(payload)
-        provider_error_code = (
-            sanitized.get("type") or sanitized.get("code") or "unknown_200"
-        )
+        provider_error_code = "provider_rejected"
         provider_error_message = (
             sanitized.get("message") or "Unexpected verification response"
         )
@@ -270,7 +272,6 @@ class Msg91PhoneOtpProvider:
                 "action": "verify",
                 "to_phone_masked": mask_phone(to_phone),
                 "provider_error_code": provider_error_code,
-                "provider_error_message": provider_error_message,
             },
         )
         _raise_verify_error(
@@ -326,7 +327,7 @@ class Msg91PhoneOtpProvider:
                     "error_type": type(exc).__name__,
                 },
             )
-            raise ServiceUnavailableError("Phone verification is temporarily unavailable") from exc
+            raise ServiceUnavailableError("Phone verification is temporarily unavailable") from None
         except httpx.HTTPStatusError as exc:
             sanitized = _sanitize_msg91_error(exc.response)
             log_message = (
@@ -341,7 +342,7 @@ class Msg91PhoneOtpProvider:
                     "provider": self.provider_name,
                     "action": action,
                     "to_phone_masked": mask_phone(log_phone),
-                    **sanitized,
+                    "http_status": exc.response.status_code,
                 },
             )
             if action == "verify":
@@ -358,14 +359,14 @@ class Msg91PhoneOtpProvider:
                     "error_type": type(exc).__name__,
                 },
             )
-            raise ServiceUnavailableError("Phone verification is temporarily unavailable") from exc
+            raise ServiceUnavailableError("Phone verification is temporarily unavailable") from None
         finally:
             if created_client:
                 await client.aclose()
 
         try:
             payload = response.json()
-        except ValueError as exc:
+        except ValueError:
             logger.warning(
                 "msg91_invalid_response",
                 extra={
@@ -376,7 +377,7 @@ class Msg91PhoneOtpProvider:
                     "http_status": response.status_code,
                 },
             )
-            raise ServiceUnavailableError("Phone verification is temporarily unavailable") from exc
+            raise ServiceUnavailableError("Phone verification is temporarily unavailable") from None
 
         if log_on_success:
             logger.info(

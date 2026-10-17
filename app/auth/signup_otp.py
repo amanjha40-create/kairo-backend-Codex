@@ -33,32 +33,39 @@ def verify_otp_code(code: str, stored_hash: str) -> bool:
 class SignupOtpStore:
     """Redis-backed OTP and send-rate limits for staged signup channels."""
 
-    def __init__(self, redis: Redis, settings: Settings) -> None:
+    def __init__(self, redis: Redis, settings: Settings, *, scope: str = "signup") -> None:
         self._redis = redis
         self._settings = settings
         self._keys = RedisKeys(settings)
+        self._scope = scope
 
     def _otp_key(self, signup_session_id: UUID, channel: str) -> str:
         return self._keys.otp(
-            purpose=f"{SIGNUP_OTP_PURPOSE}:{channel}",
+            purpose=f"{SIGNUP_OTP_PURPOSE if self._scope == 'signup' else self._scope}:{channel}",
             subject=str(signup_session_id),
         )
 
     def _send_rate_key(self, signup_session_id: UUID, channel: str) -> str:
         return self._keys.rate_limit(
-            bucket=f"signup_otp_send:{channel}",
+            bucket=f"{self._scope}_otp_send:{channel}",
             identifier=str(signup_session_id),
         )
 
     def _provider_state_key(self, signup_session_id: UUID, channel: str) -> str:
         return self._keys.cache(
-            domain=f"signup_otp_provider:{channel}",
+            domain=f"{self._scope}_otp_provider:{channel}",
             key=str(signup_session_id),
         )
 
     async def store_otp(self, signup_session_id: UUID, channel: str, code: str) -> None:
         ttl = self._settings.signup_otp_ttl_seconds
         await self._redis.set(self._otp_key(signup_session_id, channel), hash_otp_code(code), ex=ttl)
+
+    async def matches_current_code(self, subject: UUID, channel: str, code: str) -> bool:
+        stored = await self._redis.get(self._otp_key(subject, channel))
+        if isinstance(stored, bytes):
+            stored = stored.decode("ascii")
+        return isinstance(stored, str) and verify_otp_code(code, stored)
 
     async def verify_and_consume(self, signup_session_id: UUID, channel: str, code: str) -> bool:
         """Atomically verify and consume OTP via Lua — prevents two concurrent
@@ -158,3 +165,21 @@ return count
                 "Please wait before requesting another code.",
                 retry_after_seconds=wait,
             )
+
+    async def claim_send_cooldown(self, subject: UUID) -> None:
+        key = self._keys.rate_limit(bucket=f"{self._scope}_otp_cooldown", identifier=str(subject))
+        if not await self._redis.set(key, "1", nx=True, ex=self._settings.signup_otp_resend_cooldown_seconds):
+            raise RateLimitError("Please wait before requesting another code.",
+                                 retry_after_seconds=max(await self._redis.ttl(key), 1))
+
+    async def enforce_verify_attempts(self, subject: UUID) -> None:
+        # A resend must not reset the brute-force budget.
+        key = self._keys.rate_limit(bucket=f"{self._scope}_otp_attempts", identifier=str(subject))
+        count = await self._redis.eval("""
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return count
+""", 1, key, self._settings.signup_otp_ttl_seconds)
+        if count > self._settings.signup_otp_max_verify_attempts:
+            raise RateLimitError("Too many verification attempts. Try again later.",
+                                 retry_after_seconds=max(await self._redis.ttl(key), 1))

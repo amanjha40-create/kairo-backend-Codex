@@ -7,6 +7,24 @@ from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from typing import Literal
+
+
+class MobileVerificationRequest(BaseModel):
+    """The destination is always the authenticated account's stored phone."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MobileVerificationVerifyRequest(MobileVerificationRequest):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$", repr=False)
+
+
+class MobileVerificationResponse(BaseModel):
+    state: Literal["code_sent", "verified", "phone_required"]
+    phone_verified: bool = False
+    resend_after_seconds: int = 0
+    expires_in_seconds: int = 0
 
 
 class RegisterRequest(BaseModel):

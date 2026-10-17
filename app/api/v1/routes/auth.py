@@ -17,6 +17,9 @@ from app.api.dependencies.rate_limit import (
 )
 from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
+    MobileVerificationRequest,
+    MobileVerificationVerifyRequest,
+    MobileVerificationResponse,
     ChangePasswordRequest,
     ChangePasswordResponse,
     ForgotPasswordRequest,
@@ -54,6 +57,26 @@ from app.schemas.auth import (
 from app.services import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/mobile-verification/request", response_model=MobileVerificationResponse,
+             dependencies=[Depends(auth_rate_limit)])
+async def request_mobile_verification(
+    payload: MobileVerificationRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> MobileVerificationResponse:
+    return await auth.mobile_verification.request(current.id)
+
+
+@router.post("/mobile-verification/verify", response_model=MobileVerificationResponse,
+             dependencies=[Depends(otp_verify_rate_limit)])
+async def verify_mobile_verification(
+    payload: MobileVerificationVerifyRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> MobileVerificationResponse:
+    return await auth.mobile_verification.verify(current.id, payload.code)
 
 organization_signup_router = APIRouter(prefix="/auth/organization/signup", tags=["organization-auth"])
 

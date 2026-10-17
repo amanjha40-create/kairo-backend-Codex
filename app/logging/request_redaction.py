@@ -23,7 +23,7 @@ _SENSITIVE_PATHS = (
     ),
 )
 _SENSITIVE_QUERY_PARAMS = re.compile(
-    r"(?P<prefix>[?&](?:token|signature|reset_token|code|state|handoff|magic_token|invitation_token)=)(?P<credential>[^&#\s]+)",
+    r"(?P<prefix>[?&](?:token|signature|reset_token|code|state|handoff|magic_token|invitation_token|otp|authkey|mobile)=)(?P<credential>[^&#\s]+)",
     re.IGNORECASE,
 )
 

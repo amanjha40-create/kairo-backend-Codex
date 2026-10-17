@@ -134,6 +134,11 @@ class AuthService:
             if settings.phone_otp_backend == "msg91"
             else None
         )
+        from app.auth.mobile_verification import MobileVerificationService
+
+        self.mobile_verification = MobileVerificationService(
+            session, settings, redis, self._phone, self._msg91_phone,
+        )
 
     def _portal_origin_from_request(
         self,
