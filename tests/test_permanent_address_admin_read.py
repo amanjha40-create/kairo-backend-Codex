@@ -158,13 +158,16 @@ async def test_stale_and_cross_candidate_version_rejected(case):
     [
         ("user", True, True),
         ("hr", True, True),
+        ("institution", True, True),
         ("admin", False, True),
         ("admin", True, False),
     ],
 )
-async def test_persisted_authorization(case, role, active, verified):
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_persisted_authorization(case, role, active, verified, enabled):
     db, users, svc, *_ = case
     await prepare(case)
+    svc.settings.permanent_address_enabled = enabled
     users[2].role, users[2].is_active = role, active
     users[2].email_verified_at = NOW if verified else None
     await db.flush()
@@ -207,19 +210,21 @@ async def test_read_has_no_dml_or_score_or_provider_side_effect(case):
     assert await db.scalar(select(func.count()).select_from(TrustScoreSnapshot)) == snapshots
 
 
-async def test_routes_permissions_binding_and_cache(case):
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_routes_permissions_binding_and_cache(case, enabled):
     from app.api.v1.routes.permanent_address import admin_read_service
     from app.auth.deps import CurrentUser, get_current_user
     from app.main import app
 
     _, users, svc, *_ = case
     version = await prepare(case)
+    svc.settings.permanent_address_enabled = enabled
     try:
         app.dependency_overrides[admin_read_service] = lambda: svc
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             path = f"/api/v1/permanent-address/admin/candidates/{users[0].id}"
             assert (await client.get(path)).status_code == 401
-            for role in ("user", "hr"):
+            for role in ("user", "hr", "institution"):
                 app.dependency_overrides[get_current_user] = lambda role=role: CurrentUser(
                     id=users[0].id, email="synthetic@example.test", role=role
                 )
@@ -229,6 +234,8 @@ async def test_routes_permissions_binding_and_cache(case):
             )
             result = await client.get(path, params={"address_version_id": str(version)})
             assert result.status_code == 200 and "no-store" in result.headers["cache-control"]
+            assert result.json()["permanent_address"]["address_version_id"] == str(version)
+            assert (await client.get("/api/v1/permanent-address/admin/reviews")).status_code == 200
             assert (
                 await client.get(path, params={"address_version_id": str(uuid4())})
             ).status_code == 404
@@ -277,3 +284,76 @@ async def test_discovery_is_bounded_and_omits_private_address(case):
     assert not (await reader.discover(users[2].id, candidate_id=users[0].id, offset=1)).items
     with pytest.raises(ValueError):
         await reader.discover(users[2].id, limit=51)
+
+
+async def test_off_projection_preserves_truth_without_io_or_dml(case):
+    from unittest.mock import AsyncMock
+
+    db, users, svc, _, geo = case
+    row, attempt = await pending(case)
+    before = await view(case)
+    await db.flush()
+    svc.settings.permanent_address_enabled = False
+    svc.storage.inspect = AsyncMock(side_effect=AssertionError("OFF read attempted S3"))
+    svc.storage.open = AsyncMock(side_effect=AssertionError("OFF read attempted S3"))
+    snapshots = await db.scalar(select(func.count()).select_from(TrustScoreSnapshot))
+    calls = geo.calls
+    statements = []
+    connection = await db.connection()
+
+    def record(conn, cursor, statement, params, context, many):
+        statements.append(statement.strip().split()[0].upper())
+
+    event.listen(connection.sync_connection, "before_cursor_execute", record)
+    try:
+        after = await view(case)
+        queue = await PermanentAddressAdminRead(svc).discover(users[2].id)
+    finally:
+        event.remove(connection.sync_connection, "before_cursor_execute", record)
+    assert set(statements) == {"SELECT"}
+    assert geo.calls == calls
+    svc.storage.inspect.assert_not_called()
+    svc.storage.open.assert_not_called()
+    assert after.permanent_address.address_version_id == row.id
+    assert after.permanent_address.overall_status == before.permanent_address.overall_status
+    assert after.permanent_address.successful_location_checks == before.permanent_address.successful_location_checks
+    assert after.latest_attempt.session_id == attempt.id
+    assert not after.permanent_address.manual_location_approval_eligible
+    assert not after.document.preview_available and after.document.content_path is None
+    assert queue.items and (await svc.state(users[0].id)).enabled is False
+    for forbidden in ("latitude", "longitude", "target_encrypted", "target_key_id", "object_key", "ciphertext"):
+        assert forbidden not in after.model_dump_json()
+    assert await db.scalar(select(func.count()).select_from(TrustScoreSnapshot)) == snapshots
+
+
+async def test_off_empty_read_does_not_create_records(case):
+    _, users, svc, *_ = case
+    svc.settings.permanent_address_enabled = False
+    assert not (await PermanentAddressAdminRead(svc).discover(users[2].id)).items
+    assert (await view(case)).permanent_address.overall_status == "NOT_STARTED"
+    assert await svc.current(users[0].id) is None
+
+
+async def test_off_all_mutating_entrypoints_and_content_remain_gated(case):
+    _, users, svc, *_ = case
+    version = await prepare(case)
+    svc.settings.permanent_address_enabled = False
+    owner, admin = users[0].id, users[2].id
+    actions = [
+        lambda: svc.save_address(owner, ADDRESS),
+        lambda: svc.attach_evidence(owner, None),
+        lambda: svc.upload_address_document(owner, None),
+        lambda: svc.complete_address_document(owner, uuid4(), None),
+        lambda: svc.submit_address_document(owner, None),
+        lambda: svc.start(owner, version),
+        lambda: svc.finish(owner, uuid4(), None),
+        lambda: svc.finish(owner, uuid4(), None, cancel=True),
+        lambda: svc.review(admin, version, None),
+        lambda: svc.decide_address_document(admin, version, None),
+        lambda: svc.resolve_manual_location(admin, version, uuid4(), None),
+        lambda: svc.resolve_location_review(admin, version, uuid4(), None),
+        lambda: svc.review_detail(admin, version, content=True),
+    ]
+    for action in actions:
+        with pytest.raises(NotFoundError):
+            await action()

@@ -43,13 +43,13 @@ class PermanentAddressAdminRead:
         self.db = service.db
 
     async def _candidate(self, reviewer, candidate_id):
-        await self.svc.manual_actor(reviewer)
+        await self.svc.admin_read_actor(reviewer)
         candidate = await self.db.get(User, candidate_id)
         if candidate is None or candidate.role != Role.USER or candidate_id == reviewer:
             raise NotFoundError()
 
     async def _summary(self, reviewer, candidate_id):
-        state = await self.svc.state(candidate_id)
+        state = await self.svc.admin_state(reviewer, candidate_id)
         row = await self.svc.current(candidate_id)
         attempts = await self.svc.sessions(row) if row else []
         latest = (
@@ -80,7 +80,7 @@ class PermanentAddressAdminRead:
         )
 
     async def discover(self, reviewer, *, limit=20, offset=0, candidate_id=None):
-        await self.svc.manual_actor(reviewer)
+        await self.svc.admin_read_actor(reviewer)
         if not 1 <= limit <= 50 or offset < 0:
             raise ValueError("Invalid bounded page")
         query = (
@@ -130,7 +130,10 @@ class PermanentAddressAdminRead:
             else None
         )
         valid = await self.svc.evidence_valid(candidate_id, row)
-        preview = bool(present and valid and valid.id == state.document_id)
+        preview = bool(
+            self.svc.settings.permanent_address_enabled
+            and present and valid and valid.id == state.document_id
+        )
         review = (
             await self.db.scalar(
                 select(Review)

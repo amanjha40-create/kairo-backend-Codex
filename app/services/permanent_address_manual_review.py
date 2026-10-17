@@ -69,6 +69,10 @@ def discard_pending(attempt, status):
 class ManualLocationReviewMixin:
     async def manual_actor(self, reviewer):
         self.require_enabled()
+        return await self.admin_read_actor(reviewer)
+
+    async def admin_read_actor(self, reviewer):
+        """Authorize projection-only access independently of Candidate activation."""
         actor = await self.db.get(User, reviewer, populate_existing=True)
         if (
             actor is None
@@ -94,7 +98,7 @@ class ManualLocationReviewMixin:
         return attempt.manual_review_status
 
     async def manual_location_queue(self, reviewer):
-        await self.manual_actor(reviewer)
+        await self.admin_read_actor(reviewer)
         rows = (
             await self.db.execute(
                 select(Version, Session)
@@ -125,7 +129,7 @@ class ManualLocationReviewMixin:
         }
 
     async def manual_location_detail(self, reviewer, version_id, session_id):
-        await self.manual_actor(reviewer)
+        await self.admin_read_actor(reviewer)
         row = await self.db.get(Version, version_id)
         attempt = await self.db.get(Session, session_id)
         if (
@@ -173,7 +177,10 @@ class ManualLocationReviewMixin:
             "current_address_version": current,
             "manual_review_status": status,
             "pending_target_available": available,
-            "approval_eligible": current and available and status in REVIEWABLE,
+            "approval_eligible": (
+                self.settings.permanent_address_enabled
+                and current and available and status in REVIEWABLE
+            ),
             "gps_quality": "PASS"
             if attempt.manual_review_status
             else "not_certified_for_manual_review",

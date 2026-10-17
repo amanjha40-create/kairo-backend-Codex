@@ -136,8 +136,13 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
             if evidence and evidence.address_version_id != row.id:
                 return None
             self.check_document_freshness(doc, evidence)
-            if await self.document_binding(doc) != row.evidence_binding:
+            if self.settings.permanent_address_enabled:
+                if await self.document_binding(doc) != row.evidence_binding:
+                    return None
+            elif not row.evidence_binding:
                 return None
+            # OFF-state Admin projections describe persisted evidence only; they
+            # cannot preview/approve it and must not inspect cloud storage.
         except (NotFoundError, ServiceUnavailableError, ValidationAppError):
             return None
         return doc
@@ -192,9 +197,16 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
     async def state(self, owner):
         if not self.enabled():
             return PermanentAddressState(enabled=False, status="NOT_STARTED")
+        return await self._state_projection(owner, enabled=True)
+
+    async def admin_state(self, reviewer, owner):
+        await self.admin_read_actor(reviewer)
+        return await self._state_projection(owner, enabled=self.settings.permanent_address_enabled)
+
+    async def _state_projection(self, owner, *, enabled):
         row = await self.current(owner)
         if row is None:
-            return PermanentAddressState(enabled=True, status="NOT_STARTED")
+            return PermanentAddressState(enabled=enabled, status="NOT_STARTED")
         now = self.clock()
         sessions = await self.sessions(row)
         days = [s.counted_day for s in sessions if s.counted_day]
@@ -221,7 +233,7 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         if row.target_status == "needs_review":
             status = "NEEDS_REVIEW"
         return PermanentAddressState(
-            enabled=True,
+            enabled=enabled,
             status=status,
             address_version_id=row.id,
             address_version=row.version,
@@ -238,7 +250,7 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
             ),
             successful_gps_checks=checks,
             today_complete=today,
-            can_start_location=can_start,
+            can_start_location=enabled and can_start,
             last_location_result=sessions[-1].result
             if sessions and sessions[-1].result != "CHECKING"
             else None,
@@ -373,7 +385,7 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         return await self.state(owner)
 
     async def review_queue(self, reviewer):
-        await self.manual_actor(reviewer)
+        await self.admin_read_actor(reviewer)
         rows = (
             await self.db.scalars(
                 select(Version)
@@ -393,7 +405,10 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         }
 
     async def review_detail(self, reviewer, version_id, *, content=False):
-        await self.manual_actor(reviewer)
+        if content:
+            await self.manual_actor(reviewer)
+        else:
+            await self.admin_read_actor(reviewer)
         row = await self.db.get(Version, version_id)
         if row is None or row.invalidated_at or row.user_id == reviewer:
             raise NotFoundError()

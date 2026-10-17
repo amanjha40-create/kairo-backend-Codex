@@ -55,6 +55,14 @@ class DigiLockerEAadhaarService(DigiLockerIdentityService):
     @transaction
     async def verify_aadhaar(self, user_id, *, consent, consent_version):
         self._aadhaar_enabled()
+        return await self._verify_with_consent(
+            user_id, consent=consent, consent_version=consent_version
+        )
+
+    async def _verify_with_consent(
+        self, user_id, *, consent, consent_version, expected_connection_id=None
+    ):
+        """Shared single-fetch pipeline; callers must enforce their own entry gate."""
         if consent is not True or consent_version != "v1":
             raise ValidationAppError(
                 "Explicit e-Aadhaar identity verification consent is required."
@@ -63,6 +71,8 @@ class DigiLockerEAadhaarService(DigiLockerIdentityService):
             token, _ = await self._read_context(user_id)
             user = await self.session.get(User, user_id)
             connection = await self._connection(user_id)
+            if expected_connection_id is not None and connection.id != expected_connection_id:
+                raise ValidationAppError("Controlled connection changed.", code="connection_changed")
             if not await self.aadhaar.availability(token):
                 raise ValidationAppError(
                     "e-Aadhaar is not available for this account.",
