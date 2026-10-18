@@ -27,8 +27,13 @@ FROM base AS development
 
 USER root
 ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements-dev.txt requirements-dev.txt
 RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY Dockerfile Dockerfile
+COPY .dockerignore .dockerignore
 COPY tests ./tests
 COPY scripts ./scripts
 RUN chmod 755 scripts/reset_test_data.py
