@@ -61,6 +61,22 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    claim_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="claimed", server_default="claimed", index=True
+    )
+    admin_created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    admin_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assisted_creation_idempotency_key: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, unique=True
+    )
     employment_onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

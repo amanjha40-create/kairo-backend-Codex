@@ -10,6 +10,10 @@ from app.integrations.email.templates.admin_invitation import (
     AdminInvitationContext,
     render_admin_invitation,
 )
+from app.integrations.email.templates.candidate_account_activation import (
+    CandidateAccountActivationContext,
+    render_candidate_account_activation,
+)
 from app.integrations.email.templates.employer_verification import (
     EmployerVerificationContext,
     render_employer_verification,
@@ -37,6 +41,7 @@ from app.integrations.email.templates.verification_completed import (
 )
 from app.schemas.email_delivery import (
     AdminInvitationEmailTemplateData,
+    CandidateAccountActivationEmailTemplateData,
     EmployerVerificationEmailTemplateData,
     InstitutionVerificationEmailTemplateData,
     PasswordResetEmailTemplateData,
@@ -48,6 +53,29 @@ from app.schemas.email_delivery import (
 )
 
 RendererFn = Callable[[str, dict[str, Any]], RenderedEmailMessage]
+
+
+def _render_candidate_account_activation(
+    to_email: str, data: dict[str, Any]
+) -> RenderedEmailMessage:
+    payload = CandidateAccountActivationEmailTemplateData.model_validate(data)
+    content = render_candidate_account_activation(
+        CandidateAccountActivationContext(
+            candidate_name=payload.candidate_name,
+            activation_url=payload.activation_url,
+            expires_at_iso=payload.expires_at_iso,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.CANDIDATE_ACCOUNT_ACTIVATION.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        # Deliberately excludes activation_url and the opaque token.
+        audit_payload={"expires_at_iso": payload.expires_at_iso},
+    )
 
 
 def _render_admin_invitation(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
@@ -261,6 +289,9 @@ class EmailTemplateRenderer:
 
     def __init__(self) -> None:
         self._registry: dict[str, RendererFn] = {
+            EmailTemplateKey.CANDIDATE_ACCOUNT_ACTIVATION.value: (
+                _render_candidate_account_activation
+            ),
             EmailTemplateKey.SIGNUP_OTP.value: _render_signup_otp,
             EmailTemplateKey.PASSWORD_RESET.value: _render_password_reset,
             EmailTemplateKey.ADMIN_INVITATION.value: _render_admin_invitation,

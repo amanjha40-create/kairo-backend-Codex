@@ -3,7 +3,10 @@
 from app.models.account_deletion import AccountDeletion, AccountDeletionItem
 from app.models.admin_access_audit_event import AdminAccessAuditEvent
 from app.models.admin_access_invitation import AdminAccessInvitation
+from app.models.admin_profile_provenance import AdminProfileProvenance
+from app.models.candidate_activation import CandidateActivationToken
 from app.models.certification import Certification
+from app.models.court_record_check import CourtRecordCheck, CourtRecordCheckEvidence
 from app.models.credential_verification_request import CredentialVerificationRequest
 from app.models.digilocker_connection import DigiLockerConnection
 from app.models.digilocker_identity_verification import DigiLockerIdentityVerification
@@ -22,6 +25,7 @@ from app.models.employment_reference import (
 from app.models.freelance_contract import FreelanceContract
 from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
+from app.models.in_person_verification import InPersonVerificationRecord
 from app.models.institution_people import (
     InstitutionPersonConsent,
     InstitutionPersonLifecycleEvent,
@@ -111,10 +115,14 @@ __all__ = [
     "AccountDeletionItem",
     "AdminAccessAuditEvent",
     "AdminAccessInvitation",
+    "AdminProfileProvenance",
+    "CandidateActivationToken",
     "Certification",
     "DocumentSharePack",
     "DocumentSharePackItem",
     "CredentialVerificationRequest",
+    "CourtRecordCheck",
+    "CourtRecordCheckEvidence",
     "Education",
     "EducationDocument",
     "EmailDeliveryLog",
@@ -129,6 +137,7 @@ __all__ = [
     "GigPlatform",
     "Internship",
     "InternshipDocument",
+    "InPersonVerificationRecord",
     "Notification",
     "NotificationDelivery",
     "NotificationEvent",

@@ -788,7 +788,9 @@ class OrganizationService:
                     "organization_name": invitation.organization.name,
                     "inviter_name": invitation.invited_by_user.full_name
                     or invitation.invited_by_user.email,
-                    "invited_role_label": invitation.role.value.replace("_", " ").title(),
+                    "invited_role_label": str(
+                        getattr(invitation.role, "value", invitation.role)
+                    ).replace("_", " ").title(),
                     "invitation_url": invitation_url,
                     "expires_at_iso": invitation.token_expires_at.isoformat(),
                 },

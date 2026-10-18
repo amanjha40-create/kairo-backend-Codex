@@ -14,6 +14,7 @@ from app.infrastructure.redis.deps import get_redis
 from app.services import (
     AdminCommunicationService,
     AdminDirectoryService,
+    AdminOperationsService,
     AdminOrganizationService,
     AdminOverviewService,
     AdminSettingsService,
@@ -153,6 +154,17 @@ def get_admin_organization_service(
     session: AsyncSession = Depends(get_session),
 ) -> AdminOrganizationService:
     return AdminOrganizationService(session)
+
+
+def get_admin_operations_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AdminOperationsService:
+    return AdminOperationsService(
+        session,
+        settings,
+        email_delivery=EmailDeliveryService(session, settings),
+    )
 
 
 def get_admin_communication_service(

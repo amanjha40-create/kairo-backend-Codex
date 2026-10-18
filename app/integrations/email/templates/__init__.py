@@ -6,6 +6,7 @@ from enum import StrEnum
 
 
 class EmailTemplateKey(StrEnum):
+    CANDIDATE_ACCOUNT_ACTIVATION = "candidate_account_activation"
     SIGNUP_OTP = "signup_otp"
     PASSWORD_RESET = "password_reset"
     ADMIN_INVITATION = "admin_invitation"

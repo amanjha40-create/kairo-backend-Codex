@@ -8,6 +8,14 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class CandidateAccountActivationEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    candidate_name: str = Field(min_length=1, max_length=255)
+    activation_url: str = Field(min_length=1, max_length=4096)
+    expires_at_iso: str = Field(min_length=1, max_length=64)
+
+
 class TrustInvitationEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

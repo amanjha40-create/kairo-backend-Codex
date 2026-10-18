@@ -15,6 +15,7 @@ from app.config import Settings
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.infrastructure.s3.service import S3UploadService
+from app.models.court_record_check import CourtRecordCheck
 from app.models.digilocker_identity_verification import DigiLockerIdentityVerification
 from app.models.employment_reference import EmploymentReference, EmploymentReferenceEvent
 from app.models.organization_activity_event import OrganizationActivityEvent
@@ -23,6 +24,7 @@ from app.models.organization_logo_upload import OrganizationLogoUpload
 from app.models.organization_person import OrganizationPerson
 from app.models.permanent_address import PermanentAddressSession, PermanentAddressVersion
 from app.models.trust_score_snapshot import TrustScoreSnapshot
+from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.organization_people.enums import (
     OrganizationPersonEmploymentStatus,
@@ -438,19 +440,46 @@ class HRV2Service:
         education = self._education_items(requests)
         references = await self._reference_items(requests)
         address = await self._address_items(person.linked_user_id)
+        court_search, court_checks = await self._court_items(organization.id, person)
         summaries = self._check_summaries(
-            requests, identity, employment, education, references, address
+            requests, identity, employment, education, references, address, court_search
         )
         open_items = self._open_items(requests)
+        open_items.extend(
+            VerificationReportOpenItem(
+                code="PENDING_VERIFICATION",
+                check="court_record_search",
+                display_text="Court-record search is still in progress",
+                request_public_id=check.public_id,
+            )
+            for check in court_checks
+            if check.status == "pending"
+        )
+        work_items_present = bool(requests or court_checks)
+        work_items_terminal = all(
+            request.status in _TERMINAL_REQUEST_STATUSES for request in requests
+        ) and all(
+            check.status != "pending" and check.finalized_at is not None
+            for check in court_checks
+        )
         report_status = (
             VerificationReportStatus.FINAL
-            if requests
-            and all(request.status in _TERMINAL_REQUEST_STATUSES for request in requests)
+            if work_items_present and work_items_terminal
             else VerificationReportStatus.INTERIM
         )
-        initiated_at = min((request.created_at for request in requests), default=person.added_at)
+        initiated_at = min(
+            [
+                *(request.created_at for request in requests),
+                *(check.created_at for check in court_checks),
+            ],
+            default=person.added_at,
+        )
         report_updated_at = max(
-            [person.updated_at, *(request.updated_at for request in requests)],
+            [
+                person.updated_at,
+                *(request.updated_at for request in requests),
+                *(check.updated_at for check in court_checks),
+            ],
         )
         consent_at = max(
             (request.consented_at for request in requests if request.consented_at is not None),
@@ -477,7 +506,7 @@ class HRV2Service:
             education=education,
             references=references,
             address=address,
-            court_search=[VerificationReportCourtSearchItem()],
+            court_search=court_search or [VerificationReportCourtSearchItem()],
             open_items=open_items,
             hr_review_required=any(
                 summary.status
@@ -812,7 +841,73 @@ class HRV2Service:
             )
         ]
 
-    def _check_summaries(self, requests, identity, employment, education, references, address):  # noqa: ANN001
+    async def _court_items(
+        self, organization_id: UUID, person: OrganizationPerson
+    ) -> tuple[list[VerificationReportCourtSearchItem], list[CourtRecordCheck]]:
+        # A few contract-level tests construct the service around repository fakes only.
+        # Production instances always have a session; retaining the empty projection keeps
+        # those pre-existing seams backwards compatible.
+        if not hasattr(self, "_session"):
+            return [], []
+        rows = list(
+            (
+                await self._session.scalars(
+                    select(CourtRecordCheck)
+                    .options(selectinload(CourtRecordCheck.evidence_items))
+                    .where(
+                        CourtRecordCheck.organization_id == organization_id,
+                        CourtRecordCheck.organization_person_id == person.id,
+                    )
+                    .order_by(CourtRecordCheck.created_at.asc())
+                )
+            ).all()
+        )
+        reviewer_ids = {row.reviewer_user_id for row in rows if row.reviewer_user_id is not None}
+        reviewers = {}
+        if reviewer_ids:
+            reviewer_rows = (
+                await self._session.scalars(select(User).where(User.id.in_(reviewer_ids)))
+            ).all()
+            reviewers = {row.id: row.full_name or row.email for row in reviewer_rows}
+        statuses = {
+            "pending": VerificationReportCheckStatus.PENDING,
+            "no_match_found": VerificationReportCheckStatus.CONFIRMED,
+            "match_found": VerificationReportCheckStatus.DISCREPANCY,
+            "review_required": VerificationReportCheckStatus.DISCREPANCY,
+            "unable_to_complete": VerificationReportCheckStatus.UNABLE_TO_VERIFY,
+        }
+        items = [
+            VerificationReportCourtSearchItem(
+                safe_subject_display=person.full_name,
+                scope=f"{row.jurisdiction}: {row.coverage}",
+                search_period=row.search_period,
+                searched_at=row.searched_at,
+                source=row.source,
+                finding=(
+                    row.finding
+                    or (
+                        "No match found within the stated court-record scope"
+                        if row.status == "no_match_found"
+                        else None
+                    )
+                ),
+                evidence_id=row.evidence_items[0].document_id if row.evidence_items else None,
+                reviewer=reviewers.get(row.reviewer_user_id),
+                remarks=row.remarks,
+                limitations=row.limitations,
+                status=(
+                    statuses.get(row.status, VerificationReportCheckStatus.PENDING)
+                    if row.finalized_at is not None
+                    else VerificationReportCheckStatus.PENDING
+                ),
+            )
+            for row in rows
+        ]
+        return items, rows
+
+    def _check_summaries(
+        self, requests, identity, employment, education, references, address, court_search=None
+    ):  # noqa: ANN001
         by_check: dict[str, list[VerificationReportCheckStatus]] = {
             key: [] for key in _REPORT_CHECKS
         }
@@ -821,6 +916,7 @@ class HRV2Service:
         by_check["education"] = [item.status for item in education]
         by_check["references"] = [item.status for item in references]
         by_check["address"] = [item.status for item in address]
+        by_check["court_record_search"] = [item.status for item in (court_search or [])]
         request_times: dict[str, datetime] = {}
         request_map = {
             VerificationRequestType.IDENTITY: "identity",
@@ -836,6 +932,10 @@ class HRV2Service:
                 )
                 if not by_check[key]:
                     by_check[key].append(self._request_status(request.status))
+        if court_search:
+            request_times["court_record_search"] = max(
+                item.searched_at for item in court_search if item.searched_at is not None
+            ) if any(item.searched_at is not None for item in court_search) else None
         summaries = []
         for check in _REPORT_CHECKS:
             status = self._aggregate_status(by_check[check])

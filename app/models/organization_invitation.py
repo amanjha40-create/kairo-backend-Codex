@@ -52,6 +52,7 @@ class OrganizationInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    invitee_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     invitee_email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     role: Mapped[OrganizationRole] = mapped_column(organization_role_enum, nullable=False)
     status: Mapped[OrganizationInvitationStatus] = mapped_column(

@@ -24,6 +24,12 @@ class ResumeRecordProvenance(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     review_item_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("resume_review_items.id", ondelete="CASCADE"), unique=True)
     import_batch_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("resume_import_batches.id", ondelete="CASCADE"))
     source: Mapped[str] = mapped_column(String(32), default="resume", server_default="resume")
+    confirmation_source: Mapped[str] = mapped_column(
+        String(48), default="candidate_confirmed", server_default="candidate_confirmed"
+    )
+    confirmed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     original_payload_hash: Mapped[str] = mapped_column(String(64))
     edited_payload_hash: Mapped[str] = mapped_column(String(64))
     confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

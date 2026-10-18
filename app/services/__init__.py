@@ -3,6 +3,7 @@
 from app.auth.service import AuthService
 from app.services.admin_communication_service import AdminCommunicationService
 from app.services.admin_directory_service import AdminDirectoryService
+from app.services.admin_operations_service import AdminOperationsService
 from app.services.admin_organization_service import AdminOrganizationService
 from app.services.admin_overview_service import AdminOverviewService
 from app.services.admin_settings_service import AdminSettingsService
@@ -58,6 +59,7 @@ from app.services.workspace_service import WorkspaceService
 __all__ = [
     "AdminReviewService",
     "AdminCommunicationService",
+    "AdminOperationsService",
     "AdminDirectoryService",
     "AdminOrganizationService",
     "AdminOverviewService",

@@ -272,9 +272,11 @@ class VerificationReportCourtSearchItem(BaseModel):
     scope: str | None = None
     search_period: str | None = None
     searched_at: datetime | None = None
+    source: str | None = None
     finding: str | None = None
     evidence_id: UUID | None = None
     reviewer: str | None = None
+    remarks: str | None = None
     limitations: str | None = None
     status: VerificationReportCheckStatus = VerificationReportCheckStatus.NOT_ORDERED
 

@@ -11,7 +11,7 @@ from app.models import DigiLockerConnection
 
 def test_bounded_migration_and_single_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["092"]
+    assert script.get_heads() == ["093"]
     revision = script.get_revision("080")
     assert revision.down_revision == "079"
     tree = ast.parse(Path(revision.path).read_text())
@@ -87,7 +87,9 @@ def test_083_only_widens_match_reason_constraint(monkeypatch):
 
 def test_091_changes_only_type_source_checks_and_refuses_lossy_downgrade(monkeypatch):
     from unittest.mock import Mock
+
     import pytest
+
     revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("091")
     assert revision.down_revision == "090"
     migration = revision.module

@@ -9,6 +9,7 @@ from app.api.v1.routes import (
     admin_communications,
     admin_directory,
     admin_employer_verifications,
+    admin_operations,
     admin_organizations,
     admin_overview,
     admin_review_workflow,
@@ -107,6 +108,9 @@ api_router.include_router(admin_directory.router)
 api_router.include_router(admin_communications.router)
 api_router.include_router(admin_overview.router)
 api_router.include_router(admin_organizations.router)
+api_router.include_router(admin_operations.router)
+api_router.include_router(admin_operations.activation_router)
+api_router.include_router(admin_operations.candidate_router)
 api_router.include_router(admin_system.router)
 api_router.include_router(notifications.admin_router)
 api_router.include_router(notifications.user_router)

@@ -220,7 +220,16 @@ class ResumeReviewService:
         logger.info("resume_import_plan_validated", extra={"review_session_id": str(review.id), "user_id": str(user_id), "ready": plan.ready})
         return plan
 
-    async def import_review(self, user_id: UUID, review_id: UUID, payload: ReviewImportRequest) -> ImportBatchResponse:
+    async def import_review(
+        self,
+        user_id: UUID,
+        review_id: UUID,
+        payload: ReviewImportRequest,
+        *,
+        confirmed_by_user_id: UUID | None = None,
+        confirmation_source: str = "candidate_confirmed",
+        provenance_source: str = "resume",
+    ) -> ImportBatchResponse:
         # Serialize all resume imports for one account, including different reviews/keys.
         # Take the owner lock before the review lock, matching the deletion write guard.
         owner = await self.session.scalar(select(User.id).where(
@@ -253,7 +262,16 @@ class ResumeReviewService:
         for item in items:
             try:
                 async with self.session.begin_nested():
-                    outcome, record_type, record_id, warnings = await self._import_item(user_id, review, batch, item, now)
+                    outcome, record_type, record_id, warnings = await self._import_item(
+                        user_id,
+                        review,
+                        batch,
+                        item,
+                        now,
+                        confirmed_by_user_id=confirmed_by_user_id or user_id,
+                        confirmation_source=confirmation_source,
+                        provenance_source=provenance_source,
+                    )
                     self.session.add(ResumeImportResult(import_batch_id=batch.id, review_item_id=item.id, outcome=outcome, record_type=record_type, record_id=record_id, warnings=warnings))
                     if outcome == "imported": batch.imported_count += 1
                     elif outcome == "linked": batch.linked_count += 1
@@ -362,7 +380,18 @@ class ResumeReviewService:
             plans.append(ReviewPlanItem(item_id=review.id, claim_type="none", action="none", target_model=None, duplicate_status="no_match", target_record_id=None, fields_to_create=[], fields_ignored=[], blockers=["select_at_least_one_item"], warnings=[], verified_record_protected=False))
         return ReviewPlanResponse(session_id=review.id, ready=not any(item.blockers for item in plans), version=review.version, items=plans)
 
-    async def _import_item(self, user_id: UUID, review: ResumeReviewSession, batch: ResumeImportBatch, item: ResumeReviewItem, now: datetime) -> tuple[str, str | None, UUID | None, list[str]]:
+    async def _import_item(
+        self,
+        user_id: UUID,
+        review: ResumeReviewSession,
+        batch: ResumeImportBatch,
+        item: ResumeReviewItem,
+        now: datetime,
+        *,
+        confirmed_by_user_id: UUID | None = None,
+        confirmation_source: str = "candidate_confirmed",
+        provenance_source: str = "resume",
+    ) -> tuple[str, str | None, UUID | None, list[str]]:
         if item.claim_type in SUGGESTION_ONLY_TYPES:
             raise ValidationAppError(
                 "Resume profile details must be changed through Profile",
@@ -404,7 +433,18 @@ class ResumeReviewService:
             return "skipped", item.claim_type, None, ["unusable_record", *unusable_reasons]
         if action == "link_existing":
             record = await self._target(user_id, item.claim_type, item.target_record_id)
-            await self._add_provenance(user_id, review, batch, item, item.claim_type, record.id, now)
+            await self._add_provenance(
+                user_id,
+                review,
+                batch,
+                item,
+                item.claim_type,
+                record.id,
+                now,
+                confirmed_by_user_id=confirmed_by_user_id or user_id,
+                confirmation_source=confirmation_source,
+                provenance_source=provenance_source,
+            )
             item.review_status, item.imported_record_type, item.imported_record_id = "imported", item.claim_type, record.id
             return "linked", item.claim_type, record.id, ["already_in_career"] if item.claim_type == "employment" else []
         if action == "update_existing":
@@ -416,7 +456,18 @@ class ResumeReviewService:
             record = await self._create_record(user_id, item.claim_type, typed_payload)
             self.session.add(record)
         await self.session.flush()
-        await self._add_provenance(user_id, review, batch, item, item.claim_type, record.id, now)
+        await self._add_provenance(
+            user_id,
+            review,
+            batch,
+            item,
+            item.claim_type,
+            record.id,
+            now,
+            confirmed_by_user_id=confirmed_by_user_id or user_id,
+            confirmation_source=confirmation_source,
+            provenance_source=provenance_source,
+        )
         item.review_status, item.imported_record_type, item.imported_record_id = "imported", item.claim_type, record.id
         warnings = self._mapping_warnings(item.claim_type, item.edited_payload)
         warnings.extend(self._completion_warnings(item.claim_type, item.edited_payload))
@@ -549,8 +600,38 @@ class ResumeReviewService:
             raise NotFoundError("Import target not found")
         return record
 
-    async def _add_provenance(self, user_id: UUID, review: ResumeReviewSession, batch: ResumeImportBatch, item: ResumeReviewItem, record_type: str, record_id: UUID, now: datetime) -> None:
-        self.session.add(ResumeRecordProvenance(user_id=user_id, record_type=record_type, record_id=record_id, resume_document_id=review.resume_document_id, parsed_result_id=review.parsed_result_id, review_session_id=review.id, review_item_id=item.id, import_batch_id=batch.id, original_payload_hash=payload_hash(item.original_payload), edited_payload_hash=payload_hash(item.edited_payload), confirmed_at=now))
+    async def _add_provenance(
+        self,
+        user_id: UUID,
+        review: ResumeReviewSession,
+        batch: ResumeImportBatch,
+        item: ResumeReviewItem,
+        record_type: str,
+        record_id: UUID,
+        now: datetime,
+        *,
+        confirmed_by_user_id: UUID,
+        confirmation_source: str,
+        provenance_source: str,
+    ) -> None:
+        self.session.add(
+            ResumeRecordProvenance(
+                user_id=user_id,
+                record_type=record_type,
+                record_id=record_id,
+                resume_document_id=review.resume_document_id,
+                parsed_result_id=review.parsed_result_id,
+                review_session_id=review.id,
+                review_item_id=item.id,
+                import_batch_id=batch.id,
+                source=provenance_source,
+                confirmation_source=confirmation_source,
+                confirmed_by_user_id=confirmed_by_user_id,
+                original_payload_hash=payload_hash(item.original_payload),
+                edited_payload_hash=payload_hash(item.edited_payload),
+                confirmed_at=now,
+            )
+        )
 
     async def _owned_resume(self, user_id: UUID, resume_id: UUID, *, for_update: bool = False) -> ResumeDocument:
         statement = select(ResumeDocument).where(ResumeDocument.id == resume_id, ResumeDocument.user_id == user_id, ResumeDocument.deleted_at.is_(None))

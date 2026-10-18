@@ -62,6 +62,15 @@ class Permission(StrEnum):
     MANAGE_USERS = "manage_users"  # create / update / deactivate users
     ASSIGN_ROLES = "assign_roles"  # change a user's role
 
+    # --- Admin Operations V1.1 ---
+    CREATE_PERSON = "create_person"
+    MANAGE_ASSISTED_PROFILE = "manage_assisted_profile"
+    SEND_CANDIDATE_ACTIVATION = "send_candidate_activation"
+    CREATE_ORGANIZATION = "create_organization"
+    INVITE_FIRST_HR = "invite_first_hr"
+    MANAGE_COURT_CHECK = "manage_court_check"
+    PERFORM_IN_PERSON_VERIFICATION = "perform_in_person_verification"
+
     # --- Trust & Safety operations ---
     TRUST_SAFETY_READ = "trust_safety_read"
     TRUST_SAFETY_CREATE = "trust_safety_create"
@@ -162,6 +171,13 @@ _ADMIN: frozenset[Permission] = frozenset(
         Permission.MANAGE_USER_SECURITY,
         Permission.MANAGE_USER_NOTES,
         Permission.MANAGE_USERS,
+        Permission.CREATE_PERSON,
+        Permission.MANAGE_ASSISTED_PROFILE,
+        Permission.SEND_CANDIDATE_ACTIVATION,
+        Permission.CREATE_ORGANIZATION,
+        Permission.INVITE_FIRST_HR,
+        Permission.MANAGE_COURT_CHECK,
+        Permission.PERFORM_IN_PERSON_VERIFICATION,
         Permission.TRUST_SAFETY_READ,
         Permission.TRUST_SAFETY_CREATE,
         Permission.TRUST_SAFETY_ASSIGN,
