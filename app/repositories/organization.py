@@ -36,8 +36,12 @@ class OrganizationRepository:
         await self._session.flush()
         return organization
 
-    async def get_by_public_id(self, public_id: UUID) -> Organization | None:
+    async def get_by_public_id(
+        self, public_id: UUID, *, for_update: bool = False
+    ) -> Organization | None:
         stmt = select(Organization).where(Organization.public_id == public_id)
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id(self, organization_id: UUID) -> Organization | None:
@@ -93,6 +97,7 @@ class OrganizationRepository:
                 OrganizationMember.organization_id == organization_id,
                 OrganizationMember.user_id == user_id,
             )
+            .execution_options(populate_existing=True)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 

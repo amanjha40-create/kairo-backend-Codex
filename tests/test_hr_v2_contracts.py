@@ -549,6 +549,8 @@ async def test_report_finality_trust_score_and_not_ordered_are_backend_derived()
     )
     service._people = SimpleNamespace(get_by_public_id=AsyncMock(return_value=person))
     service._report_requests = AsyncMock(return_value=[request])
+    service._session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [])))
+    service._court_items = AsyncMock(return_value=([], []))
     service._latest_trust_score = AsyncMock(return_value=SimpleNamespace(overall_score=88))
     service._identity_items = AsyncMock(return_value=[])
     service._employment_items = lambda _requests: []
@@ -591,7 +593,7 @@ async def test_report_interim_open_items_and_cross_org_denial() -> None:
 def _team_invitation():
     now = datetime.now(tz=UTC)
     inviter = SimpleNamespace(email="owner@example.com", full_name="Owner User")
-    organization = SimpleNamespace(id=uuid4(), public_id=uuid4(), name="Kairo Labs")
+    organization = SimpleNamespace(id=uuid4(), public_id=uuid4(), name="Kairo Labs", suspended_at=None)
     return SimpleNamespace(
         id=uuid4(),
         public_id=uuid4(),

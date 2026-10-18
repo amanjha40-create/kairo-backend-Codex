@@ -216,6 +216,9 @@ async def test_internal_reference_comments_never_reach_passport_or_export(case):
         [SimpleNamespace(employment_id=case.emp.id)]
     )
     assert "Confidential HR comment" in str(hr_rows)
+    assert "Confidential manager comment" in str(hr_rows)
+    assert any(row.name == nomination().full_name for row in hr_rows)
+    assert any(row.title_or_relationship == nomination().designation for row in hr_rows)
 
     public = PublicPassportService(case.db, case.svc.settings)
     permissions = PassportSharePermissions(include_employments=True, show_trust_score=False)
@@ -237,6 +240,20 @@ async def test_internal_reference_comments_never_reach_passport_or_export(case):
     for surface in surfaces:
         for comment in ("Confidential HR comment", "Confidential manager comment"):
             assert comment not in surface
+
+
+async def test_structured_report_excludes_superseded_nomination_without_deleting_history(case):
+    from app.services.hr_v2_service import HRV2Service
+
+    previous = await approved(case)
+    previous_id = previous.id
+    await case.svc.nominate(case.user.id, case.emp.id, nomination(full_name="New Synthetic Manager"), replace=True)
+    rows = await HRV2Service(case.db, case.svc.settings)._reference_items(
+        [SimpleNamespace(employment_id=case.emp.id)], require_pair=True)
+    assert all(row.evidence_id != previous_id for row in rows)
+    assert any(row.name == "New Synthetic Manager" for row in rows)
+    assert previous.active is False and previous.superseded_at is not None
+    assert previous.nomination["full_name"] == nomination().full_name
 
 
 @pytest.mark.parametrize(

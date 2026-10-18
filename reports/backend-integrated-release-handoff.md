@@ -2,8 +2,9 @@
 
 This is an integration candidate, not authorization to deploy. The founder chose
 to retain frozen frontend SHAs and report the HR court-detail blocker. Do not
-label the entire release certified or push under the conditional post-certification
-approval while blockers remain.
+label the entire release certified. This backend hold-closure task does not deploy
+or push any source. Frozen frontend adapter holds remain independent of backend
+source/test certification.
 
 ## Frozen Inputs
 
@@ -40,7 +41,22 @@ the structured report has no direct Admin renderer. Backend read closure must
 not be reported as completed frontend refresh behavior. A masked first-HR status
 does not eliminate the existing explicit recipient-input requirement for resend.
 
-## Additional Audit Holds
+## Backend Hold-Closure Follow-Up
+
+The historical findings below motivated the scoped follow-up. They are now
+addressed by the implementation described in `backend-release-hold-policy.md`:
+current/legacy reference mapping, a common finality policy, parent-first invitation
+locking, and explicit unsupported-preference/empty-selection semantics. Exact final
+SHA, test outcomes and artifact status are recorded in
+`artifacts/backend-integrated-hold-closure/artifact-evidence.json` in the main
+workspace. That evidence, not the older 50f885f artifact, governs backend closure.
+
+Address and arbitrary numeric reference orchestration are not implemented by the
+schema093 Trust Invitation pipeline. Unsupported defaults now fail explicitly;
+the separate Permanent Address and per-employment reference workflows are retained.
+No new workflow engine, enum migration or persistence was introduced.
+
+### Historical Findings (50f885f)
 
 - Structured HR reference projection reads legacy `name`, `title`, `strengths`
   and `comments` keys, whereas current manager records store `full_name`,

@@ -191,7 +191,9 @@ class OrganizationService:
         org_public_id: UUID,
         payload: OrganizationMemberCreateRequest,
     ) -> OrganizationMemberResponse:
-        organization, _ = await self.require_org_manager(actor_user_id, org_public_id)
+        organization, _ = await self.require_org_manager(
+            actor_user_id, org_public_id, for_update=True
+        )
         user = await self._users.get_by_email(payload.email)
         if user is None:
             raise NotFoundError("User not found")
@@ -225,8 +227,7 @@ class OrganizationService:
         organization, _ = await self.require_org_member(actor_user_id, org_public_id)
         memberships = await self._organizations.list_members(organization.id)
         responses = [
-            self._to_member_response(organization, membership)
-            for membership in memberships
+            self._to_member_response(organization, membership) for membership in memberships
         ]
         if params is None:
             return responses
@@ -277,7 +278,9 @@ class OrganizationService:
         org_public_id: UUID,
         payload: OrganizationInvitationCreateRequest,
     ) -> OrganizationInvitationResponse:
-        organization, _ = await self.require_org_manager(actor_user_id, org_public_id)
+        organization, _ = await self.require_org_manager(
+            actor_user_id, org_public_id, for_update=True
+        )
         invitee_email = self._normalize_email(str(payload.invitee_email))
         user = await self._users.get_by_email(invitee_email)
 
@@ -292,9 +295,7 @@ class OrganizationService:
         )
         await self._expire_stale_invitations(pending, datetime.now(tz=UTC))
         active_pending = [
-            invitation
-            for invitation in pending
-            if self._is_invitation_actionable(invitation)
+            invitation for invitation in pending if self._is_invitation_actionable(invitation)
         ]
         if active_pending:
             raise ConflictError("An active invitation already exists for this email")
@@ -360,7 +361,9 @@ class OrganizationService:
         org_public_id: UUID,
         invitation_public_id: UUID,
     ) -> OrganizationInvitationResponse:
-        organization, _ = await self.require_org_manager(actor_user_id, org_public_id)
+        organization, _ = await self.require_org_manager(
+            actor_user_id, org_public_id, for_update=True
+        )
         invitation = await self._require_org_invitation(organization.id, invitation_public_id)
         await self._expire_stale_invitations([invitation], datetime.now(tz=UTC))
 
@@ -404,7 +407,9 @@ class OrganizationService:
         org_public_id: UUID,
         invitation_public_id: UUID,
     ) -> OrganizationInvitationResponse:
-        organization, _ = await self.require_org_manager(actor_user_id, org_public_id)
+        organization, _ = await self.require_org_manager(
+            actor_user_id, org_public_id, for_update=True
+        )
         invitation = await self._require_org_invitation(organization.id, invitation_public_id)
         await self._expire_stale_invitations([invitation], datetime.now(tz=UTC))
 
@@ -552,7 +557,11 @@ class OrganizationService:
         self,
         actor_user_id: UUID,
         org_public_id: UUID,
+        *,
+        for_update: bool = False,
     ) -> tuple[Organization, OrganizationMember]:
+        if for_update:
+            await self._organizations.get_by_public_id(org_public_id, for_update=True)
         organization, membership = await self.require_org_member(actor_user_id, org_public_id)
         if organization.suspended_at is not None or membership.suspended_at is not None:
             raise ForbiddenError("Organization access is suspended")
@@ -667,6 +676,7 @@ class OrganizationService:
         invitation = await self._invitations.get_by_public_id_for_organization(
             organization_id,
             invitation_public_id,
+            for_update=True,
         )
         if invitation is None:
             raise NotFoundError("Organization invitation not found")
@@ -702,15 +712,26 @@ class OrganizationService:
         now: datetime,
     ) -> None:
         changed = False
-        for invitation in invitations:
+        for invitation in sorted(
+            invitations, key=lambda row: (str(row.organization_id), str(row.public_id))
+        ):
             if (
                 invitation.status == OrganizationInvitationStatus.PENDING
                 and invitation.expires_at is not None
                 and invitation.expires_at <= now
             ):
-                invitation.status = OrganizationInvitationStatus.EXPIRED
-                invitation.token_revoked_at = now
-                changed = True
+                invitation = await self._invitations.get_by_public_id(
+                    invitation.public_id, for_update=True
+                )
+                if (
+                    invitation is not None
+                    and invitation.status == OrganizationInvitationStatus.PENDING
+                    and invitation.expires_at is not None
+                    and invitation.expires_at <= now
+                ):
+                    invitation.status = OrganizationInvitationStatus.EXPIRED
+                    invitation.token_revoked_at = now
+                    changed = True
         if changed:
             await self._session.flush()
 
@@ -790,9 +811,9 @@ class OrganizationService:
                     "organization_name": invitation.organization.name,
                     "inviter_name": invitation.invited_by_user.full_name
                     or invitation.invited_by_user.email,
-                    "invited_role_label": str(
-                        getattr(invitation.role, "value", invitation.role)
-                    ).replace("_", " ").title(),
+                    "invited_role_label": str(getattr(invitation.role, "value", invitation.role))
+                    .replace("_", " ")
+                    .title(),
                     "invitation_url": invitation_url,
                     "expires_at_iso": invitation.token_expires_at.isoformat(),
                 },

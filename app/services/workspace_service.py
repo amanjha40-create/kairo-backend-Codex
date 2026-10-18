@@ -122,8 +122,10 @@ class WorkspaceService:
         user = await self._require_user(actor_user_id)
         invitation = await self._require_invitation(invitation_public_id)
         now = datetime.now(tz=UTC)
-        await self._expire_stale_invitations([invitation], now)
+        await self._expire_stale_invitations([invitation], now, commit=False)
         self._assert_invitation_assignee(invitation, user)
+        if invitation.organization.suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
 
         if getattr(invitation, "token_hash", None) is not None:
             raise ConflictError("This invitation must be accepted using its secure token")
@@ -174,9 +176,13 @@ class WorkspaceService:
         user = await self._require_user(actor_user_id)
         invitation = await self._resolve_team_token(raw_token, for_accept=True)
         if self._normalize_email(user.email) != self._normalize_email(invitation.invitee_email):
-            raise ForbiddenError("This team invitation is not assigned to the authenticated account")
+            raise ForbiddenError(
+                "This team invitation is not assigned to the authenticated account"
+            )
         if invitation.invitee_user_id not in {None, user.id}:
-            raise ForbiddenError("This team invitation is not assigned to the authenticated account")
+            raise ForbiddenError(
+                "This team invitation is not assigned to the authenticated account"
+            )
         membership = await self._organizations.get_membership(invitation.organization_id, user.id)
         if membership is None:
             membership = OrganizationMember(
@@ -223,7 +229,7 @@ class WorkspaceService:
         user = await self._require_user(actor_user_id)
         invitation = await self._require_invitation(invitation_public_id)
         now = datetime.now(tz=UTC)
-        await self._expire_stale_invitations([invitation], now)
+        await self._expire_stale_invitations([invitation], now, commit=False)
         self._assert_invitation_assignee(invitation, user)
 
         if invitation.status == OrganizationInvitationStatus.DECLINED:
@@ -248,7 +254,7 @@ class WorkspaceService:
         return user
 
     async def _require_invitation(self, invitation_public_id: UUID) -> OrganizationInvitation:
-        invitation = await self._invitations.get_by_public_id(invitation_public_id)
+        invitation = await self._invitations.get_by_public_id(invitation_public_id, for_update=True)
         if invitation is None:
             raise NotFoundError("Organization invitation not found")
         return invitation
@@ -258,9 +264,13 @@ class WorkspaceService:
     ) -> OrganizationInvitation:
         if not raw_token or len(raw_token) < 32:
             raise NotFoundError("Team invitation not found")
-        invitation = await self._invitations.get_by_token_hash(hash_refresh_token(raw_token))
+        invitation = await self._invitations.get_by_token_hash(
+            hash_refresh_token(raw_token), for_update=True
+        )
         if invitation is None:
             raise NotFoundError("Team invitation not found")
+        if invitation.organization.suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
         now = datetime.now(tz=UTC)
         expires_at = invitation.token_expires_at or invitation.expires_at
         if expires_at is None or expires_at <= now:
@@ -275,7 +285,10 @@ class WorkspaceService:
             OrganizationInvitationStatus.EXPIRED,
         }:
             raise ConflictError("Team invitation is no longer actionable")
-        if invitation.token_used_at is not None or invitation.status == OrganizationInvitationStatus.ACCEPTED:
+        if (
+            invitation.token_used_at is not None
+            or invitation.status == OrganizationInvitationStatus.ACCEPTED
+        ):
             raise ConflictError("Team invitation token has already been used")
         if for_accept and invitation.status != OrganizationInvitationStatus.PENDING:
             raise ConflictError("Team invitation is no longer actionable")
@@ -302,17 +315,31 @@ class WorkspaceService:
         self,
         invitations: list[OrganizationInvitation],
         now: datetime,
+        *,
+        commit: bool = True,
     ) -> None:
         changed = False
-        for invitation in invitations:
+        for invitation in sorted(
+            invitations, key=lambda row: (str(row.organization_id), str(row.public_id))
+        ):
             if (
                 invitation.status == OrganizationInvitationStatus.PENDING
                 and invitation.expires_at is not None
                 and invitation.expires_at <= now
             ):
-                invitation.status = OrganizationInvitationStatus.EXPIRED
-                changed = True
-        if changed:
+                invitation = await self._invitations.get_by_public_id(
+                    invitation.public_id, for_update=True
+                )
+                if (
+                    invitation is not None
+                    and invitation.status == OrganizationInvitationStatus.PENDING
+                    and invitation.expires_at is not None
+                    and invitation.expires_at <= now
+                ):
+                    invitation.status = OrganizationInvitationStatus.EXPIRED
+                    invitation.token_revoked_at = now
+                    changed = True
+        if changed and commit:
             await self._session.commit()
 
     def _first_pending_invitation(

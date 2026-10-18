@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.organization.enums import OrganizationInvitationStatus
 
@@ -22,7 +23,25 @@ class OrganizationInvitationRepository:
         await self._session.flush()
         return invitation
 
-    async def get_by_public_id(self, invitation_public_id: UUID) -> OrganizationInvitation | None:
+    async def _lock_organization(self, predicate) -> None:  # noqa: ANN001
+        # All invitation mutations use organization -> invitation -> membership.
+        # Discover only the parent ID first, then re-read the token/state under lock.
+        organization_id = await self._session.scalar(
+            select(OrganizationInvitation.organization_id).where(predicate)
+        )
+        if organization_id is not None:
+            await self._session.scalar(
+                select(Organization)
+                .where(Organization.id == organization_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+
+    async def get_by_public_id(
+        self, invitation_public_id: UUID, *, for_update: bool = False
+    ) -> OrganizationInvitation | None:
+        if for_update:
+            await self._lock_organization(OrganizationInvitation.public_id == invitation_public_id)
         stmt = (
             select(OrganizationInvitation)
             .options(
@@ -32,13 +51,24 @@ class OrganizationInvitationRepository:
             )
             .where(OrganizationInvitation.public_id == invitation_public_id)
         )
+        if for_update:
+            stmt = stmt.with_for_update(of=OrganizationInvitation).execution_options(
+                populate_existing=True
+            )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_public_id_for_organization(
         self,
         organization_id: UUID,
         invitation_public_id: UUID,
+        *,
+        for_update: bool = False,
     ) -> OrganizationInvitation | None:
+        if for_update:
+            await self._lock_organization(
+                (OrganizationInvitation.public_id == invitation_public_id)
+                & (OrganizationInvitation.organization_id == organization_id)
+            )
         stmt = (
             select(OrganizationInvitation)
             .options(
@@ -51,9 +81,17 @@ class OrganizationInvitationRepository:
                 OrganizationInvitation.public_id == invitation_public_id,
             )
         )
+        if for_update:
+            stmt = stmt.with_for_update(of=OrganizationInvitation).execution_options(
+                populate_existing=True
+            )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def get_by_token_hash(self, token_hash: str) -> OrganizationInvitation | None:
+    async def get_by_token_hash(
+        self, token_hash: str, *, for_update: bool = False
+    ) -> OrganizationInvitation | None:
+        if for_update:
+            await self._lock_organization(OrganizationInvitation.token_hash == token_hash)
         stmt = (
             select(OrganizationInvitation)
             .options(
@@ -63,6 +101,10 @@ class OrganizationInvitationRepository:
             )
             .where(OrganizationInvitation.token_hash == token_hash)
         )
+        if for_update:
+            stmt = stmt.with_for_update(of=OrganizationInvitation).execution_options(
+                populate_existing=True
+            )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_invitee(

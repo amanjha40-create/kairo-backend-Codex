@@ -25,6 +25,7 @@ from app.models.organization_job_role import OrganizationJobRole
 from app.models.organization_logo_upload import OrganizationLogoUpload
 from app.models.organization_person import OrganizationPerson
 from app.models.permanent_address import PermanentAddressSession, PermanentAddressVersion
+from app.models.trust_invitation import TrustInvitation
 from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
@@ -63,6 +64,7 @@ from app.schemas.hr_v2 import (
     normalize_role_name,
 )
 from app.services.organization_service import OrganizationService
+from app.trust_invitations.enums import TrustInvitationStatus
 from app.verification_requests.enums import VerificationRequestStatus, VerificationRequestType
 
 _LOGO_CONTENT_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
@@ -77,14 +79,6 @@ _REPORT_CHECKS = (
     "address",
     "court_record_search",
 )
-_TERMINAL_REQUEST_STATUSES = {
-    VerificationRequestStatus.VERIFIED,
-    VerificationRequestStatus.REJECTED,
-    VerificationRequestStatus.UNABLE_TO_VERIFY,
-    VerificationRequestStatus.CANCELLED,
-    VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
-    VerificationRequestStatus.EXPIRED,
-}
 
 
 class HRV2Service:
@@ -469,37 +463,35 @@ class HRV2Service:
         # Internal consumers only. External Passport/export projections use their
         # own allowlists and must never serialize this reference-comment report.
         requests = await self._report_requests(organization.id, person.id)
+        invitations = list(
+            (
+                await self._session.scalars(
+                    select(TrustInvitation).where(
+                        TrustInvitation.organization_id == organization.id,
+                        TrustInvitation.organization_person_id == person.id,
+                        TrustInvitation.status.in_(
+                            [
+                                TrustInvitationStatus.PENDING,
+                                TrustInvitationStatus.ACCEPTED,
+                            ]
+                        ),
+                    )
+                )
+            ).all()
+        )
+        ordered = self._ordered_report_checks(requests, invitations)
         score = await self._latest_trust_score(person.linked_user_id)
-        identity = await self._identity_items(person, requests)
+        identity = await self._identity_items(person, requests) if "identity" in ordered else []
         employment = self._employment_items(requests)
         education = self._education_items(requests)
-        references = await self._reference_items(requests)
-        address = await self._address_items(person.linked_user_id)
+        references = await self._reference_items(requests, require_pair="references" in ordered)
+        address = await self._address_items(person.linked_user_id) if "address" in ordered else []
         court_search, court_checks = await self._court_items(organization.id, person)
         summaries = self._check_summaries(
-            requests, identity, employment, education, references, address, court_search
+            requests, identity, employment, education, references, address, court_search, ordered
         )
-        open_items = self._open_items(requests)
-        open_items.extend(
-            VerificationReportOpenItem(
-                code="PENDING_VERIFICATION",
-                check="court_record_search",
-                display_text="Court-record search is still in progress",
-                request_public_id=check.public_id,
-            )
-            for check in court_checks
-            if check.status == "pending"
-        )
-        work_items_present = bool(requests or court_checks)
-        work_items_terminal = all(
-            request.status in _TERMINAL_REQUEST_STATUSES for request in requests
-        ) and all(
-            check.status != "pending" and check.finalized_at is not None for check in court_checks
-        )
-        report_status = (
-            VerificationReportStatus.FINAL
-            if work_items_present and work_items_terminal
-            else VerificationReportStatus.INTERIM
+        report_status, open_items, review_required = self._report_finality(
+            requests, summaries, ordered
         )
         initiated_at = min(
             [
@@ -542,15 +534,7 @@ class HRV2Service:
             address=address,
             court_search=court_search or [VerificationReportCourtSearchItem()],
             open_items=open_items,
-            hr_review_required=any(
-                summary.status
-                in {
-                    VerificationReportCheckStatus.DISCREPANCY,
-                    VerificationReportCheckStatus.REJECTED,
-                    VerificationReportCheckStatus.UNABLE_TO_VERIFY,
-                }
-                for summary in summaries
-            ),
+            hr_review_required=review_required,
             metadata={"generated_at": datetime.now(tz=UTC).isoformat()},
         )
 
@@ -787,14 +771,26 @@ class HRV2Service:
         return items
 
     async def _reference_items(
-        self, requests: list[VerificationRequest]
+        self, requests: list[VerificationRequest], *, require_pair: bool = False
     ) -> list[VerificationReportReferenceItem]:
-        employment_ids = [r.employment_id for r in requests if r.employment_id is not None]
+        employment_ids = {
+            r.employment_id
+            for r in requests
+            if r.employment_id is not None
+            and getattr(r, "status", None)
+            not in {
+                VerificationRequestStatus.CANCELLED,
+                VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+            }
+        }
         if not employment_ids:
             return []
         result = await self._session.execute(
             select(EmploymentReference)
-            .where(EmploymentReference.employment_id.in_(employment_ids))
+            .where(
+                EmploymentReference.employment_id.in_(employment_ids),
+                EmploymentReference.active.is_(True),
+            )
             .order_by(EmploymentReference.created_at.asc())
         )
         references = list(result.scalars().all())
@@ -810,11 +806,14 @@ class HRV2Service:
             )
             for event in event_result.scalars().all():
                 events_by_reference.setdefault(event.reference_id, []).append(event.created_at)
-        return [
+        items = [
             VerificationReportReferenceItem(
-                name=self._safe_text((row.nomination or {}).get("name")),
+                name=self._safe_text(
+                    (row.nomination or {}).get("full_name") or (row.nomination or {}).get("name")
+                ),
                 title_or_relationship=self._safe_text(
-                    (row.nomination or {}).get("title")
+                    (row.nomination or {}).get("designation")
+                    or (row.nomination or {}).get("title")
                     or (row.nomination or {}).get("relationship")
                 ),
                 organization=self._safe_text((row.nomination or {}).get("organization")),
@@ -823,14 +822,38 @@ class HRV2Service:
                 follow_up_dates=events_by_reference.get(row.id, []),
                 response_date=row.completed_at,
                 status=self._reference_status(row.status),
-                strengths=self._safe_text((row.answers or {}).get("strengths")),
+                strengths=self._safe_text(
+                    (row.answers or {}).get("key_strength") or (row.answers or {}).get("strengths")
+                ),
                 development_areas=self._safe_text((row.answers or {}).get("development_areas")),
-                rehire_response=self._safe_text((row.answers or {}).get("rehire_response")),
-                comments=self._safe_text((row.answers or {}).get("comments")),
+                rehire_response=self._safe_text(
+                    (row.answers or {}).get("eligible_for_rehire")
+                    or (row.answers or {}).get("rehire_response")
+                ),
+                comments=self._safe_text(
+                    (row.answers or {}).get("additional_comments")
+                    or (row.answers or {}).get("comments")
+                ),
                 evidence_id=row.id,
             )
             for row in references
         ]
+        if require_pair:
+            present = {(row.employment_id, row.kind) for row in references}
+            for employment_id in sorted(employment_ids, key=str):
+                for kind in ("hr_reference", "reporting_manager_reference"):
+                    if (employment_id, kind) not in present:
+                        items.append(
+                            VerificationReportReferenceItem(
+                                title_or_relationship=(
+                                    "HR reference"
+                                    if kind == "hr_reference"
+                                    else "Reporting manager"
+                                ),
+                                status=VerificationReportCheckStatus.PENDING,
+                            )
+                        )
+        return items
 
     async def _address_items(self, user_id: UUID | None) -> list[VerificationReportAddressItem]:
         if user_id is None:
@@ -940,7 +963,15 @@ class HRV2Service:
         return items, rows
 
     def _check_summaries(
-        self, requests, identity, employment, education, references, address, court_search=None
+        self,
+        requests,
+        identity,
+        employment,
+        education,
+        references,
+        address,
+        court_search=None,
+        ordered=None,
     ):  # noqa: ANN001
         by_check: dict[str, list[VerificationReportCheckStatus]] = {
             key: [] for key in _REPORT_CHECKS
@@ -964,8 +995,7 @@ class HRV2Service:
                 request_times[key] = max(
                     request_times.get(key, request.updated_at), request.updated_at
                 )
-                if not by_check[key]:
-                    by_check[key].append(self._request_status(request.status))
+                by_check[key].append(self._request_status(request.status))
         if court_search:
             request_times["court_record_search"] = (
                 max(item.searched_at for item in court_search if item.searched_at is not None)
@@ -974,6 +1004,13 @@ class HRV2Service:
             )
         summaries = []
         for check in _REPORT_CHECKS:
+            by_check[check] = [
+                status
+                for status in by_check[check]
+                if status != VerificationReportCheckStatus.NOT_ORDERED
+            ]
+            if not by_check[check] and check in (ordered or set()):
+                by_check[check].append(VerificationReportCheckStatus.PENDING)
             status = self._aggregate_status(by_check[check])
             summaries.append(
                 VerificationReportCheckSummary(
@@ -985,10 +1022,97 @@ class HRV2Service:
             )
         return summaries
 
+    @staticmethod
+    def _ordered_report_checks(requests, invitations) -> set[str]:  # noqa: ANN001
+        mapping = {"reference": "references", "professional_reference": "references"}
+        ordered = {
+            mapping.get(r.request_type.value, r.request_type.value)
+            for r in requests
+            if r.status
+            not in {
+                VerificationRequestStatus.CANCELLED,
+                VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+            }
+        }
+        for invitation in invitations:
+            ordered.update(
+                mapping.get(value, value) for value in invitation.requested_verification_types
+            )
+            snapshot = invitation.verification_preferences_snapshot or {}
+            # Historical HR defaults could record address intent without an enum mapping.
+            # Explicit selections in new invitations never inherit unselected defaults.
+            if snapshot.get("requested_types_source") != "explicit" and (
+                snapshot.get("checks", {}).get("address") is True
+            ):
+                ordered.add("address")
+        return ordered
+
+    def _report_finality(self, requests, summaries, ordered=None):  # noqa: ANN001
+        """One unresolved-work policy owns finality, open items and review indication."""
+        items = self._open_items(requests)
+        resolved = {
+            VerificationReportCheckStatus.NOT_ORDERED,
+            VerificationReportCheckStatus.CONFIRMED,
+            VerificationReportCheckStatus.DETAILS_MATCHED,
+        }
+        request_checks = {"reference": "references"}
+        represented = {request_checks.get(item.check, item.check) for item in items}
+        present = {
+            request_checks.get(r.request_type.value, r.request_type.value)
+            for r in requests
+            if r.status
+            not in {
+                VerificationRequestStatus.CANCELLED,
+                VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+            }
+        }
+        present.update(
+            summary.check
+            for summary in summaries
+            if summary.status != VerificationReportCheckStatus.NOT_ORDERED
+        )
+        for check in sorted((ordered or set()) - present):
+            items.append(
+                VerificationReportOpenItem(
+                    code="PENDING_VERIFICATION",
+                    check=check,
+                    display_text="Requested verification has no completed result",
+                )
+            )
+        for summary in summaries:
+            if summary.status in resolved or summary.check in represented:
+                continue
+            code = {
+                VerificationReportCheckStatus.AWAITING_RESPONSE: "AWAITING_RESPONSE",
+                VerificationReportCheckStatus.DISCREPANCY: "REVIEW_REQUIRED",
+                VerificationReportCheckStatus.REJECTED: "REVIEW_REQUIRED",
+                VerificationReportCheckStatus.UNABLE_TO_VERIFY: "REVIEW_REQUIRED",
+            }.get(summary.status, "PENDING_VERIFICATION")
+            items.append(
+                VerificationReportOpenItem(
+                    code=code,
+                    check=summary.check,
+                    display_text=summary.display_text,
+                )
+            )
+        has_work = bool(requests) or any(
+            summary.status != VerificationReportCheckStatus.NOT_ORDERED for summary in summaries
+        )
+        status = (
+            VerificationReportStatus.FINAL
+            if has_work and not items
+            else VerificationReportStatus.INTERIM
+        )
+        return status, items, bool(items)
+
     def _open_items(self, requests: list[VerificationRequest]) -> list[VerificationReportOpenItem]:
         items = []
         for request in requests:
-            if request.status in _TERMINAL_REQUEST_STATUSES:
+            if request.status in {
+                VerificationRequestStatus.VERIFIED,
+                VerificationRequestStatus.CANCELLED,
+                VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+            }:
                 continue
             code = (
                 "AWAITING_RESPONSE"
@@ -999,6 +1123,13 @@ class HRV2Service:
                     VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
                     VerificationRequestStatus.AWAITING_INFORMATION,
                 }
+                else "REVIEW_REQUIRED"
+                if request.status
+                in {
+                    VerificationRequestStatus.REJECTED,
+                    VerificationRequestStatus.UNABLE_TO_VERIFY,
+                    VerificationRequestStatus.EXPIRED,
+                }
                 else "PENDING_VERIFICATION"
             )
             items.append(
@@ -1008,6 +1139,8 @@ class HRV2Service:
                     display_text=(
                         "A response is still awaited"
                         if code == "AWAITING_RESPONSE"
+                        else "Verification outcome requires review"
+                        if code == "REVIEW_REQUIRED"
                         else "Verification processing is still in progress"
                     ),
                     request_public_id=request.public_id,
@@ -1016,6 +1149,11 @@ class HRV2Service:
         return items
 
     def _request_status(self, status: VerificationRequestStatus) -> VerificationReportCheckStatus:
+        if status in {
+            VerificationRequestStatus.CANCELLED,
+            VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+        }:
+            return VerificationReportCheckStatus.NOT_ORDERED
         if status == VerificationRequestStatus.VERIFIED:
             return VerificationReportCheckStatus.CONFIRMED
         if status == VerificationRequestStatus.REJECTED:
@@ -1056,6 +1194,9 @@ class HRV2Service:
     def _aggregate_status(
         self, statuses: list[VerificationReportCheckStatus]
     ) -> VerificationReportCheckStatus:
+        statuses = [
+            status for status in statuses if status != VerificationReportCheckStatus.NOT_ORDERED
+        ]
         if not statuses:
             return VerificationReportCheckStatus.NOT_ORDERED
         priority = (

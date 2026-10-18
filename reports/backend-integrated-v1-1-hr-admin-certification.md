@@ -1,5 +1,11 @@
 # Backend Integration Validation: Release HOLD
 
+Historical integration evidence for 50f885f is retained below. The subsequent
+scoped backend hold-closure policy is `backend-release-hold-policy.md`; its exact
+SHA, ARM64 artifact and final test evidence are stored separately under
+`/Users/Aman/Documents/New project/artifacts/backend-integrated-hold-closure/`.
+Do not confuse backend hold closure with certification of the frozen HR/Admin UIs.
+
 This report does not certify the combined frontend/backend release. The founder
 explicitly chose to preserve the frozen HR SHA and report its court-detail blocker.
 No conditional post-certification push or deployment may be inferred from local

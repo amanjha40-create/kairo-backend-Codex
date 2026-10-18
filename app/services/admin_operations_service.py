@@ -28,6 +28,7 @@ from app.core.constants import Role
 from app.exceptions import (
     ConflictError,
     ExpiredLinkError,
+    ForbiddenError,
     NotFoundError,
     RateLimitError,
     ValidationAppError,
@@ -667,6 +668,7 @@ class AdminOperationsService:
                         OrganizationInvitation.status == OrganizationInvitationStatus.PENDING,
                     )
                     .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).all()
         )
@@ -1213,10 +1215,15 @@ class AdminOperationsService:
 
     async def _admin_provisioned_organization(self, public_id: UUID) -> Organization:
         organization = await self._session.scalar(
-            select(Organization).where(Organization.public_id == public_id).with_for_update()
+            select(Organization)
+            .where(Organization.public_id == public_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if organization is None or organization.provisioned_at is None:
             raise NotFoundError("Admin-provisioned organization not found")
+        if organization.suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
         return organization
 
     @staticmethod

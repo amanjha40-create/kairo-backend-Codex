@@ -98,8 +98,19 @@ class TrustInvitationService:
             getattr(organization, "verification_preferences", None)
         )
         requested_types = list(payload.requested_verification_types)
-        if not requested_types:
+        uses_defaults = "requested_verification_types" not in payload.model_fields_set
+        if uses_defaults:
             requested_types = self._verification_types_from_preferences(preferences)
+        preferences["requested_types_source"] = "defaults" if uses_defaults else "explicit"
+        preferences["reference_count_applied"] = False
+        if (
+            TrustInvitationVerificationType.PROFESSIONAL_REFERENCE in requested_types
+            and preferences["reference_count"] > 0
+        ):
+            raise ValidationAppError(
+                "Reference-count orchestration is not supported; set reference_count to 0. "
+                "References use the existing per-employment nomination workflow."
+            )
         invitation_public_id = secrets.token_hex(16)
         invitation_uuid = UUID(hex=invitation_public_id)
         signed_token = self._build_signed_token(invitation_uuid)
@@ -111,9 +122,7 @@ class TrustInvitationService:
             subject_phone=payload.subject_phone,
             purpose=payload.purpose or (job_role.name if job_role is not None else None),
             role_id=job_role.id if job_role is not None else None,
-            requested_verification_types=[
-                item.value for item in requested_types
-            ],
+            requested_verification_types=[item.value for item in requested_types],
             verification_preferences_snapshot=preferences,
             message=payload.message,
             token_hash=hash_refresh_token(signed_token),
@@ -222,9 +231,7 @@ class TrustInvitationService:
                 and invitation.expires_at <= expiring_cutoff
             ),
             draft_count=sum(
-                1
-                for invitation in invitations
-                if invitation.status == TrustInvitationStatus.DRAFT
+                1 for invitation in invitations if invitation.status == TrustInvitationStatus.DRAFT
             ),
         )
 
@@ -352,7 +359,9 @@ class TrustInvitationService:
             purpose=invitation.purpose,
             role_id=job_role.public_id if job_role is not None else None,
             role=job_role.name if job_role is not None else None,
-            requested_verification_types=self._deserialize_verification_types(invitation.requested_verification_types),
+            requested_verification_types=self._deserialize_verification_types(
+                invitation.requested_verification_types
+            ),
             expires_at=invitation.expires_at,
             status=invitation.status,
         )
@@ -677,7 +686,9 @@ class TrustInvitationService:
             purpose=invitation.purpose,
             role_id=job_role.public_id if job_role is not None else None,
             role=job_role.name if job_role is not None else None,
-            requested_verification_types=self._deserialize_verification_types(invitation.requested_verification_types),
+            requested_verification_types=self._deserialize_verification_types(
+                invitation.requested_verification_types
+            ),
             message=invitation.message,
             status=invitation.status,
             delivery_method=invitation.delivery_method,
@@ -689,7 +700,9 @@ class TrustInvitationService:
             opened_at=invitation.opened_at,
             accepted_at=invitation.accepted_at,
             cancelled_at=invitation.cancelled_at,
-            related_verification_request_public_id=self._related_verification_request_public_id(invitation),
+            related_verification_request_public_id=self._related_verification_request_public_id(
+                invitation
+            ),
             created_at=invitation.created_at,
             updated_at=invitation.updated_at,
             verification_preferences_snapshot=dict(
@@ -789,6 +802,12 @@ class TrustInvitationService:
         checks = preferences.get("checks")
         if not isinstance(checks, dict):
             return []
+        if checks.get("address") is True:
+            raise ValidationAppError(
+                "Address is not supported by Trust Invitation orchestration. "
+                "Choose explicit verification types or disable the address default; "
+                "Permanent Address verification remains a separate workflow."
+            )
         mapping = {
             "identity": TrustInvitationVerificationType.IDENTITY,
             "employment": TrustInvitationVerificationType.EMPLOYMENT,
