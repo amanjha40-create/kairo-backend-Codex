@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.models import DigiLockerIdentityVerification, UserDocument
 
@@ -40,6 +40,8 @@ async def resolve_identity(session, user, now=None):
                 select(UserDocument).where(
                     UserDocument.user_id == user.id,
                     UserDocument.deleted_at.is_(None),
+                    UserDocument.superseded_at.is_(None),
+                    or_(UserDocument.expires_at.is_(None), UserDocument.expires_at >= now.date()),
                 )
             )
         )

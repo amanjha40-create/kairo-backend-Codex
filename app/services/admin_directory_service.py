@@ -248,14 +248,12 @@ class AdminDirectoryService:
         self._password_resets = PasswordResetTokenRepository(session)
         self._email = get_email_sender(settings, session=session)
 
-    async def _require_candidate(self, user_public_id: UUID) -> User:
+    async def _require_candidate(self, user_public_id: UUID, *, for_update: bool = False) -> User:
+        statement = select(User).where(User.id == user_public_id, User.role == Role.USER.value)
+        if for_update:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         user = (
-            await self._session.execute(
-                select(User).where(
-                    User.id == user_public_id,
-                    User.role == Role.USER.value,
-                )
-            )
+            await self._session.execute(statement)
         ).scalar_one_or_none()
         if user is None:
             raise NotFoundError("Candidate not found")
@@ -676,7 +674,7 @@ class AdminDirectoryService:
         user_public_id: UUID,
         payload: AdminUserSuspendRequest,
     ) -> AdminUserDetailResponse:
-        user = await self._require_candidate(user_public_id)
+        user = await self._require_candidate(user_public_id, for_update=True)
         if user.deleted_at is not None:
             raise ConflictError("Deleted candidate accounts cannot be suspended")
         if admin_account_status(user) == "suspended":
@@ -721,7 +719,7 @@ class AdminDirectoryService:
         user_public_id: UUID,
         payload: AdminUserRestoreRequest,
     ) -> AdminUserDetailResponse:
-        user = await self._require_candidate(user_public_id)
+        user = await self._require_candidate(user_public_id, for_update=True)
         if user.deleted_at is not None:
             raise ConflictError("Deleted candidate accounts cannot be restored")
         if admin_account_status(user) != "suspended":
@@ -747,7 +745,7 @@ class AdminDirectoryService:
         user_public_id: UUID,
         session_public_id: UUID,
     ) -> AdminUserDetailResponse:
-        user = await self._require_candidate(user_public_id)
+        user = await self._require_candidate(user_public_id, for_update=True)
         if user.deleted_at is not None:
             raise ConflictError("Deleted candidate accounts do not have revocable sessions")
 

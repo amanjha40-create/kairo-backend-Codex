@@ -217,6 +217,11 @@ class Result:
 
 
 class Records:
+    async def scalar(self, statement):
+        # Active-owner lookup only; record projection queries remain tracked separately.
+        assert 'users.is_active' in str(statement) and 'users.deleted_at' in str(statement)
+        return uuid4()
+
     def __init__(self):
         self.queries = []
         self.rows = {
@@ -576,7 +581,8 @@ async def test_photo_proxy_bounds_content_and_never_redirects_to_storage(
         snapshot("verified_and_candidate_provided", include_profile=True, show_photo=True)
     )
     service._session = SimpleNamespace(
-        execute=AsyncMock(return_value=Result([SimpleNamespace(avatar_key="qa/photo")]))
+        execute=AsyncMock(return_value=Result([SimpleNamespace(avatar_key="qa/photo")])),
+        scalar=AsyncMock(return_value=uuid4()),
     )
     service._settings = SimpleNamespace(s3_documents_bucket="synthetic-bucket")
     body = MagicMock()

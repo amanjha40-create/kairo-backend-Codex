@@ -162,6 +162,15 @@ class PublicPassportService:
             raise NotFoundError("Trust Passport not found")
         if link.expires_at is not None and link.expires_at <= datetime.now(tz=UTC):
             raise NotFoundError("Trust Passport not found")
+        owner = await self._session.scalar(
+            select(User.id).where(
+                User.id == link.owner_user_id,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            )
+        )
+        if owner is None:
+            raise NotFoundError("Trust Passport not found")
         return link
 
     async def build_vault_for_user(

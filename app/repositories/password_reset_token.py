@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.password_reset_token import PasswordResetToken
 from app.repositories.base import BaseRepository
+from app.repositories.token_owner import lock_token_owners
 
 
 class PasswordResetTokenRepository(BaseRepository[PasswordResetToken]):
@@ -24,11 +25,16 @@ class PasswordResetTokenRepository(BaseRepository[PasswordResetToken]):
         return token
 
     async def get_active_by_hash(self, token_hash: str, *, now: datetime) -> PasswordResetToken | None:
+        await lock_token_owners(
+            self._session,
+            select(PasswordResetToken.user_id).where(PasswordResetToken.token_hash == token_hash),
+            refresh=True,
+        )
         stmt = select(PasswordResetToken).where(
             PasswordResetToken.token_hash == token_hash,
             PasswordResetToken.used_at.is_(None),
             PasswordResetToken.expires_at > now,
-        )
+        ).with_for_update().execution_options(populate_existing=True)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def mark_used(self, token_id: UUID, *, used_at: datetime) -> None:
@@ -39,6 +45,7 @@ class PasswordResetTokenRepository(BaseRepository[PasswordResetToken]):
         )
 
     async def mark_all_active_for_user_used(self, user_id: UUID, *, used_at: datetime) -> None:
+        await lock_token_owners(self._session, [user_id])
         await self._session.execute(
             update(PasswordResetToken)
             .where(

@@ -149,6 +149,7 @@ class PassportEngineService:
         total_views = 0
         unique_views = 0
         now = datetime.now(tz=UTC)
+        view_counts = await self._share_view_counts(user_id)
 
         for share in shares:
             if latest_share_created_at is None or share.created_at > latest_share_created_at:
@@ -163,8 +164,9 @@ class PassportEngineService:
             else:
                 active_links += 1
 
-            total_views += await self._count_share_views(share.id)
-            unique_views += await self._count_unique_share_views(share.id)
+            views, unique = view_counts.get(share.id, (0, 0))
+            total_views += views
+            unique_views += unique
 
         return PassportSharingSummary(
             total_links=total_links,
@@ -176,6 +178,19 @@ class PassportEngineService:
             latest_share_created_at=latest_share_created_at,
             last_viewed_at=last_viewed_at,
         )
+
+    async def _share_view_counts(self, user_id: UUID) -> dict[UUID, tuple[int, int]]:
+        rows = (await self._session.execute(
+            select(
+                PassportShareView.share_id,
+                func.count(),
+                func.count().filter(PassportShareView.is_unique_view.is_(True)),
+            )
+            .join(PassportShareLink, PassportShareLink.id == PassportShareView.share_id)
+            .where(PassportShareLink.owner_user_id == user_id)
+            .group_by(PassportShareView.share_id)
+        )).all()
+        return {share_id: (int(total), int(unique)) for share_id, total, unique in rows}
 
     async def _count_share_views(self, share_id: UUID) -> int:
         stmt = select(func.count()).select_from(PassportShareView).where(PassportShareView.share_id == share_id)
@@ -374,14 +389,15 @@ class PassportEngineService:
         viewed.sort(key=lambda share: share.last_viewed_at or share.created_at, reverse=True)
 
         items: list[DashboardShareAnalyticsItem] = []
+        view_counts = await self._share_view_counts(user_id)
         for share in viewed[:5]:
             items.append(
                 DashboardShareAnalyticsItem(
                     share_id=share.id,
                     label=share.label,
                     state=self._share_state(share),
-                    total_views=await self._count_share_views(share.id),
-                    unique_views=await self._count_unique_share_views(share.id),
+                    total_views=view_counts.get(share.id, (0, 0))[0],
+                    unique_views=view_counts.get(share.id, (0, 0))[1],
                     last_viewed_at=share.last_viewed_at,
                 )
             )
