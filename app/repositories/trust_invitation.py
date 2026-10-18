@@ -40,6 +40,7 @@ class TrustInvitationRepository:
             joinedload(TrustInvitation.organization),
             joinedload(TrustInvitation.created_by_user),
             joinedload(TrustInvitation.accepted_by_user),
+            joinedload(TrustInvitation.job_role),
             selectinload(TrustInvitation.verification_requests),
         ]
         if include_events:
@@ -58,6 +59,7 @@ class TrustInvitationRepository:
             joinedload(TrustInvitation.organization),
             joinedload(TrustInvitation.created_by_user),
             joinedload(TrustInvitation.accepted_by_user),
+            joinedload(TrustInvitation.job_role),
             selectinload(TrustInvitation.verification_requests),
         ]
         if include_events:
@@ -78,6 +80,7 @@ class TrustInvitationRepository:
                 joinedload(TrustInvitation.organization),
                 joinedload(TrustInvitation.created_by_user),
                 joinedload(TrustInvitation.accepted_by_user),
+                joinedload(TrustInvitation.job_role),
                 selectinload(TrustInvitation.verification_requests),
             )
             .where(TrustInvitation.organization_id == organization_id)

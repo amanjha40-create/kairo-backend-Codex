@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -53,6 +54,12 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     subject_email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     subject_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     purpose: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organization_job_roles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     requested_verification_types: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
@@ -60,6 +67,12 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=text("'[]'::jsonb"),
     )
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_preferences_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     status: Mapped[TrustInvitationStatus] = mapped_column(trust_invitation_status_enum, nullable=False)
     delivery_method: Mapped[TrustInvitationDeliveryMethod] = mapped_column(
@@ -109,6 +122,7 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         order_by="TrustInvitationEvent.occurred_at",
     )
+    job_role = relationship("OrganizationJobRole")
 
     def __repr__(self) -> str:
         return (

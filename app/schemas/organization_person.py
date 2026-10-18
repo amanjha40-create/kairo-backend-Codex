@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.organization_people.enums import (
+    OrganizationPersonEmploymentStatus,
     OrganizationPersonInvitationStatusSummary,
     OrganizationPersonPassportStatusSummary,
     OrganizationPersonRelationship,
@@ -25,6 +26,8 @@ class OrganizationPeopleListQueryParams(ListQueryParams):
     passport_status: OrganizationPersonPassportStatusSummary | None = None
     trust_state: OrganizationPersonTrustState | None = None
     added_by: str | None = None
+    employment_status: OrganizationPersonEmploymentStatus | None = None
+    role_id: UUID | None = None
 
 
 class OrganizationPersonSummaryCounts(BaseModel):
@@ -41,6 +44,8 @@ class OrganizationPeopleDirectorySummary(BaseModel):
     by_verification_status: dict[str, int] = Field(default_factory=dict)
     by_passport_status: dict[str, int] = Field(default_factory=dict)
     by_trust_state: dict[str, int] = Field(default_factory=dict)
+    by_role: dict[str, int] = Field(default_factory=dict)
+    by_employment_status: dict[str, int] = Field(default_factory=dict)
 
 
 class OrganizationPersonListItemResponse(BaseModel):
@@ -59,6 +64,12 @@ class OrganizationPersonListItemResponse(BaseModel):
     added_at: datetime
     last_activity_at: datetime | None = None
     summary_counts: OrganizationPersonSummaryCounts = Field(default_factory=OrganizationPersonSummaryCounts)
+    employment_status: OrganizationPersonEmploymentStatus = OrganizationPersonEmploymentStatus.ACTIVE
+    role_id: UUID | None = None
+    role: str | None = None
+    department: str | None = None
+    joining_date: date | None = None
+    last_working_day: date | None = None
 
 
 class OrganizationPeopleListResponse(BaseModel):
@@ -85,6 +96,12 @@ class OrganizationPersonRelationshipSummaryResponse(BaseModel):
     resolution_method: str | None = None
     resolution_confidence: float | None = None
     resolution_metadata: dict[str, Any] = Field(default_factory=dict)
+    employment_status: OrganizationPersonEmploymentStatus = OrganizationPersonEmploymentStatus.ACTIVE
+    role_id: UUID | None = None
+    role: str | None = None
+    department: str | None = None
+    joining_date: date | None = None
+    last_working_day: date | None = None
 
 
 class OrganizationPersonPassportClaimResponse(BaseModel):

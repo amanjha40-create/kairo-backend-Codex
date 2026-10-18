@@ -7,8 +7,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.tokens import hash_refresh_token
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.organization import Organization
+from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization_member import OrganizationMember
 from app.models.user import User
@@ -21,6 +23,7 @@ from app.organization.permissions import build_workspace_permission_flags
 from app.repositories.organization import OrganizationRepository
 from app.repositories.organization_invitation import OrganizationInvitationRepository
 from app.repositories.user import UserRepository
+from app.schemas.organization import TeamInvitationAcceptResponse, TeamInvitationPublicResponse
 from app.schemas.workspace import (
     WorkspaceAccessState,
     WorkspaceBootstrapResponse,
@@ -122,6 +125,9 @@ class WorkspaceService:
         await self._expire_stale_invitations([invitation], now)
         self._assert_invitation_assignee(invitation, user)
 
+        if getattr(invitation, "token_hash", None) is not None:
+            raise ConflictError("This invitation must be accepted using its secure token")
+
         if invitation.status == OrganizationInvitationStatus.ACCEPTED:
             return self._to_invitation_response(invitation)
         if invitation.status != OrganizationInvitationStatus.PENDING:
@@ -152,6 +158,62 @@ class WorkspaceService:
         if refreshed is None:
             raise NotFoundError("Organization invitation not found")
         return self._to_invitation_response(refreshed)
+
+    async def get_team_invitation(self, raw_token: str) -> TeamInvitationPublicResponse:
+        invitation = await self._resolve_team_token(raw_token)
+        return TeamInvitationPublicResponse(
+            organization_name=invitation.organization.name,
+            invited_role=invitation.role,
+            status=invitation.status,
+            expires_at=invitation.token_expires_at or invitation.expires_at,
+        )
+
+    async def accept_team_invitation(
+        self, actor_user_id: UUID, raw_token: str
+    ) -> TeamInvitationAcceptResponse:
+        user = await self._require_user(actor_user_id)
+        invitation = await self._resolve_team_token(raw_token, for_accept=True)
+        if self._normalize_email(user.email) != self._normalize_email(invitation.invitee_email):
+            raise ForbiddenError("This team invitation is not assigned to the authenticated account")
+        if invitation.invitee_user_id not in {None, user.id}:
+            raise ForbiddenError("This team invitation is not assigned to the authenticated account")
+        membership = await self._organizations.get_membership(invitation.organization_id, user.id)
+        if membership is None:
+            membership = OrganizationMember(
+                organization_id=invitation.organization_id,
+                user_id=user.id,
+                role=invitation.role,
+            )
+            await self._organizations.add_member(membership)
+        elif membership.suspended_at is not None:
+            raise ConflictError("Suspended memberships cannot accept team invitations")
+        elif membership.role != invitation.role:
+            raise ConflictError("Existing membership role does not match this invitation")
+
+        now = datetime.now(tz=UTC)
+        invitation.invitee_user_id = user.id
+        invitation.status = OrganizationInvitationStatus.ACCEPTED
+        invitation.accepted_at = now
+        invitation.token_used_at = now
+        user.active_organization_id = invitation.organization_id
+        self._session.add(
+            OrganizationActivityEvent(
+                organization_id=invitation.organization_id,
+                actor_user_id=user.id,
+                event_type="team_invitation_accepted",
+                subject_type="organization_invitation",
+                subject_public_id=str(invitation.public_id),
+                metadata_payload={},
+            )
+        )
+        await self._session.commit()
+        await self._session.refresh(membership)
+        return TeamInvitationAcceptResponse(
+            organization_public_id=invitation.organization.public_id,
+            membership_public_id=membership.public_id,
+            role=membership.role,
+            accepted_at=now,
+        )
 
     async def decline_invitation(
         self,
@@ -189,6 +251,34 @@ class WorkspaceService:
         invitation = await self._invitations.get_by_public_id(invitation_public_id)
         if invitation is None:
             raise NotFoundError("Organization invitation not found")
+        return invitation
+
+    async def _resolve_team_token(
+        self, raw_token: str, *, for_accept: bool = False
+    ) -> OrganizationInvitation:
+        if not raw_token or len(raw_token) < 32:
+            raise NotFoundError("Team invitation not found")
+        invitation = await self._invitations.get_by_token_hash(hash_refresh_token(raw_token))
+        if invitation is None:
+            raise NotFoundError("Team invitation not found")
+        now = datetime.now(tz=UTC)
+        expires_at = invitation.token_expires_at or invitation.expires_at
+        if expires_at is None or expires_at <= now:
+            if invitation.status == OrganizationInvitationStatus.PENDING:
+                invitation.status = OrganizationInvitationStatus.EXPIRED
+                invitation.token_revoked_at = now
+                await self._session.commit()
+            raise ConflictError("Team invitation has expired")
+        if invitation.token_revoked_at is not None or invitation.status in {
+            OrganizationInvitationStatus.CANCELLED,
+            OrganizationInvitationStatus.DECLINED,
+            OrganizationInvitationStatus.EXPIRED,
+        }:
+            raise ConflictError("Team invitation is no longer actionable")
+        if invitation.token_used_at is not None or invitation.status == OrganizationInvitationStatus.ACCEPTED:
+            raise ConflictError("Team invitation token has already been used")
+        if for_accept and invitation.status != OrganizationInvitationStatus.PENDING:
+            raise ConflictError("Team invitation is no longer actionable")
         return invitation
 
     async def _resolve_active_workspace(

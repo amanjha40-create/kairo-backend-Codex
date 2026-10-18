@@ -9,16 +9,19 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.tokens import hash_refresh_token
 from app.config import Settings
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
+from app.models.organization_job_role import OrganizationJobRole
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
 from app.notifications.contracts import NotificationRequest
 from app.organization.permissions import is_organization_manager
 from app.repositories.trust_invitation import TrustInvitationRepository
+from app.schemas.hr_v2 import DEFAULT_VERIFICATION_PREFERENCES
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.trust_invitation import (
     TrustInvitationAcceptResponse,
@@ -77,6 +80,26 @@ class TrustInvitationService:
         payload: TrustInvitationCreateRequest,
     ) -> TrustInvitationCreateResponse:
         organization, _ = await self._organizations.require_org_member(actor_user_id, org_public_id)
+        job_role = None
+        if payload.role_id is not None:
+            job_role = (
+                await self._session.execute(
+                    select(OrganizationJobRole).where(
+                        OrganizationJobRole.organization_id == organization.id,
+                        OrganizationJobRole.public_id == payload.role_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if job_role is None:
+                raise NotFoundError("Organization job role not found")
+            if not job_role.is_active:
+                raise ConflictError("Inactive job roles cannot be assigned to invitations")
+        preferences = self._preference_snapshot(
+            getattr(organization, "verification_preferences", None)
+        )
+        requested_types = list(payload.requested_verification_types)
+        if not requested_types:
+            requested_types = self._verification_types_from_preferences(preferences)
         invitation_public_id = secrets.token_hex(16)
         invitation_uuid = UUID(hex=invitation_public_id)
         signed_token = self._build_signed_token(invitation_uuid)
@@ -86,10 +109,12 @@ class TrustInvitationService:
             subject_name=payload.subject_name,
             subject_email=self._normalize_email(str(payload.subject_email)),
             subject_phone=payload.subject_phone,
-            purpose=payload.purpose,
+            purpose=payload.purpose or (job_role.name if job_role is not None else None),
+            role_id=job_role.id if job_role is not None else None,
             requested_verification_types=[
-                item.value for item in payload.requested_verification_types
+                item.value for item in requested_types
             ],
+            verification_preferences_snapshot=preferences,
             message=payload.message,
             token_hash=hash_refresh_token(signed_token),
             status=(
@@ -319,11 +344,14 @@ class TrustInvitationService:
             invitation = await self._repo.get_by_public_id(invitation.public_id)
             if invitation is None:
                 raise NotFoundError("Trust invitation not found")
+        job_role = getattr(invitation, "job_role", None)
         return TrustInvitationPublicLookupResponse(
             public_id=invitation.public_id,
             organization_name=invitation.organization.name,
             subject_name=invitation.subject_name,
             purpose=invitation.purpose,
+            role_id=job_role.public_id if job_role is not None else None,
+            role=job_role.name if job_role is not None else None,
             requested_verification_types=self._deserialize_verification_types(invitation.requested_verification_types),
             expires_at=invitation.expires_at,
             status=invitation.status,
@@ -639,6 +667,7 @@ class TrustInvitationService:
             )
 
     def _to_response(self, invitation: TrustInvitation) -> TrustInvitationResponse:
+        job_role = getattr(invitation, "job_role", None)
         return TrustInvitationResponse(
             public_id=invitation.public_id,
             organization_public_id=invitation.organization.public_id,
@@ -646,6 +675,8 @@ class TrustInvitationService:
             subject_email=_public_subject_email(invitation.subject_email),
             subject_phone=invitation.subject_phone,
             purpose=invitation.purpose,
+            role_id=job_role.public_id if job_role is not None else None,
+            role=job_role.name if job_role is not None else None,
             requested_verification_types=self._deserialize_verification_types(invitation.requested_verification_types),
             message=invitation.message,
             status=invitation.status,
@@ -661,6 +692,9 @@ class TrustInvitationService:
             related_verification_request_public_id=self._related_verification_request_public_id(invitation),
             created_at=invitation.created_at,
             updated_at=invitation.updated_at,
+            verification_preferences_snapshot=dict(
+                getattr(invitation, "verification_preferences_snapshot", None) or {}
+            ),
         )
 
     def _to_detail_response(self, invitation: TrustInvitation) -> TrustInvitationDetailResponse:
@@ -736,3 +770,29 @@ class TrustInvitationService:
 
     def _normalize_email(self, email: str) -> str:
         return email.strip().lower()
+
+    def _preference_snapshot(self, raw: dict[str, object] | None) -> dict[str, object]:
+        defaults = DEFAULT_VERIFICATION_PREFERENCES
+        raw = raw or {}
+        checks = dict(defaults["checks"])
+        if isinstance(raw.get("checks"), dict):
+            checks.update({str(key): bool(value) for key, value in raw["checks"].items()})
+        return {
+            "version": int(raw.get("version", 1)),
+            "checks": checks,
+            "reference_count": int(raw.get("reference_count", 0)),
+        }
+
+    def _verification_types_from_preferences(
+        self, preferences: dict[str, object]
+    ) -> list[TrustInvitationVerificationType]:
+        checks = preferences.get("checks")
+        if not isinstance(checks, dict):
+            return []
+        mapping = {
+            "identity": TrustInvitationVerificationType.IDENTITY,
+            "employment": TrustInvitationVerificationType.EMPLOYMENT,
+            "education": TrustInvitationVerificationType.EDUCATION,
+            "references": TrustInvitationVerificationType.PROFESSIONAL_REFERENCE,
+        }
+        return [value for key, value in mapping.items() if checks.get(key) is True]

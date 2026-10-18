@@ -13,8 +13,12 @@ from app.models.education_document import EducationDocument
 from app.models.email_delivery_log import EmailDeliveryLog
 from app.models.employer_verification_request import EmployerVerificationRequest
 from app.models.employment import Employment
-from app.models.employment_reference import EmploymentReference, EmploymentReferenceEvent, EmploymentReferenceInvitation
 from app.models.employment_document import EmploymentDocument
+from app.models.employment_reference import (
+    EmploymentReference,
+    EmploymentReferenceEvent,
+    EmploymentReferenceInvitation,
+)
 from app.models.freelance_contract import FreelanceContract
 from app.models.freelance_contract_document import FreelanceContractDocument
 from app.models.gig_platform import GigPlatform
@@ -33,7 +37,10 @@ from app.models.notification_delivery import NotificationDelivery
 from app.models.notification_event import NotificationEvent
 from app.models.notification_preference import NotificationPreference
 from app.models.organization import Organization
+from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_invitation import OrganizationInvitation
+from app.models.organization_job_role import OrganizationJobRole
+from app.models.organization_logo_upload import OrganizationLogoUpload
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
 from app.models.organization_person_identifier import OrganizationPersonIdentifier
@@ -127,7 +134,10 @@ __all__ = [
     "NotificationEvent",
     "NotificationPreference",
     "Organization",
+    "OrganizationActivityEvent",
     "OrganizationInvitation",
+    "OrganizationJobRole",
+    "OrganizationLogoUpload",
     "OrganizationMember",
     "OrganizationPerson",
     "InstitutionPersonConsent",

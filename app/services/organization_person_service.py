@@ -21,6 +21,7 @@ from app.models.organization_person_passport_access import OrganizationPersonPas
 from app.models.trust_invitation import TrustInvitation
 from app.models.verification_request import VerificationRequest
 from app.organization_people.enums import (
+    OrganizationPersonEmploymentStatus,
     OrganizationPersonIdentifierType,
     OrganizationPersonInvitationStatusSummary,
     OrganizationPersonPassportAccessState,
@@ -534,6 +535,13 @@ class OrganizationPersonService:
                 item for item in filtered
                 if item.added_by is not None and needle in item.added_by.lower()
             ]
+        if params.employment_status is not None:
+            filtered = [
+                item for item in filtered
+                if item.employment_status == params.employment_status
+            ]
+        if params.role_id is not None:
+            filtered = [item for item in filtered if item.role_id == params.role_id]
         return filtered
 
     def _build_directory_summary(
@@ -545,12 +553,18 @@ class OrganizationPersonService:
         by_verification_status: dict[str, int] = {}
         by_passport_status: dict[str, int] = {}
         by_trust_state: dict[str, int] = {}
+        by_role: dict[str, int] = {}
+        by_employment_status: dict[str, int] = {}
         for item in items:
             by_relationship[item.relationship.value] = by_relationship.get(item.relationship.value, 0) + 1
             by_invitation_status[item.invitation_status.value] = by_invitation_status.get(item.invitation_status.value, 0) + 1
             by_verification_status[item.verification_status.value] = by_verification_status.get(item.verification_status.value, 0) + 1
             by_passport_status[item.passport_status.value] = by_passport_status.get(item.passport_status.value, 0) + 1
             by_trust_state[item.trust_state.value] = by_trust_state.get(item.trust_state.value, 0) + 1
+            role_key = str(item.role_id) if item.role_id is not None else "unassigned"
+            by_role[role_key] = by_role.get(role_key, 0) + 1
+            status_key = item.employment_status.value
+            by_employment_status[status_key] = by_employment_status.get(status_key, 0) + 1
         return OrganizationPeopleDirectorySummary(
             total_people=len(items),
             by_relationship=by_relationship,
@@ -558,6 +572,8 @@ class OrganizationPersonService:
             by_verification_status=by_verification_status,
             by_passport_status=by_passport_status,
             by_trust_state=by_trust_state,
+            by_role=by_role,
+            by_employment_status=by_employment_status,
         )
 
     def _to_list_item(self, person: OrganizationPerson) -> OrganizationPersonListItemResponse:
@@ -596,6 +612,12 @@ class OrganizationPersonService:
                 ),
                 internal_notes=len(person.notes),
             ),
+            employment_status=OrganizationPersonEmploymentStatus(person.employment_status),
+            role_id=person.job_role.public_id if person.job_role is not None else None,
+            role=person.job_role.name if person.job_role is not None else None,
+            department=person.department,
+            joining_date=person.joining_date,
+            last_working_day=person.last_working_day,
         )
 
     def _build_relationship_summary(
@@ -624,6 +646,12 @@ class OrganizationPersonService:
             resolution_method=person.resolution_method,
             resolution_confidence=float(person.resolution_confidence) if person.resolution_confidence is not None else None,
             resolution_metadata=dict(person.resolution_metadata or {}),
+            employment_status=OrganizationPersonEmploymentStatus(person.employment_status),
+            role_id=person.job_role.public_id if person.job_role is not None else None,
+            role=person.job_role.name if person.job_role is not None else None,
+            department=person.department,
+            joining_date=person.joining_date,
+            last_working_day=person.last_working_day,
         )
 
     async def _build_passport_preview(

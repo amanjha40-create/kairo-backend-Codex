@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -83,6 +83,15 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    logo_object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    logo_content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    logo_byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    verification_preferences: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
     )
 
     members: Mapped[list["OrganizationMember"]] = relationship(

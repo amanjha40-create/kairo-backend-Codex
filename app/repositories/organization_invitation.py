@@ -53,6 +53,18 @@ class OrganizationInvitationRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_token_hash(self, token_hash: str) -> OrganizationInvitation | None:
+        stmt = (
+            select(OrganizationInvitation)
+            .options(
+                joinedload(OrganizationInvitation.organization),
+                joinedload(OrganizationInvitation.invited_by_user),
+                joinedload(OrganizationInvitation.invitee_user),
+            )
+            .where(OrganizationInvitation.token_hash == token_hash)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_invitee(
         self, *, invitee_email: str, invitee_user_id: UUID
     ) -> list[OrganizationInvitation]:

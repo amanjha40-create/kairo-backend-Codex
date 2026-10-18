@@ -18,6 +18,7 @@ from app.services.email_delivery_service import EmailDeliveryService
 from app.services.employer_verification_service import EmployerVerificationService
 from app.services.employment_document_service import EmploymentDocumentService
 from app.services.employment_service import EmploymentService
+from app.services.hr_v2_service import HRV2Service
 from app.services.notification_channel_registry import NotificationChannelRegistry
 from app.services.notification_dispatcher import NotificationDispatcher
 from app.services.notification_email_channel import NotificationEmailChannel
@@ -74,6 +75,7 @@ __all__ = [
     "EmployerVerificationService",
     "EmploymentDocumentService",
     "EmploymentService",
+    "HRV2Service",
     "NotificationChannelRegistry",
     "NotificationDispatcher",
     "NotificationEmailChannel",

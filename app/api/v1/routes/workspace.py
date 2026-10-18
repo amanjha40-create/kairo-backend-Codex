@@ -9,10 +9,33 @@ from fastapi import APIRouter, Depends
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_workspace_service
-from app.schemas.workspace import WorkspaceBootstrapResponse, WorkspaceOrganizationInvitationResponse
+from app.schemas.organization import TeamInvitationAcceptResponse, TeamInvitationPublicResponse
+from app.schemas.workspace import (
+    WorkspaceBootstrapResponse,
+    WorkspaceOrganizationInvitationResponse,
+)
 from app.services.workspace_service import WorkspaceService
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
+
+
+@router.get("/team-invitations/{token}", response_model=TeamInvitationPublicResponse)
+async def get_team_invitation(
+    token: str,
+    svc: Annotated[WorkspaceService, Depends(get_workspace_service)],
+) -> TeamInvitationPublicResponse:
+    return await svc.get_team_invitation(token)
+
+
+@router.post(
+    "/team-invitations/{token}/accept", response_model=TeamInvitationAcceptResponse
+)
+async def accept_team_invitation(
+    token: str,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[WorkspaceService, Depends(get_workspace_service)],
+) -> TeamInvitationAcceptResponse:
+    return await svc.accept_team_invitation(current.id, token)
 
 
 @router.get("/bootstrap", response_model=WorkspaceBootstrapResponse)

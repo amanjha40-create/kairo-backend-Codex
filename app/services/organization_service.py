@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.tokens import hash_refresh_token
+from app.config import Settings
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from app.models.organization import Organization
+from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization_member import OrganizationMember
 from app.models.user import User
@@ -35,6 +39,7 @@ from app.schemas.organization import (
     OrganizationUpdateRequest,
 )
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
+from app.services.email_delivery_service import EmailDeliveryService
 from app.services.organization_registry_sync_service import OrganizationRegistrySyncService
 
 INVITATION_TTL = timedelta(days=7)
@@ -50,11 +55,15 @@ class OrganizationService:
         organizations: OrganizationRepository | None = None,
         invitations: OrganizationInvitationRepository | None = None,
         users: UserRepository | None = None,
+        settings: Settings | None = None,
+        email_delivery: EmailDeliveryService | None = None,
     ) -> None:
         self._session = session
         self._organizations = organizations or OrganizationRepository(session)
         self._invitations = invitations or OrganizationInvitationRepository(session)
         self._users = users or UserRepository(session)
+        self._settings = settings
+        self._email_delivery = email_delivery
         self._registry_sync = OrganizationRegistrySyncService(session)
 
     async def create_organization(
@@ -299,7 +308,14 @@ class OrganizationService:
             status=OrganizationInvitationStatus.PENDING,
             expires_at=datetime.now(tz=UTC) + INVITATION_TTL,
         )
+        raw_token = self._rotate_team_invitation_token(invitation)
         await self._invitations.create(invitation)
+        await self._record_hr_event(
+            organization.id,
+            actor_user_id,
+            "team_invitation_created",
+            invitation.public_id,
+        )
         await self._session.commit()
 
         refreshed = await self._invitations.get_by_public_id_for_organization(
@@ -308,6 +324,7 @@ class OrganizationService:
         )
         if refreshed is None:
             raise NotFoundError("Organization invitation not found")
+        await self._deliver_team_invitation(refreshed, raw_token)
         return self._to_invitation_response(refreshed)
 
     async def list_invitations(
@@ -362,8 +379,16 @@ class OrganizationService:
             if membership is not None:
                 raise ConflictError("User already has a membership in this organization")
 
-        invitation.expires_at = datetime.now(tz=UTC) + INVITATION_TTL
+        raw_token = self._rotate_team_invitation_token(invitation)
+        await self._record_hr_event(
+            organization.id,
+            actor_user_id,
+            "team_invitation_resent",
+            invitation.public_id,
+        )
         await self._session.commit()
+
+        await self._deliver_team_invitation(invitation, raw_token)
 
         refreshed = await self._invitations.get_by_public_id_for_organization(
             organization.id,
@@ -395,6 +420,7 @@ class OrganizationService:
 
         invitation.status = OrganizationInvitationStatus.CANCELLED
         invitation.cancelled_at = datetime.now(tz=UTC)
+        invitation.token_revoked_at = invitation.cancelled_at
         await self._session.commit()
 
         refreshed = await self._invitations.get_by_public_id_for_organization(
@@ -598,6 +624,10 @@ class OrganizationService:
             cancelled_at=invitation.cancelled_at,
             created_at=invitation.created_at,
             updated_at=invitation.updated_at,
+            token_expires_at=getattr(invitation, "token_expires_at", None),
+            token_used_at=getattr(invitation, "token_used_at", None),
+            last_sent_at=getattr(invitation, "last_sent_at", None),
+            delivery_failed_at=getattr(invitation, "delivery_failed_at", None),
         )
 
     def _apply_setup_state(self, organization: Organization) -> None:
@@ -677,6 +707,7 @@ class OrganizationService:
                 and invitation.expires_at <= now
             ):
                 invitation.status = OrganizationInvitationStatus.EXPIRED
+                invitation.token_revoked_at = now
                 changed = True
         if changed:
             await self._session.flush()
@@ -724,3 +755,69 @@ class OrganizationService:
 
     def _normalize_email(self, value: str) -> str:
         return value.strip().lower()
+
+    def _rotate_team_invitation_token(self, invitation: OrganizationInvitation) -> str:
+        raw_token = secrets.token_urlsafe(32)
+        now = datetime.now(tz=UTC)
+        invitation.token_hash = hash_refresh_token(raw_token)
+        invitation.token_version = int(getattr(invitation, "token_version", 0) or 0) + 1
+        invitation.token_expires_at = now + INVITATION_TTL
+        invitation.expires_at = invitation.token_expires_at
+        invitation.token_used_at = None
+        invitation.token_revoked_at = None
+        invitation.last_sent_at = now
+        invitation.delivery_failed_at = None
+        return raw_token
+
+    async def _deliver_team_invitation(
+        self, invitation: OrganizationInvitation, raw_token: str
+    ) -> None:
+        email_delivery = getattr(self, "_email_delivery", None)
+        if email_delivery is None:
+            return
+        base = (
+            getattr(getattr(self, "_settings", None), "hr_portal_base_url", None)
+            or "https://hr.kairoid.com"
+        ).rstrip("/")
+        invitation_url = f"{base}/team-invitations/accept?token={raw_token}"
+        try:
+            delivery = await email_delivery.queue_template_email(
+                template_key="team_invitation",
+                to_email=invitation.invitee_email,
+                template_data={
+                    "organization_name": invitation.organization.name,
+                    "inviter_name": invitation.invited_by_user.full_name
+                    or invitation.invited_by_user.email,
+                    "invited_role_label": invitation.role.value.replace("_", " ").title(),
+                    "invitation_url": invitation_url,
+                    "expires_at_iso": invitation.token_expires_at.isoformat(),
+                },
+                recipient_user_id=invitation.invitee_user_id,
+            )
+            if getattr(delivery, "status", "queued") == "failed":
+                raise RuntimeError("email delivery failed")
+        except Exception as exc:
+            invitation.delivery_failed_at = datetime.now(tz=UTC)
+            await self._session.commit()
+            raise ValidationAppError("Team invitation email delivery failed") from exc
+
+    async def _record_hr_event(
+        self,
+        organization_id: UUID,
+        actor_user_id: UUID,
+        event_type: str,
+        subject_public_id: UUID,
+    ) -> None:
+        if not hasattr(self._session, "add"):
+            return
+        self._session.add(
+            OrganizationActivityEvent(
+                organization_id=organization_id,
+                actor_user_id=actor_user_id,
+                event_type=event_type,
+                subject_type="organization_invitation",
+                subject_public_id=str(subject_public_id),
+                metadata_payload={},
+            )
+        )
+        await self._session.flush()

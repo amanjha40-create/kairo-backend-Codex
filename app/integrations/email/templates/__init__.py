@@ -12,6 +12,7 @@ class EmailTemplateKey(StrEnum):
     EMPLOYER_VERIFICATION = "employer_verification"
     INSTITUTION_VERIFICATION = "institution_verification"
     TRUST_INVITATION = "trust_invitation"
+    TEAM_INVITATION = "team_invitation"
     VERIFICATION_COMPLETED = "verification_completed"
 
 

@@ -19,6 +19,13 @@ class OrganizationPersonLifecycleStatus(StrEnum):
     MERGED = "merged"
 
 
+class OrganizationPersonEmploymentStatus(StrEnum):
+    """HR employment lifecycle, separate from technical record lifecycle."""
+
+    ACTIVE = "active"
+    EX_EMPLOYEE = "ex_employee"
+
+
 class OrganizationPersonTrustState(StrEnum):
     UNKNOWN = "unknown"
     PENDING = "pending"

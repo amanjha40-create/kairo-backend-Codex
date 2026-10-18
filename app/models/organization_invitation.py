@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,6 +24,14 @@ class OrganizationInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Invitation for a user to join an organization workspace."""
 
     __tablename__ = "organization_invitations"
+    __table_args__ = (
+        Index(
+            "uq_organization_invitations_token_hash",
+            "token_hash",
+            unique=True,
+            postgresql_where=text("token_hash IS NOT NULL"),
+        ),
+    )
 
     public_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -56,6 +64,13 @@ class OrganizationInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     declined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    token_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="invitations")
     invited_by_user: Mapped["User"] = relationship("User", foreign_keys=[invited_by_user_id])

@@ -24,6 +24,7 @@ class TrustInvitationCreateRequest(BaseModel):
     subject_email: EmailStr
     subject_phone: str | None = Field(default=None, max_length=32)
     purpose: str | None = Field(default=None, max_length=255)
+    role_id: UUID | None = None
     requested_verification_types: list[TrustInvitationVerificationType] = Field(default_factory=list)
     message: str | None = Field(default=None, max_length=2000)
     delivery_method: TrustInvitationDeliveryMethod = TrustInvitationDeliveryMethod.EMAIL
@@ -67,6 +68,8 @@ class TrustInvitationResponse(BaseModel):
     subject_email: EmailStr | None
     subject_phone: str | None
     purpose: str | None
+    role_id: UUID | None = None
+    role: str | None = None
     requested_verification_types: list[TrustInvitationVerificationType]
     message: str | None
     status: TrustInvitationStatus
@@ -82,6 +85,7 @@ class TrustInvitationResponse(BaseModel):
     related_verification_request_public_id: UUID | None
     created_at: datetime
     updated_at: datetime
+    verification_preferences_snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
 class TrustInvitationCreateResponse(TrustInvitationResponse):
@@ -106,6 +110,8 @@ class TrustInvitationPublicLookupResponse(BaseModel):
     organization_name: str
     subject_name: str
     purpose: str | None
+    role_id: UUID | None = None
+    role: str | None = None
     requested_verification_types: list[TrustInvitationVerificationType]
     expires_at: datetime
     status: TrustInvitationStatus

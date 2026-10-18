@@ -182,6 +182,24 @@ class OrganizationInvitationResponse(BaseModel):
     cancelled_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    token_expires_at: datetime | None = None
+    token_used_at: datetime | None = None
+    last_sent_at: datetime | None = None
+    delivery_failed_at: datetime | None = None
+
+
+class TeamInvitationPublicResponse(BaseModel):
+    organization_name: str
+    invited_role: OrganizationRole
+    status: OrganizationInvitationStatus
+    expires_at: datetime
+
+
+class TeamInvitationAcceptResponse(BaseModel):
+    organization_public_id: UUID
+    membership_public_id: UUID
+    role: OrganizationRole
+    accepted_at: datetime
 
 
 class OrganizationMemberSuspendRequest(BaseModel):

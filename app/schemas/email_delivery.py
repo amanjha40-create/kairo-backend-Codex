@@ -17,6 +17,16 @@ class TrustInvitationEmailTemplateData(BaseModel):
     expires_at_iso: str = Field(min_length=1, max_length=64)
 
 
+class TeamInvitationEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    organization_name: str = Field(min_length=1, max_length=255)
+    inviter_name: str = Field(min_length=1, max_length=255)
+    invited_role_label: str = Field(min_length=1, max_length=255)
+    invitation_url: str = Field(min_length=1, max_length=4096)
+    expires_at_iso: str = Field(min_length=1, max_length=64)
+
+
 class SignupOtpEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

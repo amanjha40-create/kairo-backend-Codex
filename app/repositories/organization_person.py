@@ -207,6 +207,7 @@ class OrganizationPersonRepository:
             joinedload(OrganizationPerson.organization),
             joinedload(OrganizationPerson.linked_user),
             joinedload(OrganizationPerson.added_by_user),
+            joinedload(OrganizationPerson.job_role),
             selectinload(OrganizationPerson.identifiers),
             selectinload(OrganizationPerson.notes).joinedload(OrganizationPersonNote.author_user),
             selectinload(OrganizationPerson.passport_access_entries)

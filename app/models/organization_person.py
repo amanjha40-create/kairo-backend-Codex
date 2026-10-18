@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship as orm_relationship
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import relationship as orm_relationship
 
 from app.db.base import Base
 from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
@@ -21,6 +32,7 @@ from app.db.pg_enums import (
     organization_person_verification_status_summary_enum,
 )
 from app.organization_people.enums import (
+    OrganizationPersonEmploymentStatus,
     OrganizationPersonInvitationStatusSummary,
     OrganizationPersonLifecycleStatus,
     OrganizationPersonPassportStatusSummary,
@@ -32,6 +44,7 @@ from app.organization_people.enums import (
 if TYPE_CHECKING:
     from app.models.employment import Employment
     from app.models.organization import Organization
+    from app.models.organization_job_role import OrganizationJobRole
     from app.models.organization_person_identifier import OrganizationPersonIdentifier
     from app.models.organization_person_note import OrganizationPersonNote
     from app.models.organization_person_passport_access import OrganizationPersonPassportAccess
@@ -51,6 +64,14 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "organization_id",
             "linked_user_id",
             name="uq_organization_people_organization_id_linked_user_id",
+        ),
+        CheckConstraint(
+            "employment_status IN ('active', 'ex_employee')",
+            name="employment_status",
+        ),
+        CheckConstraint(
+            "employment_status != 'ex_employee' OR last_working_day IS NOT NULL",
+            name="ex_employee_lwd",
         ),
     )
 
@@ -138,6 +159,22 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
     )
+    employment_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=OrganizationPersonEmploymentStatus.ACTIVE.value,
+        server_default=OrganizationPersonEmploymentStatus.ACTIVE.value,
+        index=True,
+    )
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organization_job_roles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    department: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    joining_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_working_day: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     organization: Mapped["Organization"] = orm_relationship("Organization", back_populates="people")
     linked_user: Mapped["User | None"] = orm_relationship("User", foreign_keys=[linked_user_id])
@@ -176,6 +213,9 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="organization_person",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    job_role: Mapped["OrganizationJobRole | None"] = orm_relationship(
+        "OrganizationJobRole", back_populates="people"
     )
     matched_roster_import_rows: Mapped[list["OrganizationRosterImportRow"]] = orm_relationship(
         "OrganizationRosterImportRow",

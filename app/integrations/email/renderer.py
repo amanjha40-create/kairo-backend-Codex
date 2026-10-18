@@ -23,6 +23,10 @@ from app.integrations.email.templates.password_reset import (
     render_password_reset,
 )
 from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
+from app.integrations.email.templates.team_invitation import (
+    TeamInvitationContext,
+    render_team_invitation,
+)
 from app.integrations.email.templates.trust_invitation import (
     TrustInvitationContext,
     render_trust_invitation,
@@ -38,6 +42,7 @@ from app.schemas.email_delivery import (
     PasswordResetEmailTemplateData,
     RenderedEmailMessage,
     SignupOtpEmailTemplateData,
+    TeamInvitationEmailTemplateData,
     TrustInvitationEmailTemplateData,
     VerificationCompletedEmailTemplateData,
 )
@@ -198,6 +203,33 @@ def _render_trust_invitation(to_email: str, data: dict[str, Any]) -> RenderedEma
     )
 
 
+def _render_team_invitation(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = TeamInvitationEmailTemplateData.model_validate(data)
+    content = render_team_invitation(
+        TeamInvitationContext(
+            organization_name=payload.organization_name,
+            inviter_name=payload.inviter_name,
+            invited_role_label=payload.invited_role_label,
+            invitation_url=payload.invitation_url,
+            expires_at_iso=payload.expires_at_iso,
+        )
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.TEAM_INVITATION.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={
+            "organization_name": payload.organization_name,
+            "inviter_name": payload.inviter_name,
+            "invited_role_label": payload.invited_role_label,
+            "expires_at_iso": payload.expires_at_iso,
+        },
+    )
+
+
 def _render_verification_completed(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
     payload = VerificationCompletedEmailTemplateData.model_validate(data)
     content = render_verification_completed(
@@ -235,6 +267,7 @@ class EmailTemplateRenderer:
             EmailTemplateKey.EMPLOYER_VERIFICATION.value: _render_employer_verification,
             EmailTemplateKey.INSTITUTION_VERIFICATION.value: _render_institution_verification,
             EmailTemplateKey.TRUST_INVITATION.value: _render_trust_invitation,
+            EmailTemplateKey.TEAM_INVITATION.value: _render_team_invitation,
             EmailTemplateKey.VERIFICATION_COMPLETED.value: _render_verification_completed,
         }
 

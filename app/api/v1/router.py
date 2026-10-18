@@ -29,6 +29,7 @@ from app.api.v1.routes import (
     freelance_contracts,
     gig_platforms,
     health,
+    hr_v2,
     institution_people,
     institution_workspace,
     internships,
@@ -77,6 +78,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(digilocker.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(organizations.router)
+api_router.include_router(hr_v2.router)
 api_router.include_router(organization_people.router)
 api_router.include_router(organization_roster_imports.router)
 api_router.include_router(organization_roster_imports.roster_router)

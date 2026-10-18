@@ -30,6 +30,7 @@ from app.services import (
     EmployerVerificationService,
     EmploymentDocumentService,
     EmploymentService,
+    HRV2Service,
     NotificationChannelRegistry,
     NotificationDispatcher,
     NotificationEmailChannel,
@@ -222,8 +223,22 @@ def get_trust_score_service(
     return TrustScoreService(session, settings)
 
 
-def get_organization_service(session: AsyncSession = Depends(get_session)) -> OrganizationService:
-    return OrganizationService(session)
+def get_organization_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OrganizationService:
+    return OrganizationService(
+        session,
+        settings=settings,
+        email_delivery=EmailDeliveryService(session, settings),
+    )
+
+
+def get_hr_v2_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> HRV2Service:
+    return HRV2Service(session, settings)
 
 
 def get_organization_person_service(
