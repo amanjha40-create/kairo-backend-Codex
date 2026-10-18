@@ -33,6 +33,7 @@ def _build_organization():
         public_id=uuid4(),
         name="Kairo University",
         organization_type=OrganizationType.UNIVERSITY,
+        suspended_at=None,
     )
 
 

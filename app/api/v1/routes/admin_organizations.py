@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies.services import get_admin_organization_service
+from app.api.dependencies.services import get_admin_organization_service, get_hr_v2_service
 from app.api.dependencies.verification_admin import CurrentUser, require_user_reader
 from app.schemas.admin_organization import (
     AdminOrganizationActivityPage,
@@ -20,10 +20,27 @@ from app.schemas.admin_organization import (
     AdminOrganizationVerificationListParams,
     AdminOrganizationVerificationPage,
 )
+from app.schemas.hr_v2 import VerificationReportResponse
 from app.schemas.pagination import ListQueryParams
 from app.services.admin_organization_service import AdminOrganizationService
+from app.services.hr_v2_service import HRV2Service
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin-organizations"])
+
+
+@router.get(
+    "/{organization_public_id}/people/{person_public_id}/verification-report",
+    response_model=VerificationReportResponse,
+)
+async def get_admin_verification_report(
+    organization_public_id: UUID,
+    person_public_id: UUID,
+    actor: Annotated[CurrentUser, Depends(require_user_reader)],
+    service: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> VerificationReportResponse:
+    return await service.get_admin_verification_report(
+        actor.id, organization_public_id, person_public_id
+    )
 
 
 @router.get("", response_model=AdminOrganizationPage)

@@ -194,6 +194,51 @@ async def test_empty_summary_and_nomination_ownership(case):
         )
 
 
+async def test_internal_reference_comments_never_reach_passport_or_export(case):
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    from app.models.passport_share_link import PassportShareLink
+    from app.schemas.passport_share import PassportSharePermissions
+    from app.services.hr_v2_service import HRV2Service
+    from app.services.passport_engine_service import PassportEngineService
+    from app.services.passport_pdf_service import build_passport_pdf_projection, render_passport_pdf
+    from app.services.public_passport_service import PublicPassportService
+
+    _, _, manager_token = await invited(case)
+    await case.svc.respond(manager_token, response())
+    internal = await case.svc.report(case.emp.id)
+    assert "Confidential HR comment" in str(internal)
+    assert "Confidential manager comment" in str(internal)
+    # The structured internal report retains its allowlisted free-text fields.
+    hr_rows = await HRV2Service(case.db, case.svc.settings)._reference_items(
+        [SimpleNamespace(employment_id=case.emp.id)]
+    )
+    assert "Confidential HR comment" in str(hr_rows)
+
+    public = PublicPassportService(case.db, case.svc.settings)
+    permissions = PassportSharePermissions(include_employments=True, show_trust_score=False)
+    share_token = uuid4().hex
+    case.db.add(PassportShareLink(
+        owner_user_id=case.user.id, token_hash=public._hash_token(share_token),
+        permissions=permissions.model_dump(),
+    ))
+    await case.db.flush()
+    shared = await public.get_by_token(share_token)
+    vault = await public.build_vault_for_user(case.user.id, permissions, public_only=True)
+    owner = await PassportEngineService(case.db, case.svc.settings).get_owner_passport(case.user.id)
+    projection = build_passport_pdf_projection(owner, generated_at=datetime.now(UTC))
+    pdf = PdfReader(BytesIO(render_passport_pdf(projection)))
+    surfaces = [shared.model_dump_json(), vault.model_dump_json(), owner.model_dump_json(),
+                projection.model_dump_json(), "\n".join(page.extract_text() for page in pdf.pages),
+                (await case.svc.summary(case.user.id, case.emp.id)).model_dump_json()]
+    assert shared.vault.employments
+    for surface in surfaces:
+        for comment in ("Confidential HR comment", "Confidential manager comment"):
+            assert comment not in surface
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -42,6 +42,7 @@ from app.schemas.admin_operations import (
     AdminFirstHRInvitationResponse,
     AdminOrganizationCreateRequest,
     AdminOrganizationCreateResponse,
+    AdminOrganizationProvisioningStatus,
     AdminProfileMutationRequest,
     AdminProfileMutationResponse,
     CandidateActivationResponse,
@@ -57,6 +58,7 @@ from app.schemas.admin_operations import (
     InPersonVerificationCreateRequest,
     InPersonVerificationResponse,
 )
+from app.schemas.pagination import Page, PageParams
 from app.schemas.user_document import (
     UserDocumentCompleteUploadRequest,
     UserDocumentResponse,
@@ -75,6 +77,76 @@ candidate_router = APIRouter(prefix="/candidate", tags=["candidate-profile-prove
 
 def _permission(permission: Permission):
     return Depends(require_permission(permission))
+
+
+@router.get(
+    "/organizations/{org_public_id}/provisioning",
+    response_model=AdminOrganizationProvisioningStatus,
+)
+async def get_organization_provisioning(
+    org_public_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.INVITE_FIRST_HR)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> AdminOrganizationProvisioningStatus:
+    return await service.provisioning_status(org_public_id)
+
+
+@router.get(
+    "/organizations/{org_public_id}/people/{person_public_id}/court-checks",
+    response_model=Page[CourtCheckResponse],
+)
+async def list_court_receipts(
+    org_public_id: UUID,
+    person_public_id: UUID,
+    params: Annotated[PageParams, Depends()],
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_COURT_CHECK)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> Page[CourtCheckResponse]:
+    return await service.list_court_checks(org_public_id, person_public_id, params)
+
+
+@router.get(
+    "/organizations/{org_public_id}/people/{person_public_id}/court-checks/{check_public_id}",
+    response_model=CourtCheckResponse,
+)
+async def get_court_receipt(
+    org_public_id: UUID,
+    person_public_id: UUID,
+    check_public_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_COURT_CHECK)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> CourtCheckResponse:
+    return await service.get_court_check(org_public_id, person_public_id, check_public_id)
+
+
+@router.get(
+    "/organizations/{org_public_id}/people/{person_public_id}/in-person-verifications",
+    response_model=Page[InPersonVerificationResponse],
+)
+async def list_in_person_receipts(
+    org_public_id: UUID,
+    person_public_id: UUID,
+    params: Annotated[PageParams, Depends()],
+    _: Annotated[CurrentUser, _permission(Permission.PERFORM_IN_PERSON_VERIFICATION)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> Page[InPersonVerificationResponse]:
+    return await service.list_in_person_verifications(org_public_id, person_public_id, params)
+
+
+@router.get(
+    "/organizations/{org_public_id}/people/{person_public_id}/in-person-verifications/{record_public_id}",
+    response_model=InPersonVerificationResponse,
+)
+async def get_in_person_receipt(
+    org_public_id: UUID,
+    person_public_id: UUID,
+    record_public_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.PERFORM_IN_PERSON_VERIFICATION)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> InPersonVerificationResponse:
+    return await service.get_in_person_verification(
+        org_public_id, person_public_id, record_public_id
+    )
 
 
 @router.post(
@@ -140,9 +212,7 @@ async def claim_candidate_account(
     return await service.claim_candidate_account(payload)
 
 
-@router.patch(
-    "/candidates/{candidate_id}/profile", response_model=AdminProfileMutationResponse
-)
+@router.patch("/candidates/{candidate_id}/profile", response_model=AdminProfileMutationResponse)
 async def update_assisted_candidate_profile(
     candidate_id: UUID,
     payload: AdminProfileMutationRequest,
@@ -362,9 +432,7 @@ async def complete_admin_evidence_upload(
     documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
 ) -> UserDocumentResponse:
     await admin.candidate_status(candidate_id)
-    document = await documents.complete_upload(
-        candidate_id, document_id, payload.checksum_sha256
-    )
+    document = await documents.complete_upload(candidate_id, document_id, payload.checksum_sha256)
     return UserDocumentResponse.model_validate(document)
 
 
@@ -471,9 +539,7 @@ async def record_in_person_verification(
     org_public_id: UUID,
     person_public_id: UUID,
     payload: InPersonVerificationCreateRequest,
-    actor: Annotated[
-        CurrentUser, _permission(Permission.PERFORM_IN_PERSON_VERIFICATION)
-    ],
+    actor: Annotated[CurrentUser, _permission(Permission.PERFORM_IN_PERSON_VERIFICATION)],
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> InPersonVerificationResponse:
     return await service.record_in_person_verification(

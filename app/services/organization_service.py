@@ -554,6 +554,8 @@ class OrganizationService:
         org_public_id: UUID,
     ) -> tuple[Organization, OrganizationMember]:
         organization, membership = await self.require_org_member(actor_user_id, org_public_id)
+        if organization.suspended_at is not None or membership.suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
         if not is_organization_manager(membership.role):
             raise ForbiddenError("Only organization owners or admins can manage members")
         return organization, membership

@@ -53,6 +53,48 @@ def _active_access():
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suspended_target", ["organization", "membership"])
+async def test_suspended_managers_cannot_use_manager_mutations(suspended_target):
+    service = OrganizationService.__new__(OrganizationService)
+    organization, membership = _active_access()
+    membership.role = OrganizationRole.OWNER
+    target = organization if suspended_target == "organization" else membership
+    target.suspended_at = datetime.now(tz=UTC)
+    service.require_org_member = AsyncMock(return_value=(organization, membership))
+    with pytest.raises(ForbiddenError, match="suspended"):
+        await service.require_org_manager(uuid4(), organization.public_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clear_role", [False, True])
+async def test_partial_assignment_preserves_role_unless_explicitly_cleared(clear_role):
+    service = HRV2Service.__new__(HRV2Service)
+    service._session = _async_session()
+    organization, membership = _active_access()
+    role = SimpleNamespace(id=uuid4(), public_id=uuid4(), name="Engineer")
+    service._session.get = AsyncMock(return_value=role)
+    service._organizations = SimpleNamespace(
+        require_org_member=AsyncMock(return_value=(organization, membership))
+    )
+    person = SimpleNamespace(
+        public_id=uuid4(), role_id=role.id, department="Old", joining_date=None
+    )
+    service._locked_person = AsyncMock(return_value=person)
+    fields = {"department": "New"}
+    if clear_role:
+        fields["role_id"] = None
+    result = await service.assign_role(
+        uuid4(),
+        organization.public_id,
+        person.public_id,
+        OrganizationRoleAssignmentRequest(**fields),
+    )
+    assert person.role_id == (None if clear_role else role.id)
+    assert result.role_id == (None if clear_role else role.public_id)
+    assert result.department == "New"
+
+
 class _ScalarResult:
     def __init__(self, value):
         self._value = value
@@ -761,15 +803,13 @@ def test_openapi_exposes_additive_hr_v2_contracts() -> None:
     expected = {
         "/api/v1/organizations/{org_public_id}/people/{person_public_id}/lifecycle": "patch",
         (
-            "/api/v1/organizations/{org_public_id}/people/"
-            "{person_public_id}/employment-profile"
+            "/api/v1/organizations/{org_public_id}/people/{person_public_id}/employment-profile"
         ): "patch",
         "/api/v1/organizations/{org_public_id}/job-roles": "get",
         "/api/v1/organizations/{org_public_id}/logo/upload-intents": "post",
         "/api/v1/organizations/{org_public_id}/verification-preferences": "put",
         (
-            "/api/v1/organizations/{org_public_id}/people/"
-            "{person_public_id}/verification-report"
+            "/api/v1/organizations/{org_public_id}/people/{person_public_id}/verification-report"
         ): "get",
         "/api/v1/workspace/team-invitations/{token}": "get",
         "/api/v1/workspace/team-invitations/{token}/accept": "post",

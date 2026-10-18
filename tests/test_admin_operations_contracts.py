@@ -45,6 +45,7 @@ from app.schemas.admin_operations import (
     InPersonVerificationCreateRequest,
 )
 from app.schemas.hr_v2 import VerificationReportCheckStatus
+from app.schemas.pagination import PageParams
 from app.services.admin_operations_service import (
     AdminOperationsConflict,
     AdminOperationsService,
@@ -188,7 +189,7 @@ async def test_candidate_create_activation_resend_and_claim_lifecycle() -> None:
         claimed = await service.claim_candidate_account(
             CandidateClaimRequest(
                 token=second_raw,
-                password=password,
+                password="  " + password + "  ",
                 confirm_password=password,
             )
         )
@@ -218,9 +219,7 @@ async def test_profile_provenance_confirmation_and_verified_field_protection() -
         session.add(admin)
         await session.commit()
         await session.refresh(admin)
-        service = AdminOperationsService(
-            session, settings, email_delivery=_FakeEmailDelivery()
-        )
+        service = AdminOperationsService(session, settings, email_delivery=_FakeEmailDelivery())
         created = await service.create_candidate(
             admin.id,
             AdminCreateCandidateRequest(
@@ -247,9 +246,7 @@ async def test_profile_provenance_confirmation_and_verified_field_protection() -
                 )
             ]
         )
-        confirmed = await service.confirm_candidate_provenance(
-            created.candidate_id, confirmation
-        )
+        confirmed = await service.confirm_candidate_provenance(created.candidate_id, confirmation)
         assert confirmed.confirmed_count == 1
         latest = await service._latest_provenance(
             created.candidate_id, "profile", created.candidate_id, "headline"
@@ -351,6 +348,15 @@ async def test_admin_organization_first_hr_reuses_secure_team_invitation_accepta
         assert first_raw not in (stored.token_hash or "")
         assert stored.role == OrganizationRole.OWNER
 
+        pending = await service.provisioning_status(created.organization_public_id)
+        assert pending.member_present is False
+        assert pending.first_hr_invitation.status == "pending"
+        assert hr_user.email not in pending.model_dump_json()
+        assert first_raw not in pending.model_dump_json()
+        assert "token_hash" not in pending.model_dump_json()
+        with pytest.raises(NotFoundError):
+            await service.provisioning_status(uuid4())
+
         resent = await service.invite_first_hr(
             admin.id,
             created.organization_public_id,
@@ -375,6 +381,9 @@ async def test_admin_organization_first_hr_reuses_secure_team_invitation_accepta
             )
         )
         assert membership is not None and membership.role == OrganizationRole.OWNER
+        status = await service.provisioning_status(created.organization_public_id)
+        assert status.member_present and status.owner_membership_present
+        assert status.first_hr_invitation.status == "accepted"
         with pytest.raises(AdminOperationsConflict) as duplicate:
             await service.invite_first_hr(
                 admin.id, created.organization_public_id, invitation_payload
@@ -394,9 +403,7 @@ async def test_court_report_and_in_person_records_are_scoped_and_truthful() -> N
         await session.commit()
         for row in (admin, candidate, hr_user):
             await session.refresh(row)
-        service = AdminOperationsService(
-            session, settings, email_delivery=_FakeEmailDelivery()
-        )
+        service = AdminOperationsService(session, settings, email_delivery=_FakeEmailDelivery())
         organization_response = await service.create_organization(
             admin.id,
             AdminOrganizationCreateRequest(
@@ -499,9 +506,12 @@ async def test_court_report_and_in_person_records_are_scoped_and_truthful() -> N
         assert "No match found within the stated court-record scope" == (
             report.court_search[0].finding
         )
-        assert next(
-            item for item in report.check_summaries if item.check == "court_record_search"
-        ).status == VerificationReportCheckStatus.CONFIRMED
+        assert (
+            next(
+                item for item in report.check_summaries if item.check == "court_record_search"
+            ).status
+            == VerificationReportCheckStatus.CONFIRMED
+        )
 
         in_person_payload = InPersonVerificationCreateRequest(
             verification_type=InPersonVerificationType.IDENTITY_OBSERVATION,
@@ -524,13 +534,59 @@ async def test_court_report_and_in_person_records_are_scoped_and_truthful() -> N
         assert observed.changes_canonical_verification_status is False
         assert observed.permanent_address_check_credit == 0
 
+        async with async_session_factory() as reader:
+            reads = AdminOperationsService(reader, settings, email_delivery=_FakeEmailDelivery())
+            assert (
+                await reads.get_court_check(
+                    organization.public_id, person.public_id, check.public_id
+                )
+            ).model_dump() == finalized.model_dump()
+            courts = await reads.list_court_checks(
+                organization.public_id, person.public_id, PageParams()
+            )
+            assert courts.total == 1 and courts.items[0].public_id == check.public_id
+            assert (
+                await reads.get_in_person_verification(
+                    organization.public_id, person.public_id, observed.public_id
+                )
+            ).model_dump() == observed.model_dump()
+            receipts = await reads.list_in_person_verifications(
+                organization.public_id, person.public_id, PageParams()
+            )
+            assert receipts.total == 1 and receipts.items[0].public_id == observed.public_id
+            for org_id, person_id in [
+                (uuid4(), person.public_id),
+                (organization.public_id, uuid4()),
+            ]:
+                with pytest.raises(NotFoundError):
+                    await reads.get_court_check(org_id, person_id, check.public_id)
+                with pytest.raises(NotFoundError):
+                    await reads.get_in_person_verification(org_id, person_id, observed.public_id)
+            report_service = HRV2Service(reader, settings)
+            admin_report = await report_service.get_admin_verification_report(
+                admin.id, organization.public_id, person.public_id
+            )
+            assert admin_report.court_search == report.court_search
+            with pytest.raises(ForbiddenError):
+                await report_service.get_admin_verification_report(
+                    candidate.id, organization.public_id, person.public_id
+                )
+            with pytest.raises(NotFoundError):
+                await report_service.get_admin_verification_report(
+                    admin.id, uuid4(), person.public_id
+                )
+            assert not reader.new and not reader.dirty and not reader.deleted
+
 
 def test_migration_093_is_the_single_linear_successor_to_092() -> None:
     from importlib.util import module_from_spec, spec_from_file_location
     from pathlib import Path
 
-    path = Path(__file__).parents[1] / "alembic" / "versions" / (
-        "093_admin_operations_v1_1_contracts.py"
+    path = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / ("093_admin_operations_v1_1_contracts.py")
     )
     spec = spec_from_file_location("admin_operations_migration", path)
     assert spec is not None and spec.loader is not None

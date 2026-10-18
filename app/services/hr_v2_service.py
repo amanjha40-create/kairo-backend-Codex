@@ -12,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.config import Settings
+from app.core.permissions import Permission, has_permission
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from app.infrastructure.s3.presign import generate_presigned_get_url
 from app.infrastructure.s3.service import S3UploadService
 from app.models.court_record_check import CourtRecordCheck
 from app.models.digilocker_identity_verification import DigiLockerIdentityVerification
 from app.models.employment_reference import EmploymentReference, EmploymentReferenceEvent
+from app.models.organization import Organization
 from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_job_role import OrganizationJobRole
 from app.models.organization_logo_upload import OrganizationLogoUpload
@@ -249,7 +251,10 @@ class HRV2Service:
             role = await self._role(organization.id, payload.role_id)
             if not role.is_active:
                 raise ConflictError("Inactive job roles cannot receive new assignments")
-        person.role_id = role.id if role is not None else None
+        if "role_id" in payload.model_fields_set:
+            person.role_id = role.id if role is not None else None
+        elif person.role_id is not None:
+            role = await self._session.get(OrganizationJobRole, person.role_id)
         if "department" in payload.model_fields_set:
             person.department = payload.department
         if "joining_date" in payload.model_fields_set:
@@ -433,6 +438,36 @@ class HRV2Service:
         if person is None:
             raise NotFoundError("Organization person not found")
 
+        return await self._build_verification_report(organization, person)
+
+    async def get_admin_verification_report(
+        self, actor_user_id: UUID, org_public_id: UUID, person_public_id: UUID
+    ) -> VerificationReportResponse:
+        actor = await self._session.get(User, actor_user_id)
+        if (
+            actor is None
+            or not actor.is_active
+            or actor.deleted_at is not None
+            or not has_permission(actor.role, Permission.READ_USERS)
+        ):
+            raise ForbiddenError("Insufficient permissions")
+        organization = await self._session.scalar(
+            select(Organization).where(Organization.public_id == org_public_id)
+        )
+        if organization is None:
+            raise NotFoundError("Organization person not found")
+        person = await self._people.get_by_public_id(
+            organization.id, person_public_id, load_related=True
+        )
+        if person is None:
+            raise NotFoundError("Organization person not found")
+        return await self._build_verification_report(organization, person)
+
+    async def _build_verification_report(
+        self, organization: Organization, person: OrganizationPerson
+    ) -> VerificationReportResponse:
+        # Internal consumers only. External Passport/export projections use their
+        # own allowlists and must never serialize this reference-comment report.
         requests = await self._report_requests(organization.id, person.id)
         score = await self._latest_trust_score(person.linked_user_id)
         identity = await self._identity_items(person, requests)
@@ -459,8 +494,7 @@ class HRV2Service:
         work_items_terminal = all(
             request.status in _TERMINAL_REQUEST_STATUSES for request in requests
         ) and all(
-            check.status != "pending" and check.finalized_at is not None
-            for check in court_checks
+            check.status != "pending" and check.finalized_at is not None for check in court_checks
         )
         report_status = (
             VerificationReportStatus.FINAL
@@ -933,9 +967,11 @@ class HRV2Service:
                 if not by_check[key]:
                     by_check[key].append(self._request_status(request.status))
         if court_search:
-            request_times["court_record_search"] = max(
-                item.searched_at for item in court_search if item.searched_at is not None
-            ) if any(item.searched_at is not None for item in court_search) else None
+            request_times["court_record_search"] = (
+                max(item.searched_at for item in court_search if item.searched_at is not None)
+                if any(item.searched_at is not None for item in court_search)
+                else None
+            )
         summaries = []
         for check in _REPORT_CHECKS:
             status = self._aggregate_status(by_check[check])

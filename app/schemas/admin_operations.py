@@ -76,6 +76,12 @@ class CandidateClaimRequest(BaseModel):
     password: str = Field(min_length=12, max_length=128, repr=False)
     confirm_password: str = Field(min_length=12, max_length=128, repr=False)
 
+    @field_validator("password", "confirm_password", mode="before")
+    @classmethod
+    def normalize_password(cls, value: Any) -> Any:
+        # Login and the existing Candidate password flows strip outer whitespace.
+        return value.strip() if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def passwords_match(self) -> "CandidateClaimRequest":
         if self.password != self.confirm_password:
@@ -217,6 +223,23 @@ class AdminFirstHRInvitationResponse(BaseModel):
     acceptance_path: Literal["/team-invitations/accept?token={opaque_token}"] = (
         "/team-invitations/accept?token={opaque_token}"
     )
+
+
+class AdminFirstHRInvitationStatus(BaseModel):
+    invitation_public_id: UUID
+    invitee_email_masked: str
+    status: str
+    effective_status: str
+    expires_at: datetime | None
+    last_sent_at: datetime | None
+    delivery_failed_at: datetime | None
+
+
+class AdminOrganizationProvisioningStatus(BaseModel):
+    organization_public_id: UUID
+    member_present: bool
+    owner_membership_present: bool
+    first_hr_invitation: AdminFirstHRInvitationStatus | None
 
 
 class CourtCheckWriteRequest(BaseModel):

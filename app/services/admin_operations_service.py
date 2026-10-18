@@ -54,8 +54,10 @@ from app.schemas.admin_operations import (
     AdminCreateCandidateRequest,
     AdminFirstHRInvitationRequest,
     AdminFirstHRInvitationResponse,
+    AdminFirstHRInvitationStatus,
     AdminOrganizationCreateRequest,
     AdminOrganizationCreateResponse,
+    AdminOrganizationProvisioningStatus,
     AdminProfileMutationRequest,
     AdminProfileMutationResponse,
     CandidateActivationResponse,
@@ -70,6 +72,7 @@ from app.schemas.admin_operations import (
     InPersonVerificationCreateRequest,
     InPersonVerificationResponse,
 )
+from app.schemas.pagination import Page, PageParams
 from app.services.email_delivery_service import EmailDeliveryService
 from app.services.organization_service import OrganizationService
 from app.services.resume_review_service import ResumeReviewService
@@ -111,9 +114,7 @@ class AdminOperationsService:
         self, actor_user_id: UUID, payload: AdminCreateCandidateRequest
     ) -> AdminCandidateResponse:
         idempotent = await self._session.scalar(
-            select(User).where(
-                User.assisted_creation_idempotency_key == payload.idempotency_key
-            )
+            select(User).where(User.assisted_creation_idempotency_key == payload.idempotency_key)
         )
         if idempotent is not None:
             return await self._candidate_response(idempotent)
@@ -526,9 +527,7 @@ class AdminOperationsService:
             )
             confirmed += 1
         await self._session.commit()
-        return CandidateProvenanceConfirmationResponse(
-            confirmed_count=confirmed, confirmed_at=now
-        )
+        return CandidateProvenanceConfirmationResponse(confirmed_count=confirmed, confirmed_at=now)
 
     async def record_cv_import_audit(
         self,
@@ -541,8 +540,7 @@ class AdminOperationsService:
             select(UserAccountEvent.id).where(
                 UserAccountEvent.user_id == candidate_id,
                 UserAccountEvent.event_type == "admin_cv_import_confirmed",
-                UserAccountEvent.metadata_payload["import_batch_id"].as_string()
-                == str(batch.id),
+                UserAccountEvent.metadata_payload["import_batch_id"].as_string() == str(batch.id),
             )
         )
         if existing is not None:
@@ -740,6 +738,146 @@ class AdminOperationsService:
         await org_service._deliver_team_invitation(invitation, raw_token)
         return self._first_hr_response(organization, invitation)
 
+    async def provisioning_status(self, org_public_id: UUID) -> AdminOrganizationProvisioningStatus:
+        organization = await self._session.scalar(
+            select(Organization).where(Organization.public_id == org_public_id)
+        )
+        if organization is None or organization.provisioned_at is None:
+            raise NotFoundError("Admin-provisioned organization not found")
+        roles = list(
+            (
+                await self._session.scalars(
+                    select(OrganizationMember.role).where(
+                        OrganizationMember.organization_id == organization.id
+                    )
+                )
+            ).all()
+        )
+        invitation = await self._session.scalar(
+            select(OrganizationInvitation)
+            .where(
+                OrganizationInvitation.organization_id == organization.id,
+                OrganizationInvitation.role == OrganizationRole.OWNER,
+            )
+            .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+            .limit(1)
+        )
+        receipt = None
+        if invitation is not None:
+            stored_status = str(getattr(invitation.status, "value", invitation.status))
+            effective = stored_status
+            expires = invitation.token_expires_at or invitation.expires_at
+            if stored_status == OrganizationInvitationStatus.PENDING.value:
+                if invitation.token_revoked_at is not None:
+                    effective = "revoked"
+                elif expires is not None and expires <= datetime.now(tz=UTC):
+                    effective = "expired"
+                elif invitation.delivery_failed_at is not None:
+                    effective = "delivery_failed"
+            receipt = AdminFirstHRInvitationStatus(
+                invitation_public_id=invitation.public_id,
+                invitee_email_masked=mask_email(invitation.invitee_email),
+                status=stored_status,
+                effective_status=effective,
+                expires_at=expires,
+                last_sent_at=invitation.last_sent_at,
+                delivery_failed_at=invitation.delivery_failed_at,
+            )
+        return AdminOrganizationProvisioningStatus(
+            organization_public_id=organization.public_id,
+            member_present=bool(roles),
+            owner_membership_present=OrganizationRole.OWNER in roles,
+            first_hr_invitation=receipt,
+        )
+
+    async def list_court_checks(
+        self, org_public_id: UUID, person_public_id: UUID, params: PageParams
+    ) -> Page[CourtCheckResponse]:
+        organization, person = await self._organization_person(org_public_id, person_public_id)
+        filters = (
+            CourtRecordCheck.organization_id == organization.id,
+            CourtRecordCheck.organization_person_id == person.id,
+        )
+        total = await self._session.scalar(
+            select(func.count()).select_from(CourtRecordCheck).where(*filters)
+        )
+        rows = (
+            await self._session.scalars(
+                select(CourtRecordCheck)
+                .options(selectinload(CourtRecordCheck.evidence_items))
+                .where(*filters)
+                .order_by(CourtRecordCheck.created_at.desc(), CourtRecordCheck.id.desc())
+                .offset(params.offset)
+                .limit(params.limit)
+            )
+        ).all()
+        return Page[CourtCheckResponse].create(
+            items=[self._court_response(organization, person, row) for row in rows],
+            total=total or 0,
+            params=params,
+        )
+
+    async def get_court_check(
+        self, org_public_id: UUID, person_public_id: UUID, check_public_id: UUID
+    ) -> CourtCheckResponse:
+        organization, person = await self._organization_person(org_public_id, person_public_id)
+        row = await self._session.scalar(
+            select(CourtRecordCheck)
+            .options(selectinload(CourtRecordCheck.evidence_items))
+            .where(
+                CourtRecordCheck.organization_id == organization.id,
+                CourtRecordCheck.organization_person_id == person.id,
+                CourtRecordCheck.public_id == check_public_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError("Court record check not found")
+        return self._court_response(organization, person, row)
+
+    async def list_in_person_verifications(
+        self, org_public_id: UUID, person_public_id: UUID, params: PageParams
+    ) -> Page[InPersonVerificationResponse]:
+        organization, person = await self._organization_person(org_public_id, person_public_id)
+        filters = (
+            InPersonVerificationRecord.organization_id == organization.id,
+            InPersonVerificationRecord.organization_person_id == person.id,
+        )
+        total = await self._session.scalar(
+            select(func.count()).select_from(InPersonVerificationRecord).where(*filters)
+        )
+        rows = (
+            await self._session.scalars(
+                select(InPersonVerificationRecord)
+                .where(*filters)
+                .order_by(
+                    InPersonVerificationRecord.created_at.desc(),
+                    InPersonVerificationRecord.id.desc(),
+                )
+                .offset(params.offset)
+                .limit(params.limit)
+            )
+        ).all()
+        return Page[InPersonVerificationResponse].create(
+            items=[self._in_person_response(organization, person, row) for row in rows],
+            total=total or 0,
+            params=params,
+        )
+
+    async def get_in_person_verification(
+        self, org_public_id: UUID, person_public_id: UUID, record_public_id: UUID
+    ) -> InPersonVerificationResponse:
+        organization, person = await self._organization_person(org_public_id, person_public_id)
+        row = await self._session.scalar(
+            select(InPersonVerificationRecord).where(
+                InPersonVerificationRecord.organization_id == organization.id,
+                InPersonVerificationRecord.organization_person_id == person.id,
+                InPersonVerificationRecord.public_id == record_public_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError("In-person verification not found")
+        return self._in_person_response(organization, person, row)
+
     async def create_court_check(
         self,
         actor_user_id: UUID,
@@ -822,10 +960,14 @@ class AdminOperationsService:
             setattr(check, field, value)
         if check.status != CourtCheckStatus.PENDING.value and check.searched_at is None:
             raise ValidationAppError("searched_at is required for a court-check result")
-        if check.status in {
-            CourtCheckStatus.MATCH_FOUND.value,
-            CourtCheckStatus.REVIEW_REQUIRED.value,
-        } and not check.finding:
+        if (
+            check.status
+            in {
+                CourtCheckStatus.MATCH_FOUND.value,
+                CourtCheckStatus.REVIEW_REQUIRED.value,
+            }
+            and not check.finding
+        ):
             raise ValidationAppError("finding is required for match or review-required results")
         if payload.evidence_document_ids is not None:
             evidence = await self._validated_evidence(person, payload.evidence_document_ids)
@@ -947,9 +1089,7 @@ class AdminOperationsService:
 
     async def _locked_managed_candidate(self, candidate_id: UUID) -> User:
         user = await self._session.scalar(
-            select(User)
-            .where(User.id == candidate_id, User.deleted_at.is_(None))
-            .with_for_update()
+            select(User).where(User.id == candidate_id, User.deleted_at.is_(None)).with_for_update()
         )
         if user is None or user.admin_created_at is None:
             raise NotFoundError("Admin-managed Candidate not found")
@@ -979,9 +1119,7 @@ class AdminOperationsService:
             created_at=user.created_at,
         )
 
-    async def _resolve_activation(
-        self, raw_token: str
-    ) -> tuple[CandidateActivationToken, User]:
+    async def _resolve_activation(self, raw_token: str) -> tuple[CandidateActivationToken, User]:
         if not raw_token or len(raw_token) < 32:
             raise NotFoundError("Candidate activation not found")
         token = await self._session.scalar(
