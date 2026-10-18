@@ -226,6 +226,7 @@ class HRV2Service:
             role.public_id,
         )
         await self._session.commit()
+        await self._session.refresh(role)
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def assign_role(
@@ -240,6 +241,17 @@ class HRV2Service:
         )
         self._assert_active_access(organization, membership)
         person = await self._locked_person(organization.id, person_public_id)
+        joining_date = (
+            payload.joining_date
+            if "joining_date" in payload.model_fields_set
+            else person.joining_date
+        )
+        if (
+            joining_date is not None
+            and person.last_working_day is not None
+            and joining_date > person.last_working_day
+        ):
+            raise ValidationAppError("joining_date cannot be after last_working_day")
         role = None
         if payload.role_id is not None:
             role = await self._role(organization.id, payload.role_id)

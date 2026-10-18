@@ -78,7 +78,11 @@ async def test_partial_assignment_preserves_role_unless_explicitly_cleared(clear
         require_org_member=AsyncMock(return_value=(organization, membership))
     )
     person = SimpleNamespace(
-        public_id=uuid4(), role_id=role.id, department="Old", joining_date=None
+        public_id=uuid4(),
+        role_id=role.id,
+        department="Old",
+        joining_date=None,
+        last_working_day=None,
     )
     service._locked_person = AsyncMock(return_value=person)
     fields = {"department": "New"}
