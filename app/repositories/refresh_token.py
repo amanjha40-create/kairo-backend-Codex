@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RefreshToken
 from app.repositories.base import BaseRepository
+from app.repositories.token_owner import lock_token_owners
 
 
 class RefreshTokenRepository(BaseRepository[RefreshToken]):
@@ -21,7 +22,17 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
     async def get_by_hash_any(self, token_hash: str) -> RefreshToken | None:
         """Include revoked rows — used to detect refresh-token reuse attacks."""
 
-        stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        await lock_token_owners(
+            self._session, select(RefreshToken.user_id).where(RefreshToken.token_hash == token_hash),
+            refresh=True,
+        )
+        # Serialize rotation/logout so two requests cannot consume the same token.
+        stmt = (
+            select(RefreshToken)
+            .where(RefreshToken.token_hash == token_hash)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -47,6 +58,9 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         return bool(result.scalar())
 
     async def revoke(self, token_id: UUID) -> None:
+        await lock_token_owners(
+            self._session, select(RefreshToken.user_id).where(RefreshToken.id == token_id)
+        )
         await self._session.execute(
             update(RefreshToken)
             .where(RefreshToken.id == token_id)
@@ -56,6 +70,9 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
     async def revoke_family(self, family_id: UUID) -> None:
         """Reuse attack mitigation — invalidate all tokens in a rotation family."""
 
+        await lock_token_owners(
+            self._session, select(RefreshToken.user_id).where(RefreshToken.family_id == family_id)
+        )
         await self._session.execute(
             update(RefreshToken)
             .where(RefreshToken.family_id == family_id, RefreshToken.revoked_at.is_(None))
@@ -63,6 +80,7 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         )
 
     async def revoke_all_for_user(self, user_id: UUID) -> None:
+        await lock_token_owners(self._session, [user_id])
         await self._session.execute(
             update(RefreshToken)
             .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
@@ -70,6 +88,7 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         )
 
     async def revoke_all_for_user_except_family(self, user_id: UUID, family_id: UUID) -> None:
+        await lock_token_owners(self._session, [user_id])
         await self._session.execute(
             update(RefreshToken)
             .where(

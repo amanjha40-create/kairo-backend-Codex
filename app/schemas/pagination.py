@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Any, Generic, Sequence, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -253,11 +253,12 @@ def filter_sort_paginate(
         effective_params = params
         page_items = filtered[params.slice_start:params.slice_end]
         if force_page_envelope and not params.paginate:
-            effective_params = PageParams(
-                page=1,
-                page_size=max(total, 1),
+            # Preserve legacy unpaginated output; query-input limits do not cap its envelope.
+            size = max(total, 1)
+            return Page[T](
+                items=filtered, total=total, page=1, page_size=size,
+                total_pages=1 if total else 0, offset=0, limit=size,
             )
-            page_items = filtered
         return Page[T].create(items=page_items, total=total, params=effective_params)
 
     return filtered
@@ -275,11 +276,11 @@ def _coerce_datetime(value: object, *, end_of_day: bool) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if isinstance(value, date):
         if end_of_day:
-            return datetime.combine(value, time.max)
-        return datetime.combine(value, time.min)
+            return datetime.combine(value, time.max, tzinfo=UTC)
+        return datetime.combine(value, time.min, tzinfo=UTC)
     return None
 
 

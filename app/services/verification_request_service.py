@@ -711,6 +711,8 @@ class VerificationRequestService:
         if membership is None and not is_subject:
             raise NotFoundError("Verification request not found")
         items = await self._evidence.list_for_request(request.id)
+        if membership is not None:
+            items = self._filter_evidence_by_consent(request, items)
         responses = [
             await self._to_evidence_response(
                 item,

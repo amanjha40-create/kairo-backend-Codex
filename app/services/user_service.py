@@ -63,12 +63,15 @@ class UserService:
             raise NotFoundError("User not found")
 
         changes = data.model_dump(exclude_unset=True)
-        if "phone" in changes and changes["phone"]:
-            normalized_phone = normalize_phone(changes["phone"], self._settings)
-            existing = await self._users.get_by_phone(normalized_phone)
-            if existing is not None and existing.id != user.id:
-                raise ConflictError("Phone number is already in use")
-            if normalized_phone != user.phone:
+        if "phone" in changes:
+            normalized_phone = (
+                normalize_phone(changes["phone"], self._settings) if changes["phone"] else None
+            )
+            if normalized_phone:
+                existing = await self._users.get_by_phone(normalized_phone)
+                if existing is not None and existing.id != user.id:
+                    raise ConflictError("Phone number is already in use")
+            if normalized_phone is None or normalized_phone != user.phone:
                 user.phone_verified_at = None
             changes["phone"] = normalized_phone
 

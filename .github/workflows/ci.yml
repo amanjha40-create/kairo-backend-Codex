@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 20
     env:
       APP_ENV: test
+      V11_DISPOSABLE_DB: "1"
       DATABASE_URL: postgresql+asyncpg://kairo:kairo@localhost:5432/kairo
       MIGRATION_DATABASE_URL: postgresql+asyncpg://kairo:kairo@localhost:5432/kairo
       REDIS_URL: redis://localhost:6379/0

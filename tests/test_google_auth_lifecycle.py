@@ -332,10 +332,9 @@ async def test_google_pending_signup_uses_phone_otp_before_single_completion(
         assert await _count(session, UserSocialAccount) == 1
         assert await _count(session, RefreshToken) == 1
 
-        # Canonical completion replay issues a fresh session for the same completed user only.
-        replay_tokens = await service.complete_signup(SignupCompleteRequest(signup_session_id=signup_id))
-        assert replay_tokens.access_token
-        assert replay_tokens.refresh_token
+        # A completed signup capability cannot become a reusable login credential.
+        with pytest.raises(ConflictError, match="Signup already completed"):
+            await service.complete_signup(SignupCompleteRequest(signup_session_id=signup_id))
         assert await _count(session, User) == 1
         assert await _count(session, UserSocialAccount) == 1
-        assert await _count(session, RefreshToken) == 2
+        assert await _count(session, RefreshToken) == 1

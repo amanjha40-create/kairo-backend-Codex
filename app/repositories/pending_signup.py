@@ -16,8 +16,10 @@ class PendingSignupRepository(BaseRepository[PendingSignup]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, PendingSignup)
 
-    async def get_by_id(self, signup_id: UUID) -> PendingSignup | None:
+    async def get_by_id(self, signup_id: UUID, *, for_update: bool = False) -> PendingSignup | None:
         stmt = select(PendingSignup).where(PendingSignup.id == signup_id)
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

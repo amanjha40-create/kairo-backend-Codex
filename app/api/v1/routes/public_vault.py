@@ -24,6 +24,7 @@ from app.models.freelance_contract import FreelanceContract
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.user_document import UserDocument
+from app.services.address_document_privacy import private_address_document
 
 router = APIRouter(prefix="/public/vault", tags=["public"])
 
@@ -102,6 +103,7 @@ async def _resolve_user(slug: str, session: AsyncSession) -> User:
     stmt = select(User).where(
         User.profile_slug == slug,
         User.deleted_at.is_(None),
+        User.is_active.is_(True),
     )
     user = (await session.execute(stmt)).scalar_one_or_none()
     if not user:
@@ -233,7 +235,11 @@ async def get_public_vault(
     # User documents (gig/identity docs)
     udoc_rows = (await session.execute(
         select(UserDocument)
-        .where(UserDocument.user_id == uid, UserDocument.deleted_at.is_(None))
+        .where(
+            UserDocument.user_id == uid,
+            UserDocument.deleted_at.is_(None),
+            ~private_address_document(UserDocument.id),
+        )
         .order_by(UserDocument.created_at.desc())
     )).scalars().all()
 

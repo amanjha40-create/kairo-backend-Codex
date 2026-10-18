@@ -28,8 +28,10 @@ class UserRepository(BaseRepository[User]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_by_email(self, email: str) -> User | None:
+    async def get_by_email(self, email: str, *, for_update: bool = False) -> User | None:
         stmt = select(User).where(User.email == email, User.deleted_at.is_(None))
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

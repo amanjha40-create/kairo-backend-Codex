@@ -30,6 +30,16 @@ def verify_otp_code(code: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_otp_code(code), stored_hash)
 
 
+def signup_rate_subject(settings: Settings, channel: str, destination: str) -> UUID:
+    """Opaque destination budget survives signup capability rotation without storing PII."""
+    digest = hmac.new(
+        settings.jwt_secret_key.encode(),
+        f"signup-send-budget:{channel}:{destination}".encode(),
+        hashlib.sha256,
+    ).digest()
+    return UUID(bytes=digest[:16])
+
+
 class SignupOtpStore:
     """Redis-backed OTP and send-rate limits for staged signup channels."""
 

@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote, urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
@@ -440,12 +440,7 @@ class AuthService:
     async def _complete_pending_signup(self, pending: PendingSignup, signup_kind: SignupKind) -> TokenResponse:
         self._assert_signup_kind(pending, signup_kind)
         if pending.completed_user_id is not None:
-            user = await self._users.get_by_id(pending.completed_user_id)
-            if user is None:
-                raise ConflictError("Signup session is no longer valid")
-            tokens = await self._issue_tokens(user)
-            await self._session.commit()
-            return tokens
+            raise ConflictError("Signup already completed; sign in to continue")
 
         if pending.email_verified_at is None:
             raise ConflictError("Email verification is required before signup completion")
@@ -465,26 +460,12 @@ class AuthService:
             profile_slug=_unique_slug(slug_base),
         )
         self._session.add(user)
-        pending_id = pending.id
-
         try:
             await self._session.flush()
         except IntegrityError:
             await self._session.rollback()
-            if pending.oauth_provider:
-                # A concurrent user creation must never turn a Google-pending
-                # identity into an implicitly linked account.
-                raise ConflictError("An account already exists with this email or phone") from None
-            user = await self._users.get_by_email(pending.email)
-            if user is None and pending.phone:
-                user = await self._users.get_by_phone(pending.phone)
-            if user is None:
-                raise ConflictError("An account already exists with this email or phone") from None
-            if user.email != pending.email or (pending.phone and user.phone != pending.phone):
-                raise ConflictError("An account already exists with this email or phone") from None
-            pending = await self._pending.get_by_id(pending_id)
-            if pending is None:
-                raise ConflictError("Signup session is no longer valid") from None
+            # Matching contact details are not authority to log into an existing account.
+            raise ConflictError("An account already exists with this email or phone") from None
         else:
             pending.completed_user_id = user.id
             pending.completed_at = now
@@ -534,7 +515,7 @@ class AuthService:
 
     async def login(self, data: LoginRequest) -> TokenResponse:
         email = normalize_email(str(data.email))
-        user = await self._users.get_by_email(email)
+        user = await self._users.get_by_email(email, for_update=True)
         if user is None:
             raise UnauthorizedError("Invalid credentials")
         if user.password_hash is None:
@@ -1012,7 +993,12 @@ class AuthService:
         if channel == "phone" and pending.phone_verified_at is not None:
             return self._build_channel_send_response(pending, channel, verified=True, message="Phone already verified")
 
-        await self._otp.enforce_send_rate(pending.id, channel)
+        from app.auth.signup_otp import signup_rate_subject
+
+        destination = pending.email if channel == "email" else (pending.phone or "")
+        await self._otp.enforce_send_rate(
+            signup_rate_subject(self._settings, channel, destination), channel
+        )
         ttl_minutes = max(1, self._settings.signup_otp_ttl_seconds // 60)
         if channel == "phone" and self._settings.phone_otp_backend == "msg91":
             await self._send_msg91_phone_otp(pending, resend=resend)
@@ -1148,7 +1134,7 @@ class AuthService:
         return self._build_channel_verify_response(pending, "phone", message="Phone verified")
 
     async def _load_active_pending(self, signup_session_id: UUID, allow_completed: bool = False) -> PendingSignup:
-        pending = await self._pending.get_by_id(signup_session_id)
+        pending = await self._pending.get_by_id(signup_session_id, for_update=True)
         if pending is None:
             raise NotFoundError("Signup session not found")
         if allow_completed and pending.completed_user_id is not None:
@@ -1223,7 +1209,12 @@ class AuthService:
             )
             self._session.add(pending)
         else:
+            pending = await self._pending.get_by_id(pending.id, for_update=True)
+            if pending is None or pending.completed_user_id is not None:
+                raise ConflictError("Signup session changed; start signup again")
             await self._otp.clear_all(pending.id)
+            # Restarting credential intent invalidates every previous signup capability.
+            pending.id = uuid4()
             pending.email = email
             pending.phone = phone
             pending.signup_kind = signup_kind
@@ -1240,6 +1231,10 @@ class AuthService:
             pending.phone_last_otp_sent_at = None
             pending.completed_user_id = None
             pending.completed_at = None
+            pending.oauth_provider = None
+            pending.oauth_provider_user_id = None
+            pending.oauth_provider_email = None
+            pending.oauth_validated_at = None
 
         await self._session.flush()
         return pending
