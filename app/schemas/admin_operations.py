@@ -16,6 +16,11 @@ from app.admin_operations.enums import (
     ProfileProvenanceSource,
 )
 from app.organization.enums import OrganizationRole, OrganizationType
+from app.schemas.admin_career import ExtendedCareerType, payload_contract, validate_payload
+from app.schemas.gig_platform import GigPlatformResponse
+from app.schemas.portfolio import PortfolioItemResponse
+from app.schemas.project import ProjectResponse
+from app.schemas.skill import SkillResponse
 
 
 class AdminCreateCandidateRequest(BaseModel):
@@ -133,11 +138,23 @@ class AdminProfileMutationResponse(BaseModel):
     candidate_confirmation_required: bool
 
 
-CareerClaimType = Literal["employment", "education", "internship", "freelance", "certification"]
+CareerClaimType = Literal[
+    "employment",
+    "education",
+    "internship",
+    "freelance",
+    "certification",
+    "portfolio",
+    "project",
+    "skill",
+    "gig_platform",
+]
 
 
 class AdminCareerMutationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra=lambda schema: payload_contract(schema)
+    )
 
     claim_type: CareerClaimType
     payload: dict[str, Any]
@@ -145,6 +162,19 @@ class AdminCareerMutationRequest(BaseModel):
         ProfileProvenanceSource.ADMIN_ENTERED,
         ProfileProvenanceSource.CV_EXTRACTED,
     ] = ProfileProvenanceSource.ADMIN_ENTERED
+
+    @model_validator(mode="after")
+    def validate_canonical_payload(self):
+        self.payload = validate_payload(
+            self.claim_type, self.payload, update=isinstance(self, AdminCareerUpdateRequest)
+        )
+        return self
+
+
+class AdminCareerUpdateRequest(AdminCareerMutationRequest):
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra=lambda schema: payload_contract(schema, update=True)
+    )
 
 
 class AdminCareerMutationResponse(BaseModel):
@@ -154,6 +184,19 @@ class AdminCareerMutationResponse(BaseModel):
     updated_fields: list[str]
     provenance_source: ProfileProvenanceSource
     verification_status: str
+
+
+class AdminCareerRecordResponse(BaseModel):
+    candidate_id: UUID
+    claim_type: ExtendedCareerType
+    record: PortfolioItemResponse | ProjectResponse | SkillResponse | GigPlatformResponse
+
+
+class AdminCareerDeleteResponse(BaseModel):
+    candidate_id: UUID
+    claim_type: ExtendedCareerType
+    record_id: UUID
+    deleted: Literal[True] = True
 
 
 class CandidateProvenanceConfirmationItem(BaseModel):

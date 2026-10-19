@@ -33,10 +33,14 @@ from app.resumes.schemas import (
     ResumeUploadIntentRequest,
     ResumeUploadIntentResponse,
 )
+from app.schemas.admin_career import ExtendedCareerType
 from app.schemas.admin_operations import (
     AdminCandidateResponse,
+    AdminCareerDeleteResponse,
     AdminCareerMutationRequest,
     AdminCareerMutationResponse,
+    AdminCareerRecordResponse,
+    AdminCareerUpdateRequest,
     AdminCreateCandidateRequest,
     AdminFirstHRInvitationRequest,
     AdminFirstHRInvitationResponse,
@@ -243,13 +247,50 @@ async def create_assisted_candidate_career_record(
 async def update_assisted_candidate_career_record(
     candidate_id: UUID,
     record_id: UUID,
-    payload: AdminCareerMutationRequest,
+    payload: AdminCareerUpdateRequest,
     actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> AdminCareerMutationResponse:
     return await service.mutate_candidate_career(
         actor.id, candidate_id, payload, record_id=record_id
     )
+
+
+@router.get("/candidates/{candidate_id}/career", response_model=Page[AdminCareerRecordResponse])
+async def list_assisted_candidate_career_records(
+    candidate_id: UUID,
+    claim_type: ExtendedCareerType,
+    params: Annotated[PageParams, Depends()],
+    actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> Page[AdminCareerRecordResponse]:
+    return await service.list_candidate_career(candidate_id, claim_type, params)
+
+
+@router.get(
+    "/candidates/{candidate_id}/career/{record_id}", response_model=AdminCareerRecordResponse
+)
+async def read_assisted_candidate_career_record(
+    candidate_id: UUID,
+    record_id: UUID,
+    claim_type: ExtendedCareerType,
+    actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> AdminCareerRecordResponse:
+    return await service.read_candidate_career(candidate_id, claim_type, record_id)
+
+
+@router.delete(
+    "/candidates/{candidate_id}/career/{record_id}", response_model=AdminCareerDeleteResponse
+)
+async def delete_assisted_candidate_career_record(
+    candidate_id: UUID,
+    record_id: UUID,
+    claim_type: ExtendedCareerType,
+    actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> AdminCareerDeleteResponse:
+    return await service.delete_candidate_career(actor.id, candidate_id, claim_type, record_id)
 
 
 @candidate_router.post(

@@ -50,8 +50,10 @@ from app.organization.enums import OrganizationInvitationStatus, OrganizationRol
 from app.resumes.review_schemas import ImportBatchResponse, review_claim_adapter
 from app.schemas.admin_operations import (
     AdminCandidateResponse,
+    AdminCareerDeleteResponse,
     AdminCareerMutationRequest,
     AdminCareerMutationResponse,
+    AdminCareerRecordResponse,
     AdminCreateCandidateRequest,
     AdminFirstHRInvitationRequest,
     AdminFirstHRInvitationResponse,
@@ -74,6 +76,7 @@ from app.schemas.admin_operations import (
     InPersonVerificationResponse,
 )
 from app.schemas.pagination import Page, PageParams
+from app.services import admin_career_records
 from app.services.email_delivery_service import EmailDeliveryService
 from app.services.organization_service import OrganizationService
 from app.services.resume_review_service import ResumeReviewService
@@ -447,15 +450,18 @@ class AdminOperationsService:
         record_id: UUID | None = None,
     ) -> AdminCareerMutationResponse:
         user = await self._locked_managed_candidate(candidate_id)
-        raw = {**payload.payload, "claim_type": payload.claim_type}
-        claim = review_claim_adapter.validate_python(raw)
-        typed = review_claim_adapter.dump_python(claim, mode="python")
         review = ResumeReviewService(self._session)
-        if record_id is None:
-            record = await review._create_record(user.id, payload.claim_type, typed)
-            self._session.add(record)
-        else:
-            record = await review._target(user.id, payload.claim_type, record_id)
+        extended = payload.claim_type in admin_career_records.MODELS
+        fields = {key: value for key, value in payload.payload.items() if key != "claim_type"}
+        record = None
+        if record_id is not None:
+            record = (
+                await admin_career_records.target(
+                    self._session, user.id, payload.claim_type, record_id
+                )
+                if extended
+                else await review._target(user.id, payload.claim_type, record_id)
+            )
             if await review._is_protected_target(user.id, payload.claim_type, record):
                 raise AdminOperationsConflict(
                     "Source-verified or active Career records cannot be overwritten",
@@ -464,9 +470,27 @@ class AdminOperationsService:
             await self._protect_verified_fields(
                 user.id, payload.claim_type, record.id, payload.payload
             )
-            review._apply_update(record, payload.claim_type, typed)
+        if extended:
+            record, fields = await admin_career_records.write(
+                self._session, user.id, payload.claim_type, fields, record
+            )
+        else:
+            raw = {**payload.payload, "claim_type": payload.claim_type}
+            claim = review_claim_adapter.validate_python(raw)
+            typed = review_claim_adapter.dump_python(
+                claim, mode="python", exclude_unset=record is not None
+            )
+            if record is None:
+                record = await review._create_record(user.id, payload.claim_type, typed)
+                self._session.add(record)
+            else:
+                if payload.claim_type == "employment":
+                    # The CV mapper projects both dates; Admin PATCH must preserve omissions.
+                    for field in ("start_date", "end_date"):
+                        if field not in typed and f"{field}_display" not in typed:
+                            typed[field] = getattr(record, field)
+                review._apply_update(record, payload.claim_type, typed)
         await self._session.flush()
-        fields = {key: value for key, value in payload.payload.items() if key != "claim_type"}
         await self._record_profile_provenance(
             user.id,
             payload.claim_type,
@@ -474,6 +498,7 @@ class AdminOperationsService:
             fields,
             payload.source,
             actor_user_id,
+            include_null=extended,
         )
         self._session.add(
             UserAccountEvent(
@@ -500,6 +525,75 @@ class AdminOperationsService:
             provenance_source=payload.source,
             verification_status=str(getattr(record, "verification_status", "unverified")),
         )
+
+    async def list_candidate_career(self, candidate_id: UUID, kind: str, params: PageParams):
+        user = await self._managed_candidate(candidate_id)
+        model = admin_career_records.MODELS[kind]
+        scope = (model.user_id == user.id, model.deleted_at.is_(None))
+        total = await self._session.scalar(select(func.count()).select_from(model).where(*scope))
+        records = (
+            await self._session.scalars(
+                select(model)
+                .where(*scope)
+                .order_by(model.created_at, model.id)
+                .offset(params.offset)
+                .limit(params.limit)
+            )
+        ).all()
+        return Page[AdminCareerRecordResponse].create(
+            items=[
+                AdminCareerRecordResponse(
+                    candidate_id=user.id,
+                    claim_type=kind,
+                    record=admin_career_records.RESPONSES[kind].model_validate(record),
+                )
+                for record in records
+            ],
+            total=total or 0,
+            params=params,
+        )
+
+    async def read_candidate_career(self, candidate_id: UUID, kind: str, record_id: UUID):
+        user = await self._managed_candidate(candidate_id)
+        record = await admin_career_records.target(
+            self._session, user.id, kind, record_id, lock=False
+        )
+        return AdminCareerRecordResponse(
+            candidate_id=user.id,
+            claim_type=kind,
+            record=admin_career_records.RESPONSES[kind].model_validate(record),
+        )
+
+    async def delete_candidate_career(
+        self, actor_user_id: UUID, candidate_id: UUID, kind: str, record_id: UUID
+    ):
+        user = await self._locked_managed_candidate(candidate_id)
+        record = await admin_career_records.target(self._session, user.id, kind, record_id)
+        if await ResumeReviewService(self._session)._is_protected_target(user.id, kind, record):
+            raise AdminOperationsConflict(
+                "Source-verified or active Career records cannot be removed",
+                code="source_verified_field_protected",
+            )
+        fields = dict.fromkeys(admin_career_records.UPDATE_SCHEMAS[kind].model_fields)
+        await self._protect_verified_fields(user.id, kind, record.id, fields)
+        record.deleted_at = datetime.now(tz=UTC)
+        self._session.add(
+            UserAccountEvent(
+                user_id=user.id,
+                actor_user_id=actor_user_id,
+                actor_role=Role.ADMIN.value,
+                event_type="admin_profile_updated",
+                title="Assisted Career record removed",
+                detail="Record soft-deleted; provenance and audit history retained.",
+                metadata_payload={
+                    "record_type": kind,
+                    "record_id": str(record.id),
+                    "action": "delete",
+                },
+            )
+        )
+        await self._session.commit()
+        return AdminCareerDeleteResponse(candidate_id=user.id, claim_type=kind, record_id=record.id)
 
     async def confirm_candidate_provenance(
         self, user_id: UUID, payload: CandidateProvenanceConfirmationRequest
@@ -1164,9 +1258,11 @@ class AdminOperationsService:
         values: dict[str, Any],
         source: ProfileProvenanceSource,
         actor_user_id: UUID,
+        *,
+        include_null: bool = False,
     ) -> None:
         for field, value in values.items():
-            if value is None:
+            if value is None and not include_null:
                 continue
             self._session.add(
                 AdminProfileProvenance(
