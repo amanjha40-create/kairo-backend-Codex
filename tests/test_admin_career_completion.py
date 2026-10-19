@@ -264,6 +264,13 @@ def test_openapi_nine_types_and_canonical_payload_truth():
     assert len(request["allOf"]) == 4
     for condition in request["allOf"]:
         assert condition["then"]["properties"]["payload"]["additionalProperties"] is False
+    update = schema["components"]["schemas"]["AdminCareerUpdateRequest"]
+    for condition in update["allOf"]:
+        payload = condition["then"]["properties"]["payload"]
+        assert payload["minProperties"] == 1
+        for name in ("title", "name", "is_ongoing", "is_active"):
+            if name in payload["properties"]:
+                assert "anyOf" not in payload["properties"][name]
 
 
 @pytest.mark.parametrize(

@@ -79,10 +79,23 @@ UPDATE_SCHEMAS = {
 
 def payload_contract(schema: dict[str, Any], *, update: bool = False) -> None:
     """Expose the claim-type-dependent payload in OpenAPI 3.1."""
+
+    def canonical_schema(model):
+        contract = model.model_json_schema()
+        if update:
+            contract["minProperties"] = 1
+            for field in ("title", "name", "is_ongoing", "is_active"):
+                prop = contract["properties"].get(field)
+                if prop and "anyOf" in prop:
+                    non_null = [part for part in prop.pop("anyOf") if part.get("type") != "null"]
+                    prop.update(non_null[0])
+                    prop.pop("default", None)
+        return contract
+
     schema["allOf"] = [
         {
             "if": {"properties": {"claim_type": {"const": kind}}},
-            "then": {"properties": {"payload": model.model_json_schema()}},
+            "then": {"properties": {"payload": canonical_schema(model)}},
         }
         for kind, model in (UPDATE_SCHEMAS if update else CREATE_SCHEMAS).items()
     ]
