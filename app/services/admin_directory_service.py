@@ -16,6 +16,7 @@ from app.core.constants import Role
 from app.core.permissions import Permission, get_roles_with_permission, has_permission
 from app.exceptions import ConflictError, NotFoundError
 from app.integrations.email import get_email_sender
+from app.logging.auth_audit import auth_audit
 from app.models import (
     PassportShareLink,
     PassportShareView,
@@ -710,7 +711,9 @@ class AdminDirectoryService:
             detail=payload.reason,
             metadata={"revoked_passport_links": len(shares)},
         )
+        audit_user_id = user.id
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=audit_user_id)
         return await self.get_user_detail(actor, user_public_id)
 
     async def restore_user(
@@ -769,7 +772,10 @@ class AdminDirectoryService:
             detail=str(row.family_id),
             metadata={"session_public_id": str(row.id)},
         )
+        audit_ids = (user.id, row.id, row.family_id)
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE", user_id=audit_ids[0], session_id=audit_ids[1],
+                   family_id=audit_ids[2])
         return await self.get_user_detail(actor, user_public_id)
 
     async def revoke_all_sessions(
@@ -804,7 +810,9 @@ class AdminDirectoryService:
             detail=f"{active_count} active session(s) revoked",
             metadata={"revoked_sessions": active_count},
         )
+        audit_user_id = user.id
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=audit_user_id)
         return await self.get_user_detail(actor, user_public_id)
 
     async def initiate_password_reset(

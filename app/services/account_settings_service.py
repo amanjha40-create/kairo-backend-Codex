@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.exceptions import ConflictError, NotFoundError
+from app.logging.auth_audit import auth_audit
 from app.models import RefreshToken, User
 from app.repositories.notification import NotificationPreferenceRepository
 from app.repositories.refresh_token import RefreshTokenRepository
@@ -125,7 +126,10 @@ class AccountSettingsService:
         if current_session_family_id is not None and row.family_id == current_session_family_id:
             raise ConflictError("Current session cannot be revoked")
         await self._refresh.revoke(row.id)
+        audit_ids = (row.id, row.family_id)
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE", user_id=user_id, session_id=audit_ids[0],
+                   family_id=audit_ids[1])
 
     async def revoke_all_sessions(
         self,
@@ -138,6 +142,8 @@ class AccountSettingsService:
         else:
             await self._refresh.revoke_all_for_user_except_family(user_id, current_session_family_id)
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=user_id,
+                   excluded_family_id=current_session_family_id)
 
     async def _require_user(self, user_id: UUID) -> User:
         user = await self._users.get_by_id(user_id)

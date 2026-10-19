@@ -15,10 +15,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.email_utils import mask_email, normalize_email
+from app.auth.oauth_transactions import OAuthHandoffStore, OAuthTransactionStore
 from app.auth.passwords import hash_password, password_needs_rehash, verify_password
 from app.auth.phone_utils import mask_phone, normalize_phone
 from app.auth.provider_registry import get_provider
-from app.auth.oauth_transactions import OAuthHandoffStore, OAuthTransactionStore
 from app.auth.signup_otp import SignupOtpStore, generate_otp_code
 from app.auth.tokens import (
     create_access_token,
@@ -34,9 +34,11 @@ from app.exceptions import (
     UnauthorizedError,
     ValidationAppError,
 )
+from app.infrastructure.redis.keys import RedisKeys
 from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
 from app.integrations.phone_otp.msg91 import Msg91PhoneOtpProvider
+from app.logging.auth_audit import auth_audit
 from app.models import PasswordResetToken, PendingSignup, RefreshToken, User
 from app.models.user_social_account import UserSocialAccount
 from app.organization.enums import OrganizationType
@@ -49,14 +51,14 @@ from app.schemas.auth import (
     ChangePasswordResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleAuthOutcome,
+    GoogleHandoffExchangeResponse,
+    GooglePhoneStartRequest,
     LinkProviderRequest,
     LinkProviderResponse,
     LoginRequest,
     OAuthAuthUrlResponse,
     OAuthCallbackRequest,
-    GoogleHandoffExchangeResponse,
-    GoogleAuthOutcome,
-    GooglePhoneStartRequest,
     OrganizationSignupEmailSendResponse,
     OrganizationSignupEmailVerifyResponse,
     OrganizationSignupStartRequest,
@@ -81,7 +83,6 @@ from app.schemas.auth import (
     TokenResponse,
     UnlinkProviderResponse,
 )
-from app.infrastructure.redis.keys import RedisKeys
 
 logger = logging.getLogger(__name__)
 SignupChannel = Literal["email", "phone"]
@@ -615,7 +616,9 @@ class AuthService:
         await self._password_resets.mark_used(token.id, used_at=now)
         await self._password_resets.mark_all_active_for_user_used(user.id, used_at=now)
         await self._refresh.revoke_all_for_user(user.id)
+        audit_user_id = user.id
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=audit_user_id)
         return ResetPasswordResponse()
 
     async def refresh(self, data: RefreshRequest) -> TokenResponse:
@@ -626,8 +629,11 @@ class AuthService:
             raise UnauthorizedError("Invalid refresh token")
 
         if existing.revoked_at is not None:
+            audit_ids = (existing.user_id, existing.id, existing.family_id)
             await self._refresh.revoke_family(existing.family_id)
             await self._session.commit()
+            auth_audit("AUTH_REFRESH_FAMILY_REVOKE", user_id=audit_ids[0],
+                       session_id=audit_ids[1], family_id=audit_ids[2])
             raise UnauthorizedError("Refresh token reused")
 
         if existing.expires_at <= datetime.now(tz=UTC):
@@ -666,7 +672,10 @@ class AuthService:
             refresh_token=raw_refresh,
             expires_in=ttl_sec,
         )
+        audit_ids = (user.id, existing.id, existing.family_id, new_row.id)
         await self._session.commit()
+        auth_audit("AUTH_REFRESH_ROTATE", user_id=audit_ids[0], session_id=audit_ids[1],
+                   family_id=audit_ids[2], successor_session_id=audit_ids[3])
         return tokens
 
     def get_oauth_url(self, provider_name: str) -> OAuthAuthUrlResponse:
@@ -977,9 +986,14 @@ class AuthService:
 
         token_hash = hash_refresh_token(data.refresh_token)
         existing = await self._refresh.get_by_hash_any(token_hash)
+        audit_ids = (existing.user_id, existing.id, existing.family_id) if existing else (None,) * 3
+        auth_audit("AUTH_LOGOUT_REQUEST", user_id=audit_ids[0], session_id=audit_ids[1],
+                   family_id=audit_ids[2])
         if existing and existing.revoked_at is None:
             await self._refresh.revoke(existing.id)
             await self._session.commit()
+            auth_audit("AUTH_LOGOUT_SESSION_REVOKED", user_id=audit_ids[0],
+                       session_id=audit_ids[1], family_id=audit_ids[2])
 
     async def _send_channel_otp(
         self,

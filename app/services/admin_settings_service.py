@@ -21,6 +21,7 @@ from app.core.constants import Role
 from app.core.permissions import ADMIN_PORTAL_ROLES, ROLE_PERMISSIONS
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.integrations.email import get_email_sender
+from app.logging.auth_audit import auth_audit
 from app.models import (
     AdminAccessAuditEvent,
     AdminAccessInvitation,
@@ -199,6 +200,7 @@ class AdminSettingsService:
             metadata={"session_family_id": str(session_family_id)},
         )
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE", user_id=actor.id, family_id=session_family_id)
         return await self.list_my_sessions(actor)
 
     async def revoke_other_sessions(
@@ -215,6 +217,8 @@ class AdminSettingsService:
             summary="Other admin sessions revoked",
         )
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=actor.id,
+                   excluded_family_id=actor.session_family_id)
         return await self.list_my_sessions(actor)
 
     async def get_notification_preferences(
@@ -362,7 +366,9 @@ class AdminSettingsService:
                 "after": {"role_key": payload.role_key},
             },
         )
+        audit_user_id = target.id
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=audit_user_id)
         return await self.get_administrator_detail(actor, administrator_id)
 
     async def deactivate_administrator(
@@ -385,7 +391,9 @@ class AdminSettingsService:
             summary="Admin access deactivated",
             metadata={"reason": target.suspension_reason},
         )
+        audit_user_id = target.id
         await self._session.commit()
+        auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=audit_user_id)
         return await self.get_administrator_detail(actor, administrator_id)
 
     async def restore_administrator(

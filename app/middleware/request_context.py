@@ -12,6 +12,7 @@ from starlette.responses import Response
 from app.config import get_settings
 from app.core.constants import HttpHeader
 from app.logging import get_logger
+from app.logging.auth_audit import begin_auth_audit, finish_auth_audit
 from app.logging.context import bind_request_context, reset_request_context
 from app.logging.request_redaction import redact_request_credentials
 
@@ -29,6 +30,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         bind_request_context(request_id=request_id, correlation_id=correlation_id)
         request.state.request_id = request_id
         request.state.correlation_id = correlation_id
+        audit_token = begin_auth_audit(
+            request_id, correlation_id, request.headers.get("user-agent", ""),
+        )
 
         response: Response | None = None
         started = time.perf_counter()
@@ -38,6 +42,10 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         finally:
             duration_ms = (time.perf_counter() - started) * 1000
             status_code = response.status_code if response is not None else 500
+            route = request.scope.get("route")
+            finish_auth_audit(
+                audit_token, endpoint=getattr(route, "path", None), status=status_code,
+            )
 
             if settings.log_access_enabled:
                 client_host = request.client.host if request.client else None
