@@ -31,6 +31,7 @@ from app.models.resume_review_session import ResumeReviewSession
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
+from app.resumes.education_review import normalize_education_review
 from app.resumes.normalization import normalize_review_date, payload_hash, stable_claim_id
 from app.resumes.review_enums import ResumeImportAction, ResumeReviewStatus
 from app.resumes.review_schemas import (
@@ -332,6 +333,11 @@ class ResumeReviewService:
                 item.claim_type,
                 item.edited_payload,
             )
+            if item.claim_type == "education" and item.import_action != "skip":
+                try:
+                    normalize_education_review(item.edited_payload)
+                except ValidationAppError as exc:
+                    blockers.append(exc.code)
             importability_warnings = self._completion_warnings(
                 item.claim_type,
                 item.edited_payload,
@@ -407,8 +413,15 @@ class ResumeReviewService:
             item.imported_record_id = prior.record_id
             return "linked", prior.record_type, prior.record_id, ["already_imported"]
         action = item.import_action
+        if item.claim_type == "education" and action == "skip":
+            item.review_status = "skipped"
+            return "skipped", None, None, []
+        import_payload = (
+            normalize_education_review(item.edited_payload)
+            if item.claim_type == "education" else item.edited_payload
+        )
         typed_payload = review_claim_adapter.dump_python(
-            review_claim_adapter.validate_python(item.edited_payload),
+            review_claim_adapter.validate_python(import_payload),
             mode="python",
         )
         if action == "skip":
@@ -708,10 +721,14 @@ class ResumeReviewService:
         if claim_type == "profile" and value.get("professional_headline"):
             value["professional_headline"] = value["professional_headline"][:255]
         value["claim_type"] = claim_type
+        if claim_type == "education":
+            return normalize_education_review(value)
         return review_claim_adapter.dump_python(review_claim_adapter.validate_python(value), mode="json")
 
     @staticmethod
     def _normalize_review_payload(claim_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if claim_type == "education":
+            return normalize_education_review(payload)
         if claim_type not in {"employment", "education"}:
             return payload
         for field, is_end in (("start_date", False), ("end_date", True)):
