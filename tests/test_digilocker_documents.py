@@ -54,6 +54,24 @@ def context():
     )
 
 
+@pytest.mark.parametrize("doctype", ["PANCR", "DRVLC"])
+async def test_provider_400_is_sanitized_rejection_not_outage(doctype, caplog):
+    def handler(request):
+        assert str(request.url) == XML_URL + item(doctype)["uri"]
+        return httpx.Response(400, json={"error": "private-provider-value",
+                                       "error_description": "synthetic-private-document"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderError) as error:
+            await DigiLockerDocuments(settings(), client=client).retrieve(
+                SecretStr("synthetic-access"), item(doctype)["uri"], xml=True)
+    assert error.value.category == "document_request_rejected"
+    mapped = DigiLockerDocumentService._failure(error.value)
+    assert isinstance(mapped, ValidationAppError)
+    assert mapped.code == "digilocker_document_request_rejected"
+    assert "private-provider-value" not in caplog.text
+    assert "synthetic-private-document" not in caplog.text
+
+
 def test_normalize_multiple_none_and_doctype_not_name():
     assert normalize_items({"items": []}) == ([], 0)
     records, bad = normalize_items(

@@ -7,14 +7,16 @@ from app.employment.document_catalog import build_document_upload_options
 from app.employment.enums import EmploymentDocumentType, VerificationMethod
 
 
-def test_build_document_upload_options_includes_all_types() -> None:
+def test_build_document_upload_options_includes_available_types() -> None:
     settings = Settings(
         database_url="postgresql+asyncpg://u:p@localhost/db",
         jwt_secret_key="test-jwt-secret-key-32-chars-minimum!!",
     )
     options = build_document_upload_options(settings)
     values = {item["value"] for item in options["document_types"]}
-    assert values == {t.value for t in EmploymentDocumentType}
+    assert values == {
+        t.value for t in EmploymentDocumentType if t != EmploymentDocumentType.GOVERNMENT_ID
+    }
     method_values = {item["value"] for item in options["verification_methods"]}
     assert method_values == {m.value for m in VerificationMethod}
     assert options["extraction_enabled"] is False

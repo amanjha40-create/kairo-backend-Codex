@@ -1,6 +1,8 @@
 """Credential-free browser completion. Outcomes never confer verification or access."""
 
 from html import escape
+import json
+import secrets
 from urllib.parse import urlsplit
 
 from starlette.responses import HTMLResponse, RedirectResponse
@@ -16,7 +18,7 @@ def browser_redirect(outcome: str) -> RedirectResponse:
     )
 
 
-def completion_page(settings, outcome: str) -> HTMLResponse:
+def completion_page(settings, outcome: str, *, user_agent: str = "") -> HTMLResponse:
     outcome = "connected" if outcome == "connected" else "failed"
     origin = urlsplit(settings.digilocker_redirect_uri or "")
     # The destination comes only from validated server configuration, never Host or input.
@@ -30,11 +32,6 @@ def completion_page(settings, outcome: str) -> HTMLResponse:
         else "This connection attempt could not be completed. "
         "Your saved verification results are preserved. "
         "Return to KairoID to check status and try again when you are ready."
-    )
-    action = (
-        f'<a class="action" href="{escape(intent, quote=True)}">Return to KairoID</a>'
-        if origin.scheme == "https" and host
-        else "<p>Close this browser window and return to the KairoID app.</p>"
     )
     web = settings.digilocker_connection_return_url
     web_action = (
@@ -50,12 +47,26 @@ def completion_page(settings, outcome: str) -> HTMLResponse:
         "staging": "com.kairoid.staging.digilocker",
         "production": "com.kairoid.digilocker",
     }.get(settings.app_env.value)
-    iphone_action = (
-        f'<p><a class="action" href="{iphone_scheme}://complete?result='
-        + outcome
-        + '">Return to KairoID on iPhone</a></p>'
-        if iphone_scheme is not None
-        else ""
+    # UA selects presentation only; it never confers identity or connection status.
+    ua = user_agent[:2048].lower()
+    ios = any(device in ua for device in ("iphone", "ipad", "ipod"))
+    android = "android" in ua and not ios
+    destination = None
+    if ios and iphone_scheme:
+        destination = f"{iphone_scheme}://complete?result={outcome}"
+    elif android and origin.scheme == "https" and host:
+        destination = intent
+    action = (
+        f'<a class="action" href="{escape(destination, quote=True)}">Return to KairoID</a>'
+        if destination
+        else "<p>Close this browser window and return to the KairoID app.</p>"
+    )
+    # iOS authentication sessions capture their registered scheme. One navigation
+    # attempt only; keep the explicit fallback if the browser suppresses it.
+    nonce = secrets.token_urlsafe(24)
+    auto_return = (
+        f'<script nonce="{nonce}">window.location.replace({json.dumps(destination)});</script>'
+        if ios and destination else ""
     )
     body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -74,10 +85,10 @@ a:focus-visible{{outline:3px solid #00a99d;outline-offset:4px}}
 main{{background:#142a38;border-color:#35515e}}a,.brand{{color:#55ddd1}}
 .action{{background:#008c87;color:#fff}}}}</style></head>
 <body><main><p class="brand">KairoID</p><h1>{escape(title)}</h1><p>{escape(message)}</p>
-{action}{iphone_action}{web_action}
+{action}{web_action}
 <p>If the app does not open, close this browser and return to KairoID.
 Do not reload the authorization callback.</p>
-</main></body></html>"""
+</main>{auto_return}</body></html>"""
     # The HTTPS completion URL is handled by Android's verified App Link before this
     # fallback page is reached. The explicit package action covers browser suppression.
     return HTMLResponse(
@@ -86,7 +97,7 @@ Do not reload the authorization callback.</p>
             **HEADERS,
             "Content-Security-Policy": (
                 "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
-                "form-action 'none'; frame-ancestors 'none'"
+                f"form-action 'none'; frame-ancestors 'none'; script-src 'nonce-{nonce}'"
             ),
             "X-Content-Type-Options": "nosniff",
         },

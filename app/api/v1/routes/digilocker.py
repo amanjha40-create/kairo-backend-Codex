@@ -252,4 +252,4 @@ async def complete(request: Request, settings: Annotated[Settings, Depends(get_s
         and params.getlist("digilocker_result") == ["connected"]
         else "failed"
     )
-    return completion_page(settings, outcome)
+    return completion_page(settings, outcome, user_agent=request.headers.get("user-agent", ""))

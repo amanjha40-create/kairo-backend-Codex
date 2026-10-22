@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import engine
-from app.exceptions import ConflictError, EmploymentCaseNotFoundError, NotFoundError
+from app.exceptions import ConflictError, EmploymentCaseNotFoundError, EmploymentWorkflowError, NotFoundError
 from app.models.employment import Employment
 from app.models.employment_document import EmploymentDocument
 from app.models.user import User
@@ -103,6 +103,12 @@ async def test_primary_threshold_same_category(case, count):
         {"verification_status": "failed"},
         {"deleted_at": datetime.now(UTC)},
         {"checksum_sha256": "0" * 64},
+        {"document_type": "other"},
+        {"document_type": "government_id"},
+        {"document_type": "bank_statement"},
+        {"document_type": "form_w2"},
+        {"document_type": "form_1099"},
+        {"document_type": "employment_id_card"},
     ],
 )
 async def test_ineligible_files_never_count(case, overrides):
@@ -123,6 +129,31 @@ async def test_detached_and_cross_owner_do_not_count(case):
     await document(case, "primary", uploaded_by_user_id=other.id)
     assert await primary_evidence_count(session, emp.id, user.id, [first.id, first.id]) == 1
     assert await primary_evidence_count(session, uuid4(), user.id) == 0
+
+
+@pytest.mark.asyncio
+async def test_valid_types_and_legacy_visibility(case):
+    session, user, _, emp = case
+    await document(case, "primary", document_type="offer_letter")
+    await document(case, "primary", document_type="relieving_letter")
+    legacy = await document(case, "primary", document_type="government_id")
+    assert await require_primary_evidence(session, emp.id, user.id) == 2
+    service = EmploymentDocumentService(session, get_settings())
+    rows, total = await service.list_for_employment_owned(user.id, emp.id, offset=0, limit=10)
+    assert total == 3 and legacy.id in {row.id for row in rows}
+    await session.refresh(legacy)
+    assert legacy.evidence_role == "primary"
+
+
+@pytest.mark.asyncio
+async def test_government_id_unavailable_for_new_uploads(case):
+    session, user, _, emp = case
+    service = EmploymentDocumentService(session, get_settings())
+    assert "government_id" not in {item.value for item in service.get_upload_options().document_types}
+    payload = UploadDocumentRequest(document_type="government_id", original_filename="synthetic.pdf",
+                                    content_type="application/pdf", byte_size=10, evidence_role="primary")
+    with pytest.raises(EmploymentWorkflowError):
+        await service.create_upload_intent(user.id, emp.id, payload)
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,11 @@ from sqlalchemy import func, select
 from app.exceptions import ConflictError
 from app.models.employment_document import EmploymentDocument
 
+PRIMARY_DOCUMENT_TYPES = frozenset({
+    "relieving_letter", "employment_contract", "offer_letter", "payslip", "pay_stub",
+    "appointment_letter", "experience_letter", "contract", "hr_letter",
+})
+
 
 async def assert_evidence_editable(session, employment_id):
     from app.repositories.verification_request import VerificationRequestRepository
@@ -25,6 +30,7 @@ async def primary_evidence_count(session, employment_id, owner_id, document_ids=
         document.uploaded_by_user_id == owner_id,
         document.deleted_at.is_(None),
         document.evidence_role == "primary",
+        document.document_type.in_(PRIMARY_DOCUMENT_TYPES),
         document.verification_status.in_(("pending_review", "approved", "rejected")),
         document.checksum_sha256 != "0" * 64,
         func.length(document.checksum_sha256) == 64,

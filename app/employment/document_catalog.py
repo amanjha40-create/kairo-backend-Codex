@@ -76,6 +76,7 @@ def _document_type_options() -> list[dict[str, str]]:
             "description": labels[doc_type][1],
         }
         for doc_type in EmploymentDocumentType
+        if doc_type != EmploymentDocumentType.GOVERNMENT_ID
     ]
 
 

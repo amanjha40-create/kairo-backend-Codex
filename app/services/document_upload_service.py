@@ -58,6 +58,8 @@ class DocumentUploadService:
         employment_id: UUID,
         payload: DocumentUploadIntentRequest,
     ) -> DocumentUploadIntentResponse:
+        if payload.document_type.value == "government_id":
+            raise EmploymentWorkflowError("Government ID is not available for new employment uploads")
         self._storage.validate_declaration(byte_size=payload.byte_size, content_type=payload.content_type)
 
         emp = await self._employment.get_owned_active_for_update(employment_id, owner_user_id)

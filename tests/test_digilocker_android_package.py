@@ -25,7 +25,7 @@ def test_android_fallback_package_is_environment_isolated(
         digilocker_redirect_uri=callback,
         digilocker_connection_return_url=None,
     )
-    response = completion_page(settings, outcome)
+    response = completion_page(settings, outcome, user_agent="Mozilla/5.0 Android")
     html = unescape(response.body.decode())
     result = "connected" if outcome == "connected" else "failed"
     intent = (
@@ -53,7 +53,7 @@ def test_android_fallback_package_is_environment_isolated(
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert "default-src 'none'" in response.headers["content-security-policy"]
-    assert completion_page(settings, outcome).body == response.body
+    assert completion_page(settings, outcome, user_agent="Mozilla/5.0 Android").body == response.body
 
 
 @pytest.mark.parametrize("outcome", ["connected", "failed"])

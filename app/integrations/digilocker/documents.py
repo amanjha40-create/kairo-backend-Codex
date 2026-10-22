@@ -161,6 +161,7 @@ class DigiLockerDocuments:
         client = self.client or httpx.AsyncClient()
         status = None
         category = "NONE"
+        rejection_code = None
         try:
             async with (
                 asyncio.timeout(20),
@@ -177,9 +178,27 @@ class DigiLockerDocuments:
                 ) as response,
             ):
                 status = response.status_code
+                if status == 400:
+                    # Retain only a fixed diagnostic enum, never provider prose or identifiers.
+                    rejection_code = "unclassified"
+                    error_data = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=4096):
+                        if len(error_data) + len(chunk) > 16384:
+                            break
+                        error_data.extend(chunk)
+                    else:
+                        try:
+                            error = json.loads(error_data)
+                            code = error.get("error") if isinstance(error, dict) else None
+                            if code in ("uri_missing", "invalid_uri", "invalid_request",
+                                        "unsupported_document", "insufficient_scope"):
+                                rejection_code = code
+                        except (ValueError, UnicodeError, RecursionError):
+                            pass
                 if status != 200:
                     raise ProviderError(
                         {
+                            400: "document_request_rejected",
                             401: "invalid_token",
                             403: "insufficient_scope",
                             404: "document_not_found",
@@ -225,7 +244,8 @@ class DigiLockerDocuments:
         finally:
             logger.info(
                 "digilocker_document_response",
-                extra={"operation": operation, "provider_status": status, "category": category},
+                extra={"operation": operation, "provider_status": status, "category": category,
+                       "rejection_code": rejection_code},
             )
             if self.client is None:
                 await client.aclose()

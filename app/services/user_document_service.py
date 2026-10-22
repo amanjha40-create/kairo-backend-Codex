@@ -147,9 +147,9 @@ class UserDocumentService:
             raise NotFoundError("User document not found")
         if doc.document_type == "aadhaar":
             doc.document_number = None
-        elif payload.document_number is not None:
+        elif "document_number" in payload.model_fields_set:
             doc.document_number = payload.document_number
-        if payload.expires_at is not None:
+        if "expires_at" in payload.model_fields_set:
             doc.expires_at = payload.expires_at
         await self._session.commit()
         await self._session.refresh(doc)

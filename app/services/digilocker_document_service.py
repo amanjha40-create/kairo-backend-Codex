@@ -40,6 +40,11 @@ class DigiLockerDocumentService(DigiLockerService):
     def _failure(exc):
         if exc.category == "invalid_reference":
             return NotFoundError("Document reference unavailable. Load the list again.")
+        if exc.category == "document_request_rejected":
+            return ValidationAppError(
+                "DigiLocker rejected this document retrieval request. The document could not be verified.",
+                code="digilocker_document_request_rejected",
+            )
         if exc.category in {"invalid_token", "insufficient_scope", "document_not_found"}:
             return ValidationAppError(
                 "DigiLocker document access is unavailable.", code="digilocker_" + exc.category
