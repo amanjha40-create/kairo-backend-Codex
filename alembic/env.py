@@ -9,9 +9,8 @@ from sqlalchemy.engine import Connection
 
 import app.models  # noqa: F401 — register ORM metadata
 from alembic import context
-from app.core.config import get_settings
 from app.db.base import Base
-from app.db.url import build_sync_database_url
+from app.db.migration_config import migration_database_url
 
 config = context.config
 if config.config_file_name is not None:
@@ -21,8 +20,7 @@ target_metadata = Base.metadata
 
 
 def _sync_database_url() -> str:
-    settings = get_settings()
-    return build_sync_database_url(settings.migration_database_url_effective)
+    return migration_database_url()
 
 
 def run_migrations_offline() -> None:
