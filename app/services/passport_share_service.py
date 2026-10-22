@@ -128,7 +128,9 @@ class PassportShareService:
         )
 
     def _build_share_url(self, raw_token: str) -> str:
-        base = self._settings.app_public_base_url.rstrip("/")
+        base = (
+            self._settings.candidate_portal_base_url or self._settings.app_public_base_url
+        ).rstrip("/")
         return f"{base}/passport/{raw_token}"
 
     def _state(self, link: PassportShareLink) -> str:

@@ -23,7 +23,9 @@ from app.services.passport_share_service import PassportShareService
 async def test_concurrent_narrowing_owner_isolation_and_hashed_storage():
     engine = create_async_engine(os.environ["DATABASE_URL"], poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    settings = SimpleNamespace(app_public_base_url="https://passport.example.test")
+    settings = SimpleNamespace(
+        candidate_portal_base_url=None, app_public_base_url="https://passport.example.test"
+    )
     owner = uuid4()
     try:
         async with factory() as session:
