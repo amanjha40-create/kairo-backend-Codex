@@ -35,7 +35,7 @@ async def local_db():
     url = make_url(os.environ["DATABASE_URL"])
     assert os.environ.get("V11_DISPOSABLE_DB") == "1", "Explicit disposable DB opt-in required"
     assert url.host in {"127.0.0.1", "localhost", "::1"}
-    local_synthetic = url.database == "v11" and url.username == "qa"
+    local_synthetic = url.database in {"v11", "deletion094"} and url.username == "qa"
     github_service = (
         os.environ.get("GITHUB_ACTIONS") == "true"
         and url.database == "kairo"

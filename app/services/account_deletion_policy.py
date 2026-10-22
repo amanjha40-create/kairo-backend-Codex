@@ -2,6 +2,7 @@
 
 from sqlalchemy import delete, or_, select, update
 from app.models.employment_reference import EmploymentReference
+from app.models.candidate_activation import CandidateActivationToken
 
 from app.models import (
     DocumentSharePack,
@@ -23,6 +24,9 @@ from app.models import (
 
 
 async def revoke_and_scrub_related(session, user_id, snapshot, now):
+    await session.execute(delete(CandidateActivationToken).where(
+        CandidateActivationToken.user_id == user_id
+    ))
     # Retained employments must not retain private reference contacts, answers or tokens.
     # Invitation/event rows cascade from the reference, not from the retained employment.
     await session.execute(delete(EmploymentReference).where(

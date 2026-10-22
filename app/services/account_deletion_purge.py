@@ -12,6 +12,7 @@ from app.auth.signup_otp import SignupOtpStore
 from app.infrastructure.s3.client import get_s3_client
 from app.models.account_deletion import AccountDeletion, AccountDeletionItem
 from app.models.user import User
+from app.models.organization import Organization
 from app.services.account_deletion_inventory import identity, safe_key
 from app.services.account_deletion_telemetry import current_metrics, observe_sweep
 
@@ -109,6 +110,10 @@ def permitted_scope(request, item):
         "avatar": f"{prefix}/users/{uid}/avatar.",
     }
     scope = item.scope_prefix
+    if item.source_type == "closed_org_logo":
+        return isinstance(item.source_id, UUID) and scope == (
+            f"{prefix}/organizations/{item.source_id}/logo/"
+        )
     if item.source_type in {"education", "pack_snapshot"}:
         stem = "education-documents" if item.source_type == "education" else "document-share-packs"
         start = f"{prefix}/{stem}/"
@@ -179,6 +184,13 @@ async def sweep_deletions(
             ).all()
         )
         by_hash = {item.identity_hash: item for item in items}
+        closed_organizations = set((await session.scalars(
+            select(Organization.id).where(
+                Organization.closure_deletion_id == request.id,
+                Organization.closed_at.is_not(None),
+                Organization.suspended_at.is_not(None),
+            )
+        )).all())
         if recovery_only:
             # Recheck under the canonical row lock; a prior read-only audit is not authority.
             if not owner_erased or not items or any(item.status == "review" for item in items):
@@ -191,6 +203,8 @@ async def sweep_deletions(
                 if item.kind not in {"object", "namespace"}:
                     raise UnsafeReference()
                 assert_owned_reference(request, item)
+                if item.source_type == "closed_org_logo" and item.source_id not in closed_organizations:
+                    raise UnsafeReference()
                 if (
                     not request.storage_bucket
                     or request.storage_bucket != settings.s3_documents_bucket
@@ -219,6 +233,8 @@ async def sweep_deletions(
                     await SignupOtpStore(redis, settings).clear_all(item.source_id)
                 else:
                     assert_owned_reference(request, item)
+                    if item.source_type == "closed_org_logo" and item.source_id not in closed_organizations:
+                        raise UnsafeReference()
                     if (
                         not request.storage_bucket
                         or request.storage_bucket != settings.s3_documents_bucket
@@ -236,6 +252,7 @@ async def sweep_deletions(
                                 kind="object",
                                 object_key=key,
                                 source_type=item.source_type,
+                                source_id=item.source_id,
                                 scope_prefix=item.scope_prefix,
                             )
                             assert_owned_reference(request, probe)
@@ -247,6 +264,7 @@ async def sweep_deletions(
                                     identity_hash=fingerprint,
                                     kind="object",
                                     source_type=item.source_type,
+                                    source_id=item.source_id,
                                     object_key=key,
                                     scope_prefix=item.scope_prefix,
                                     status="pending",

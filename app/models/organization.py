@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -31,6 +31,13 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Tenant-aware organization owned and managed by Kairo users."""
 
     __tablename__ = "organizations"
+    __table_args__ = (
+        CheckConstraint(
+            "(closed_at IS NULL AND closure_deletion_id IS NULL) OR "
+            "(closed_at IS NOT NULL AND closure_deletion_id IS NOT NULL "
+            "AND suspended_at IS NOT NULL)", name="ck_organizations_closure",
+        ),
+    )
 
     public_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
@@ -57,6 +64,10 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     setup_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closure_deletion_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("account_deletions.id", ondelete="RESTRICT"), nullable=True
+    )
     suspension_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
     verification_capabilities: Mapped[list[str]] = mapped_column(
         JSONB,

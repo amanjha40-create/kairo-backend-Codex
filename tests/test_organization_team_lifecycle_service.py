@@ -34,6 +34,7 @@ def _build_organization():
         name="Kairo University",
         organization_type=OrganizationType.UNIVERSITY,
         suspended_at=None,
+        closed_at=None,
     )
 
 

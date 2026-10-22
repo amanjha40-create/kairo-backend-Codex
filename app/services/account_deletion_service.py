@@ -15,9 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import verify_password
 from app.config import Settings
-from app.core.constants import Role
 from app.exceptions import (
-    ForbiddenError,
     NotFoundError,
     ServiceUnavailableError,
     UnauthorizedError,
@@ -44,7 +42,6 @@ from app.models import (
     InternshipDocument,
     Notification,
     NotificationPreference,
-    OrganizationMember,
     OrganizationPerson,
     PassportShareLink,
     PasswordResetToken,
@@ -77,6 +74,7 @@ from app.models.account_deletion import AccountDeletion
 from app.schemas.account_deletion import AccountDeletionRequest
 from app.services.account_deletion_inventory import inventory_deletion
 from app.services.account_deletion_policy import revoke_and_scrub_related, scrub_invitation_events
+from app.services.organization_account_deletion import resolve_organizations_for_account_deletion
 from app.verification_requests.enums import VerificationRequestStatus
 
 logger = logging.getLogger(__name__)
@@ -149,7 +147,6 @@ class AccountDeletionService:
             await self._session.commit()
             return
 
-        await self._assert_candidate_self_service_eligible(user)
         self._assert_confirmation(payload.confirm)
         self._assert_recent_password_reauthentication(user, payload.current_password)
 
@@ -171,6 +168,7 @@ class AccountDeletionService:
                 )
             ).scalar_one_or_none() is not None
             deletion = await inventory_deletion(self._session, self._settings, user, snapshot)
+            await resolve_organizations_for_account_deletion(self._session, user, deletion)
             await revoke_and_scrub_related(self._session, user.id, snapshot, now)
             await self._purge_verification_requests(snapshot.verification_request_ids_to_purge)
             await self._scrub_retained_verification_records(
@@ -224,25 +222,6 @@ class AccountDeletionService:
                 )
             except Exception:
                 logger.warning("account_deletion.queue_acceleration_unavailable")
-
-    async def _assert_candidate_self_service_eligible(self, user: User) -> None:
-        if user.role != Role.USER.value:
-            raise ForbiddenError("Only candidate accounts can use self-service account deletion")
-
-        membership_count = int(
-            (
-                await self._session.execute(
-                    select(OrganizationMember).where(OrganizationMember.user_id == user.id).limit(1)
-                )
-            )
-            .scalars()
-            .first()
-            is not None
-        )
-        if membership_count:
-            raise ForbiddenError(
-                "Organization workspace accounts cannot use candidate self-service account deletion"
-            )
 
     def _assert_confirmation(self, confirm: str) -> None:
         if confirm != "DELETE":

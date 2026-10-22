@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCAN_ROOTS = ("app", "alembic", "tests")
-EXPECTED_ALEMBIC_HEADS = {"093"}
+EXPECTED_ALEMBIC_HEADS = {"094"}
 
 
 def test_no_accidental_duplicate_python_filenames() -> None:

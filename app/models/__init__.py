@@ -1,6 +1,7 @@
 """Import models for Alembic metadata discovery."""
 
 from app.models.account_deletion import AccountDeletion, AccountDeletionItem
+from app.models.organization_deletion_resolution import OrganizationDeletionResolution
 from app.models.admin_access_audit_event import AdminAccessAuditEvent
 from app.models.admin_access_invitation import AdminAccessInvitation
 from app.models.admin_profile_provenance import AdminProfileProvenance
@@ -113,6 +114,7 @@ __all__ = [
     "DigiLockerIdentityVerification",
     "AccountDeletion",
     "AccountDeletionItem",
+    "OrganizationDeletionResolution",
     "AdminAccessAuditEvent",
     "AdminAccessInvitation",
     "AdminProfileProvenance",

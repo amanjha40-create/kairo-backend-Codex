@@ -493,6 +493,7 @@ class TrustInvitationService:
         return invitation
 
     async def _resolve_active_token(self, raw_token: str) -> TrustInvitation:
+        from app.services.organization_lifecycle import require_organization_open
         if not raw_token or len(raw_token) < 16:
             raise NotFoundError("Trust invitation not found")
 
@@ -506,6 +507,7 @@ class TrustInvitationService:
         if invitation is None:
             raise NotFoundError("Trust invitation not found")
 
+        await require_organization_open(self._session, invitation.organization_id)
         expired = await self._expire_if_needed(invitation)
         if expired:
             await self._session.commit()
@@ -518,6 +520,7 @@ class TrustInvitationService:
         return invitation
 
     async def _resolve_token_for_accept(self, raw_token: str) -> TrustInvitation:
+        from app.services.organization_lifecycle import require_organization_open
         if not raw_token or len(raw_token) < 16:
             raise NotFoundError("Trust invitation not found")
 
@@ -531,6 +534,7 @@ class TrustInvitationService:
         if invitation is None:
             raise NotFoundError("Trust invitation not found")
 
+        await require_organization_open(self._session, invitation.organization_id)
         expired = await self._expire_if_needed(invitation)
         if expired:
             await self._session.commit()

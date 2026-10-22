@@ -1,5 +1,54 @@
 # DB-first account deletion (Phase 9C)
 
+## Organization-aware deletion implementation status (2026-10-22)
+
+Founder approved permanent organization closure with retained shared
+verification/audit history. This supersedes the product policy that requires
+organization members to manage ownership before deleting their own account.
+It does not waive confirmation, password checks, storage ownership guards or
+the need for an explicitly approved Production deletion canary.
+
+The implementation now integrates ownership resolution into `DELETE /users/me`.
+It is **not deployed**. The earlier sections below describe the personal erasure
+pipeline; migration 094 adds organization closure to that pipeline.
+
+The actor comes exclusively from authentication. Explicit DELETE confirmation and
+the existing password/social contract remain mandatory. All roles use this same
+endpoint; mobile clients do not orchestrate ownership. The transaction locks the
+user, organizations in UUID order, memberships, and successor users. NOWAIT on
+inverse-order locks fails the entire request safely rather than deadlocking or
+selecting a concurrently deleting successor. Team-management operations now lock
+and refresh before authorization/last-owner checks.
+
+Ownership resolution, personal erasure, session/share invalidation, audit events
+and the single durable ledger all commit together. No organization helper commits
+independently. Eligible co-owners remain owners; otherwise admins take priority,
+then oldest eligible members, with UUID tie breakers. Non-owners in an already
+ownerless workspace receive the same repair/closure resolution rather than being
+trapped. Creator provenance alone is not ownership: Admin-created canonical
+directory organizations without workspace membership remain unchanged.
+
+Sole-active-member closure cancels invitations, invalidates public verification
+capabilities and organization Passport grants/consents, removes memberships and
+active-workspace pointers, and records an irreversible closed timestamp linked to
+the deletion ledger. Database guards reject rejoining, reopening and regranting;
+token readers enforce closure, including signed-ID trust invitations. Retained
+verification/roster/audit records are not cascade-deleted. Existing roster-source
+retention is unchanged; it is not reclassified as personal erasure.
+
+Non-retained logo objects and the exact logo namespace enter the existing purge
+pipeline. Legacy out-of-scope references become review items, never guessed keys.
+The sweeper requires both the exact namespace and committed closure proof tied to
+the same deletion ledger. Discovery carries that organization identity forward.
+Existing delayed-PUT reconciliation, Redis cleanup and retry semantics remain.
+
+Migration 094 is additive; downgrade refuses to discard any resolution/closure
+history. Empty-schema upgrade/downgrade/upgrade has passed locally. A compatible
+worker and sweeper image must accompany the API: older consumers must not receive
+the new cleanup source type. Staging deployment, real cleanup completion, queue/
+DLQ and alarm evidence remain release gates. Production deployment is not
+authorized in the current task, and no real account is approved for deletion.
+
 Local implementation based on `e0ad27b4a69dd481d64e90112a4600b084d17e6a`.
 Migration 079 follows 078. No deployment or infrastructure changes are included.
 

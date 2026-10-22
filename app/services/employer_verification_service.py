@@ -142,6 +142,9 @@ class EmployerVerificationService:
         verification_request_id: UUID | None = None,
         commit: bool = True,
     ) -> EmployerVerificationRequestResponse:
+        from app.services.organization_lifecycle import require_verification_organization_open
+
+        await require_verification_organization_open(self._session, verification_request_id)
         await self._references.employment(employment_id, owner_user_id)
         row = await self._employment.get_owned_active(employment_id, owner_user_id)
         if row is None:
@@ -300,6 +303,9 @@ class EmployerVerificationService:
         req = await self._requests.get_by_token_hash(token_hash)
         if req is None:
             raise NotFoundError("This verification link is invalid or has expired")
+        from app.services.organization_lifecycle import require_verification_organization_open
+
+        await require_verification_organization_open(self._session, req.verification_request_id)
         return req
 
     async def _assert_no_other_pipeline_case(self, employment) -> None:

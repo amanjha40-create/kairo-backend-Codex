@@ -446,6 +446,7 @@ class OrganizationService:
         organization, actor_membership = await self.require_org_manager(
             actor_user_id,
             org_public_id,
+            for_update=True,
         )
         membership = await self._require_org_member_by_public_id(organization.id, member_public_id)
         self._assert_member_action_allowed(actor_membership, membership)
@@ -474,6 +475,7 @@ class OrganizationService:
         organization, actor_membership = await self.require_org_manager(
             actor_user_id,
             org_public_id,
+            for_update=True,
         )
         membership = await self._require_org_member_by_public_id(organization.id, member_public_id)
         self._assert_member_action_allowed(actor_membership, membership)
@@ -499,6 +501,7 @@ class OrganizationService:
         organization, actor_membership = await self.require_org_manager(
             actor_user_id,
             org_public_id,
+            for_update=True,
         )
         membership = await self._require_org_member_by_public_id(organization.id, member_public_id)
         self._assert_member_action_allowed(actor_membership, membership)
@@ -514,6 +517,7 @@ class OrganizationService:
         org_public_id: UUID,
         member_public_id: UUID,
     ) -> OrganizationOwnershipTransferResponse:
+        await self._organizations.get_by_public_id(org_public_id, for_update=True)
         organization, actor_membership = await self.require_org_member(actor_user_id, org_public_id)
         if actor_membership.role != OrganizationRole.OWNER:
             raise ForbiddenError("Only organization owners can transfer ownership")
@@ -547,6 +551,8 @@ class OrganizationService:
         if organization is None:
             raise NotFoundError("Organization not found")
 
+        if organization.closed_at is not None:
+            raise NotFoundError("Organization not found")
         membership = await self._organizations.get_membership(organization.id, actor_user_id)
         if membership is None:
             raise NotFoundError("Organization not found")

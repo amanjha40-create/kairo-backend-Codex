@@ -11,7 +11,7 @@ from app.admin_review.enums import VerificationRequestEvidenceStatus
 from app.config import get_settings
 from app.core.constants import Role, SignupKind
 from app.db.session import async_session_factory
-from app.exceptions import ForbiddenError, NotFoundError, UnauthorizedError, ValidationAppError
+from app.exceptions import NotFoundError, UnauthorizedError, ValidationAppError
 from app.models import (
     AccountDeletion,
     AccountDeletionItem,
@@ -1310,7 +1310,7 @@ async def test_account_deletion_repeat_delete_fails_closed() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_account_deletion_rejects_organization_workspace_member() -> None:
+async def test_account_deletion_allows_organization_member_with_existing_owner() -> None:
     settings = get_settings()
     now = datetime.now(tz=UTC)
     candidate_id = None
@@ -1359,15 +1359,30 @@ async def test_account_deletion_rejects_organization_workspace_member() -> None:
             )
             await session.commit()
 
+            session.add(OrganizationMember(
+                organization_id=organization.id,
+                user_id=org_user.id,
+                role=OrganizationRole.OWNER,
+            ))
+            await session.commit()
             service = AccountDeletionService(session, settings, _FakeRedis())
-            with pytest.raises(ForbiddenError):
-                await service.delete_candidate_account(
-                    candidate.id,
-                    AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
-                )
+            await service.delete_candidate_account(
+                candidate.id,
+                AccountDeletionRequest(confirm="DELETE", current_password="CandidatePass123!"),
+            )
+            assert (await session.get(User, candidate.id)).deleted_at is not None
+            assert await session.scalar(select(OrganizationMember.role).where(
+                OrganizationMember.organization_id == org_id,
+                OrganizationMember.user_id == org_user.id,
+            )) == OrganizationRole.OWNER
     finally:
         async with async_session_factory() as cleanup:
             if org_id is not None:
+                from app.models import OrganizationDeletionResolution
+
+                await cleanup.execute(delete(OrganizationDeletionResolution).where(
+                    OrganizationDeletionResolution.organization_id == org_id
+                ))
                 await cleanup.execute(delete(Organization).where(Organization.id == org_id))
             if candidate_id is not None:
                 await cleanup.execute(delete(User).where(User.id == candidate_id))

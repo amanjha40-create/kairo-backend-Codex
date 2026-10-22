@@ -113,6 +113,7 @@ class OrganizationRepository:
                 OrganizationMember.organization_id == organization_id,
                 OrganizationMember.public_id == member_public_id,
             )
+            .execution_options(populate_existing=True)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 

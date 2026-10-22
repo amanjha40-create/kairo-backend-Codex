@@ -403,6 +403,10 @@ class PublicInstitutionVerificationService:
         row = await self._public_requests.get_by_token_hash(hash_refresh_token(raw_token))
         if row is None and not allow_missing:
             raise NotFoundError("This verification link is invalid or has expired")
+        if row is not None:
+            from app.services.organization_lifecycle import require_organization_open
+
+            await require_organization_open(self._session, row.organization_id)
         return row
 
     def _derive_state(
