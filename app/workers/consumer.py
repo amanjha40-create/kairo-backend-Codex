@@ -18,18 +18,21 @@ from app.infrastructure.redis.client import get_redis_client
 from app.infrastructure.sqs.client import get_sqs_client
 from app.infrastructure.sqs.envelope import SqsJobEnvelope
 from app.logging import setup_logging
+from app.workers.defer import DeferMessage
 from app.workers.registry import get_handler
 
 # SQS message IDs are tracked in Redis for this long to prevent duplicate
 # processing when DeleteMessage fails after a successful handler run.
 _IDEMPOTENCY_TTL_SECONDS = 86_400  # 24 hours
 
-import app.workers.handlers  # noqa: F401 — register handlers on import
+import app.workers.handlers  # noqa: E402, F401 — register handlers on import
 
 logger = logging.getLogger(__name__)
 
 
-def _receive_batch(client: Any, queue_url: str, *, wait_seconds: int, max_messages: int) -> list[dict[str, Any]]:
+def _receive_batch(
+    client: Any, queue_url: str, *, wait_seconds: int, max_messages: int
+) -> list[dict[str, Any]]:
     resp = client.receive_message(
         QueueUrl=queue_url,
         MaxNumberOfMessages=max_messages,
@@ -42,6 +45,19 @@ def _receive_batch(client: Any, queue_url: str, *, wait_seconds: int, max_messag
 
 def _delete_message(client: Any, queue_url: str, receipt_handle: str) -> None:
     client.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+
+
+def _defer_message(
+    client: Any,
+    queue_url: str,
+    receipt_handle: str,
+    delay_seconds: int,
+) -> None:
+    client.change_message_visibility(
+        QueueUrl=queue_url,
+        ReceiptHandle=receipt_handle,
+        VisibilityTimeout=delay_seconds,
+    )
 
 
 def _install_shutdown(shutdown: asyncio.Event) -> None:
@@ -121,6 +137,37 @@ async def _process_message(client: Any, queue_url: str, raw: dict[str, Any]) -> 
         try:
             await handler(envelope.data, session)
             await session.commit()
+        except DeferMessage as deferred:
+            await session.rollback()
+            redis = await get_redis_client()
+            await redis.delete(f"sqs:processed:{message_id}")
+            try:
+                await asyncio.to_thread(
+                    _defer_message,
+                    client,
+                    queue_url,
+                    receipt_handle,
+                    deferred.delay_seconds,
+                )
+            except ClientError as exc:
+                logger.warning(
+                    "SQS deferral failed — original visibility timeout remains",
+                    extra={
+                        "message_type": envelope.type,
+                        "message_id": message_id,
+                        "error_code": exc.response.get("Error", {}).get("Code", "unknown"),
+                    },
+                )
+            else:
+                logger.info(
+                    "SQS message deferred until canonical work is eligible",
+                    extra={
+                        "message_type": envelope.type,
+                        "message_id": message_id,
+                        "delay_seconds": deferred.delay_seconds,
+                    },
+                )
+            return
         except Exception:
             await session.rollback()
             # Release the idempotency key so a retry can re-run the handler.
@@ -136,7 +183,8 @@ async def _process_message(client: Any, queue_url: str, raw: dict[str, Any]) -> 
         await asyncio.to_thread(_delete_message, client, queue_url, receipt_handle)
     except ClientError as exc:
         logger.warning(
-            "DeleteMessage failed after successful handler — idempotency key will prevent re-processing",
+            "DeleteMessage failed after successful handler — "
+            "idempotency key will prevent re-processing",
             extra={
                 "message_id": message_id,
                 "error_code": exc.response.get("Error", {}).get("Code", "unknown"),
