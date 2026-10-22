@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine, pool
@@ -13,13 +14,18 @@ from app.db.base import Base
 from app.db.migration_config import migration_database_url
 
 config = context.config
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
 
 def _sync_database_url() -> str:
+    override = config.attributes.get("migration_database_url")
+    if override is not None:
+        return migration_database_url(
+            {"APP_ENV": os.environ.get("APP_ENV", ""), "MIGRATION_DATABASE_URL": override}
+        )
     return migration_database_url()
 
 
