@@ -18,6 +18,8 @@ from app.education.enums import (
 
 
 class EducationCreateRequest(BaseModel):
+    institution_catalogue_id: str | None = Field(default=None, max_length=80)
+    institution_catalogue_version: str | None = Field(default=None, max_length=32)
     institution_name: str = Field(min_length=1, max_length=512)
     degree: str = Field(min_length=1, max_length=255)
     field_of_study: str | None = Field(default=None, max_length=255)
@@ -39,6 +41,8 @@ class EducationCreateRequest(BaseModel):
 
 
 class EducationUpdateRequest(BaseModel):
+    institution_catalogue_id: str | None = Field(default=None, max_length=80)
+    institution_catalogue_version: str | None = Field(default=None, max_length=32)
     institution_name: str | None = Field(default=None, min_length=1, max_length=512)
     degree: str | None = Field(default=None, min_length=1, max_length=255)
     field_of_study: str | None = Field(default=None, max_length=255)
@@ -60,6 +64,8 @@ class EducationUpdateRequest(BaseModel):
 
 
 class EducationResponse(BaseModel):
+    institution_catalogue_id: str | None = None
+    institution_catalogue_version: str | None = None
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: uuid.UUID

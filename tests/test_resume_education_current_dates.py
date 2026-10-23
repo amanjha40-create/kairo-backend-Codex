@@ -187,6 +187,77 @@ async def create_review(session, uid, claim):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_catalogue_selection_survives_review_import(education_owner):
+    from app.catalogues.institutions import CATALOGUE_VERSION, load_catalogue
+
+    _, rows = load_catalogue()
+    chosen = rows[0]
+    uid = education_owner
+    async with async_session_factory() as session:
+        service = ResumeReviewService(session)
+        review = await create_review(session, uid, {"institution_name": "Custom school"})
+        item = review.items[0]
+        assert item.edited_payload["institution_catalogue_id"] is None
+        updated = await service.update_item(uid, review.id, item.id, ReviewItemUpdateRequest(
+            expected_version=item.version,
+            edited_payload={**item.edited_payload, "institution_name": chosen["name"],
+                            "institution_catalogue_id": chosen["id"],
+                            "institution_catalogue_version": CATALOGUE_VERSION},
+        ))
+        assert updated.edited_payload["institution_catalogue_id"] == chosen["id"]
+        refreshed = await service._owned_review(uid, review.id)
+        plan = await service.validate(uid, review.id, ReviewValidateRequest(
+            expected_version=refreshed.version,
+        ))
+        assert plan.ready
+        batch = await service.import_review(uid, review.id, ReviewImportRequest(
+            expected_version=plan.version, idempotency_key=str(uuid4()), confirmed=True,
+        ))
+        assert batch.imported_count == 1
+        row = await session.scalar(select(Education).where(Education.user_id == uid))
+        assert row.institution_name == chosen["name"]
+        assert row.institution_catalogue_id == chosen["id"]
+        assert row.institution_catalogue_version == CATALOGUE_VERSION
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_candidate_catalogue_create_edit_and_old_client(education_owner):
+    from datetime import date
+
+    from app.catalogues.institutions import CATALOGUE_VERSION, load_catalogue
+    from app.schemas.education import EducationCreateRequest, EducationUpdateRequest
+    from app.services.education_service import EducationService
+
+    _, rows = load_catalogue()
+    async with async_session_factory() as session:
+        service = EducationService(session)
+        row = await service.create(education_owner, EducationCreateRequest(
+            institution_name="Legacy manual school", degree="Synthetic degree",
+            education_level="bachelors", start_date=date(2020, 1, 1),
+        ))
+        assert row.institution_catalogue_id is None
+        for chosen in rows[:2]:
+            row = await service.update(education_owner, row.id, EducationUpdateRequest(
+                institution_name=chosen["name"], institution_catalogue_id=chosen["id"],
+                institution_catalogue_version=CATALOGUE_VERSION,
+            ))
+            await session.refresh(row)
+            assert row.institution_catalogue_id == chosen["id"]
+            assert row.institution_name == chosen["name"]
+        row = await service.update(education_owner, row.id, EducationUpdateRequest(grade="A"))
+        assert row.institution_catalogue_id == rows[1]["id"]
+        row = await service.update(education_owner, row.id, EducationUpdateRequest(
+            institution_name="Legacy client custom edit",
+        ))
+        await session.refresh(row)
+        assert row.institution_name == "Legacy client custom edit"
+        assert row.institution_catalogue_id is None
+        assert row.institution_catalogue_version is None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_current_education_real_postgres_import_and_idempotency(education_owner):
     uid = education_owner
     async with async_session_factory() as session:

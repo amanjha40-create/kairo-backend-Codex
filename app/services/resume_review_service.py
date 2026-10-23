@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.catalogues.education_identity import FIELDS, education_identity
 from app.employment.enums import EmploymentType, VerificationMethod, VerificationStatus
 from app.exceptions import ConflictError, NotFoundError, ValidationAppError
 from app.models.certification import Certification
@@ -170,9 +171,14 @@ class ResumeReviewService:
         ):
             raise ValidationAppError("Distinct-role confirmation requires an employment create decision")
         self._check_version(item.version, payload.expected_version)
+        edit_payload = dict(payload.edited_payload if payload.edited_payload is not None else item.edited_payload)
+        if item.claim_type == "education":
+            edit_payload = education_identity(edit_payload, item.edited_payload)
+            for field in FIELDS:
+                edit_payload.setdefault(field, item.edited_payload.get(field))
         edited = self._normalize_review_payload(
             item.claim_type,
-            dict(payload.edited_payload if payload.edited_payload is not None else item.edited_payload),
+            edit_payload,
         )
         try:
             claim = review_claim_adapter.validate_python(edited)
@@ -341,7 +347,7 @@ class ResumeReviewService:
             )
             if item.claim_type == "education" and item.import_action != "skip":
                 try:
-                    normalize_education_review(item.edited_payload)
+                    education_identity(normalize_education_review(item.edited_payload))
                 except ValidationAppError as exc:
                     blockers.append(exc.code)
             importability_warnings = self._completion_warnings(
@@ -557,7 +563,8 @@ class ResumeReviewService:
                 verification_status=VerificationStatus.DRAFT.value,
             )
         if claim_type == "education":
-            return Education(user_id=user_id, institution_name=p["institution_name"], degree=p.get("degree"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), start_date_precision=p.get("start_date_precision"), end_date=p.get("end_date"), end_date_precision=p.get("end_date_precision"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
+            p = education_identity(p)
+            return Education(user_id=user_id, institution_name=p["institution_name"], institution_catalogue_id=p.get("institution_catalogue_id"), institution_catalogue_version=p.get("institution_catalogue_version"), degree=p.get("degree"), field_of_study=p.get("field_of_study"), education_level=p.get("education_level"), grade=p.get("grade"), start_date=p.get("start_date"), start_date_precision=p.get("start_date_precision"), end_date=p.get("end_date"), end_date_precision=p.get("end_date_precision"), is_currently_studying=bool(p.get("is_current")), verification_status="draft")
         if claim_type == "internship":
             return Internship(user_id=user_id, company_name=p.get("company_name"), role=p.get("role"), description=p.get("description"), start_date=p.get("start_date"), end_date=p.get("end_date"), is_ongoing=bool(p.get("is_current")), is_paid=False, stipend_currency="INR", verification_status="pending")
         if claim_type == "freelance":
@@ -576,6 +583,11 @@ class ResumeReviewService:
         raise ValidationAppError("Claim type is not importable", code="unsupported_import_target")
 
     def _apply_update(self, record: Any, claim_type: str, p: dict[str, Any]) -> None:
+        if claim_type == "education":
+            p = education_identity(p, record)
+            for field in FIELDS:
+                if field in p:
+                    setattr(record, field, p[field])
         mappings = {
             "employment": {"company_name": "employer_legal_name", "role_title": "job_title", "start_date": "start_date", "end_date": "end_date", "employment_type": "employment_type", "work_arrangement": "work_arrangement"},
             "education": {"institution_name": "institution_name", "degree": "degree", "field_of_study": "field_of_study", "education_level": "education_level", "grade": "grade", "start_date": "start_date", "start_date_precision": "start_date_precision", "end_date": "end_date", "end_date_precision": "end_date_precision"},
@@ -728,6 +740,9 @@ class ResumeReviewService:
             value["professional_headline"] = value["professional_headline"][:255]
         value["claim_type"] = claim_type
         if claim_type == "education":
+            # Parser-derived names are not a user-confirmed catalogue selection.
+            for field in FIELDS:
+                value.pop(field, None)
             return normalize_education_review(value)
         return review_claim_adapter.dump_python(review_claim_adapter.validate_python(value), mode="json")
 

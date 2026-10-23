@@ -68,6 +68,38 @@ async def seed(session):
     return actor, user
 
 
+async def test_admin_education_catalogue_contract():
+    from app.catalogues.institutions import CATALOGUE_VERSION, load_catalogue
+    from app.models.education import Education
+
+    _, rows = load_catalogue()
+    chosen = rows[0]
+    async with async_session_factory() as session:
+        actor, user = await seed(session)
+        service = AdminOperationsService(session, get_settings())
+        result = await service.mutate_candidate_career(
+            actor.id, user.id, AdminCareerMutationRequest(
+                claim_type="education", payload={
+                    "institution_name": chosen["name"], "degree": "Synthetic",
+                    "institution_catalogue_id": chosen["id"],
+                    "institution_catalogue_version": CATALOGUE_VERSION,
+                },
+            ),
+        )
+        record = await session.get(Education, result.record_id)
+        assert record.institution_name == chosen["name"]
+        assert record.institution_catalogue_id == chosen["id"]
+        await service.mutate_candidate_career(
+            actor.id, user.id, AdminCareerUpdateRequest(
+                claim_type="education", payload={"institution_name": "Custom historical name"},
+            ), record_id=result.record_id,
+        )
+        await session.refresh(record)
+        assert record.institution_name == "Custom historical name"
+        assert record.institution_catalogue_id is None
+        assert record.institution_catalogue_version is None
+
+
 @pytest.mark.parametrize("kind", CASES)
 async def test_canonical_lifecycle_and_append_only_provenance(kind):
     create, update, clear = CASES[kind]

@@ -74,6 +74,8 @@ class EmploymentReviewClaim(DatedClaim):
 
 
 class EducationReviewClaim(DatedClaim):
+    institution_catalogue_id: str | None = Field(default=None, max_length=80)
+    institution_catalogue_version: str | None = Field(default=None, max_length=32)
     claim_type: Literal["education"]
     institution_name: str | None = Field(default=None, max_length=512)
     degree: str | None = Field(default=None, max_length=255)

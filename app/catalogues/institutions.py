@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "institutions_india_v1.json"
+CATALOGUE_VERSION = "india-he-v1"
 COMMON_WORDS = {
     word.upper(): word for word in (
         "College", "University", "Institute", "Institution", "Government", "Arts",
@@ -33,7 +34,7 @@ def search_key(value: str) -> str:
 @lru_cache(maxsize=1)
 def load_catalogue() -> tuple[dict, tuple[dict, ...]]:
     data = json.loads(DATA_PATH.read_text(encoding="utf-8"))
-    assert data["version"] == "india-he-v1"
+    assert data["version"] == CATALOGUE_VERSION
     rows = data["institutions"]
     if not rows or len({r["id"] for r in rows}) != len(rows):
         raise ValueError("Invalid catalogue identifiers")
@@ -55,7 +56,7 @@ def search_index() -> tuple[tuple[dict, str, str], ...]:
 def search_institutions(query: str, state: str = "", district: str = "",
                         limit: int = 20, offset: int = 0) -> dict:
     result = {
-        "version": "india-he-v1", "scope": "India higher education; incomplete historical snapshot",
+        "version": CATALOGUE_VERSION, "scope": "India higher education; incomplete historical snapshot",
         "available": True, "manual_entry_allowed": True,
         "fallback_label": "Institution not listed / Enter manually",
         "items": [], "total": 0, "limit": limit, "offset": offset,

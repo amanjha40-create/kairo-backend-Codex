@@ -94,3 +94,32 @@ load/index185.39ms; exact6.87ms; partial21.81ms; state14.54ms; district13.15ms;
 page2 offset22.73ms. Warm searches returned1,25833,1517,116,25833 total matches
 respectively. These measurements support normal debounced mobile search usage,
 not a production latency SLA or concurrency/load certification.
+# Optional Education provenance (DB095)
+
+Education create/update/response and Resume Education review claims now accept
+`institution_catalogue_id` (nullable string, maximum 80 characters) and
+`institution_catalogue_version` (nullable string, maximum 32 characters).
+`institution_name` remains the display value. Both metadata fields may be null;
+manual and legacy institutions remain valid without a catalogue lookup.
+
+Explicit selections must supply the exact name, ID and version returned by
+`GET /api/v1/catalogues/institutions`. Unknown/mismatched selections return
+`invalid_institution_selection`; catalogue loading failure permits manual entry
+and returns `institution_catalogue_unavailable` only for new linked selections.
+No name or fuzzy matching automatically creates a link.
+
+Changing the name without a new selection clears both fields, including when a
+full-form client echoes the previous selection. Unrelated Candidate/Admin PATCH
+updates preserve the selection. Explicitly sending both fields null clears it.
+Resume parser-derived names remain unlinked; explicit review selections survive
+draft edits and Career import. Admin-assisted Education uses the same resolver.
+
+Migration 095 adds two nullable columns to `educations`, with no default,
+backfill, index, foreign key, organization link or routing change. Apply 095
+before deploying the new ORM. Old API clients may omit both fields. Stop new
+code before downgrading; downgrade removes only these provenance columns.
+
+Passport, HR and verification continue using submitted institution names.
+Catalogue IDs never identify an organization or select a verification route.
+Client picker wiring and physical/simulator validation remain separate work.
+The existing licensing review gate still blocks Production catalogue deployment.

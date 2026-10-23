@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.catalogues.education_identity import education_identity
 from app.config import Settings, get_settings
 from app.education.enums import EducationVerificationStatus
 from app.exceptions import NotFoundError, ServiceUnavailableError, ValidationAppError
@@ -43,6 +44,7 @@ class EducationService:
     # --- Education CRUD ---
 
     async def create(self, user_id: UUID, payload: EducationCreateRequest) -> Education:
+        identity = education_identity(payload.model_dump())
         await self._assert_not_obvious_duplicate(
             user_id=user_id,
             institution_name=payload.institution_name,
@@ -57,6 +59,8 @@ class EducationService:
             degree=payload.degree,
             field_of_study=payload.field_of_study,
             education_level=payload.education_level.value,
+            institution_catalogue_id=identity.get("institution_catalogue_id"),
+            institution_catalogue_version=identity.get("institution_catalogue_version"),
             grade=payload.grade,
             start_date=payload.start_date,
             start_date_precision=payload.start_date_precision,
@@ -99,7 +103,7 @@ class EducationService:
                 and latest_request.status == VerificationRequestStatus.REJECTED
             )
         )
-        data = payload.model_dump(exclude_unset=True)
+        data = education_identity(payload.model_dump(exclude_unset=True), edu)
         start_date = data.get("start_date", edu.start_date)
         end_date = data.get("end_date", edu.end_date)
         is_currently_studying = data.get("is_currently_studying", edu.is_currently_studying)

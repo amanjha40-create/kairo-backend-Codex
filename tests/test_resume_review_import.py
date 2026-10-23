@@ -757,10 +757,11 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert unedited_education.edited_payload["is_current"] is False
         plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
         assert plan.ready
-        assert [item.claim_type for item in plan.items] == [
+        # Rows inserted together can have equal timestamps; ordering is not this contract.
+        assert sorted(item.claim_type for item in plan.items) == [
+            "education",
+            "education",
             "employment",
-            "education",
-            "education",
         ]
         unusable_plan_item = next(
             item for item in plan.items if "unusable_record" in item.warnings
