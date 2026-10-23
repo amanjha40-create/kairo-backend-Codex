@@ -51,6 +51,7 @@ class SecurityHeadersMiddleware:
                     )
                 if (
                     path.startswith(self.no_store_prefixes)
+                    or path.startswith("/api/v1/public/passport/")
                     or "/public/manager-references/" in path
                     or "/public/employer-verification" in path
                     or "/references" in path

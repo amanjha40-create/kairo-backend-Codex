@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.education.enums import EducationVerificationStatus
 from app.employment.enums import VerificationStatus as EmploymentVerificationStatus
-from app.exceptions import NotFoundError
+from app.exceptions import NotFoundError, ServiceUnavailableError
 from app.models import (
     Certification,
     Education,
@@ -121,6 +121,26 @@ class PublicPassportService:
                 sharing_mode=policy.mode,
             ),
         )
+
+    async def get_pdf_by_token(self, raw_token: str) -> bytes:
+        from app.services.public_passport_pdf import render_public_passport_pdf
+
+        passport = await self.get_by_token(raw_token)
+        try:
+            content = await asyncio.to_thread(render_public_passport_pdf, passport)
+        except Exception:
+            # Renderer errors can contain document text; never log or return them.
+            raise ServiceUnavailableError("Shared Passport PDF is temporarily unavailable") from None
+        # Reject revocation, expiry or narrowed permissions during PDF generation.
+        current = await self._resolve_active_share(raw_token)
+        policy = resolve_policy(current.permissions)
+        if (
+            policy.permissions != passport.share.permissions
+            or policy.version != passport.share.policy_version
+            or policy.mode != passport.share.sharing_mode
+        ):
+            raise NotFoundError("Trust Passport not found")
+        return content
 
     async def get_photo_by_token(self, raw_token: str) -> tuple[bytes, str]:
         link = await self._resolve_active_share(raw_token)

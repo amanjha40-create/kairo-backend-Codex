@@ -33,7 +33,11 @@ class PassportShareRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_token_hash(self, token_hash: str) -> PassportShareLink | None:
-        stmt = select(PassportShareLink).where(PassportShareLink.token_hash == token_hash)
+        stmt = (
+            select(PassportShareLink)
+            .where(PassportShareLink.token_hash == token_hash)
+            .execution_options(populate_existing=True)
+        )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_owner(
