@@ -50,6 +50,7 @@ from app.resumes.review_schemas import (
 )
 from app.resumes.review_validation import required_claim_blockers
 from app.resumes.schemas import ParsedResumeResult
+from app.resumes.skill_quality import confident_for_selection
 from app.services.resume_duplicate_service import ResumeDuplicateService
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,11 @@ class ResumeReviewService:
             source_claim_id = stable_claim_id(parsed.id, claim_type, ordinal, payload)
             exact = next((candidate for candidate in assessment.candidates if candidate["classification"] == "exact_match"), None)
             supported = claim_type in SUPPORTED_IMPORT_TYPES
+            selected = (
+                supported
+                and confident_for_selection(raw.get("confidence"))
+                and (assessment.status == "no_match" or claim_type == "employment")
+            )
             item = ResumeReviewItem(
                 review_session_id=review.id,
                 user_id=user_id,
@@ -117,8 +123,8 @@ class ResumeReviewService:
                 source_claim_id=source_claim_id,
                 original_payload=payload,
                 edited_payload=payload,
-                selected=supported and (assessment.status == "no_match" or claim_type == "employment"),
-                review_status="selected" if supported and (assessment.status == "no_match" or claim_type == "employment") else "deselected",
+                selected=selected,
+                review_status="selected" if selected else "deselected",
                 duplicate_status=assessment.status,
                 duplicate_candidates=assessment.candidates,
                 conflict_warnings=assessment.warnings,

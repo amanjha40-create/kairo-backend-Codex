@@ -178,7 +178,8 @@ async def create_review(session, uid, claim):
     await session.flush()
     session.add(ResumeParsedResult(
         job_id=job.id, user_id=uid, schema_version="1",
-        structured_result={"schema_version": "1", "education": [claim]},
+        # These tests target date/import behavior, not uncertain review defaults.
+        structured_result={"schema_version": "1", "education": [{"confidence": 0.95, **claim}]},
     ))
     await session.commit()
     return await ResumeReviewService(session).create(uid, doc.id)

@@ -700,6 +700,7 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                     "location": {"city": "Resume City", "country": "IN"},
                 },
                 "employments": [{
+                    "confidence": 0.95,
                     "company_name": "Synthetic Company",
                     "role_title": "Engineer",
                     "employment_type": "full_time",
@@ -713,6 +714,7 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                     },
                 }],
                 "education": [{
+                    "confidence": 0.95,
                     "institution_name": "Synthetic University",
                     "degree": "Synthetic Degree",
                     "start_date_display": "2015",
@@ -721,6 +723,7 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
                     "end_date_precision": "year",
                     "is_current": False,
                 }, {
+                    "confidence": 0.95,
                     "institution_name": None,
                     "degree": "Unusable Degree",
                     "start_date_display": "2020",

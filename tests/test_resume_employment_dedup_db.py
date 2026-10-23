@@ -19,6 +19,7 @@ from app.services.resume_review_service import ResumeReviewService
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 CLAIM = {
+    "confidence": 0.95,  # Import/dedup scenarios use high-confidence parser output.
     "company_name": "Synthetic Example Private Limited",
     "role_title": "Business Analyst",
     "start_date": "2021-01-01",

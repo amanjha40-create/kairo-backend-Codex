@@ -1,0 +1,30 @@
+{
+  "description": "Synthetic model over-extraction, not a private resume or reconstruction of incident totals",
+  "text": "EXPERIENCE\nSynthetic Research Co - Analyst\nIncreased ticket size by 20%. Prepared market updates every Friday with regional and local team inputs.\nEDUCATION\nSynthetic University - Economics\nCERTIFICATIONS\nSynthetic Finance Certificate\nPROJECTS\nPortfolio Dashboard\nSKILLS\nFinancial Modeling; Portfolio Management; Data Analysis; C++; C#; .NET; Node.js; Financial-Modeling\n",
+  "payload": {
+    "employments": [{"company_name": "Synthetic Research Co", "role_title": "Analyst", "confidence": 0.95}, {"company_name": "Uncertain Synthetic Co", "role_title": "Assistant", "confidence": 0.40}],
+    "education": [{"institution_name": "Synthetic University", "degree": "Economics", "confidence": 0.90}, {"institution_name": "Uncertain Synthetic School", "degree": "Diploma", "confidence": 0.50}],
+    "certifications": [{"title": "Synthetic Finance Certificate", "confidence": 0.90}],
+    "projects": [{"title": "Portfolio Dashboard", "confidence": 0.90}],
+    "skills": [
+      {"name": "ticket size", "confidence": 0.05, "source_text_reference": "EXPERIENCE: Increased ticket size by 20%."},
+      {"name": "market updates every Friday", "confidence": 0.05, "source_text_reference": "EXPERIENCE: Prepared market updates every Friday"},
+      {"name": "and local team inputs", "confidence": 0.05, "source_text_reference": "EXPERIENCE: regional and local team inputs"},
+      {"name": "Increased revenue by 20%", "confidence": 0.99},
+      {"name": "Prepared customer reports", "confidence": 0.95},
+      {"name": "weekly reports", "confidence": 0.90},
+      {"name": "Financial Modeling", "confidence": 0.95},
+      {"name": " financial   modeling! ", "confidence": 0.95},
+      {"name": "Financial-Modeling", "confidence": 0.95},
+      {"name": "Portfolio Management", "confidence": 0.95},
+      {"name": "Data Analysis", "confidence": 0.85},
+      {"name": "data analysis.", "confidence": 0.85},
+      {"name": "C++", "confidence": 0.95},
+      {"name": "C#", "confidence": 0.95},
+      {"name": ".NET", "confidence": 0.95},
+      {"name": "Node.js", "confidence": 0.95},
+      {"name": "Scenario Planning", "confidence": 0.30},
+      {"name": "Risk Analysis"}
+    ]
+  }
+}

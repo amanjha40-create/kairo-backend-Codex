@@ -314,7 +314,13 @@ class NovaResumeParser(ResumeParser):
             "country and original display text when present. Do not omit a recognizable employer/role entry just "
             "because its date or location is partial or unavailable; retain the claim with null for unknown fields "
             "and add a warning so the candidate can complete it during review. Every claim is unverified and "
-            "selected_for_import must be false.\nJSON Schema:\n"
+            "selected_for_import must be false. Skills must be source-grounded skill concepts, "
+            "not resume sentences, responsibilities, metrics, performance statements, temporal "
+            "updates or conjunction fragments. Preserve genuine multi-word skills and meaningful "
+            "technology symbols. Do not turn every bullet into a Skill. Supply calibrated "
+            "extraction confidence and a source_text_reference for each claim; retain uncertain "
+            "Employment, Education, Certification and Project claims for "
+            "candidate review rather than discarding them.\nJSON Schema:\n"
             f"{schema}"
         )
         client = _bedrock_client(self._settings)

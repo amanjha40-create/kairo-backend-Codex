@@ -25,6 +25,7 @@ from app.resumes.normalization import (
     normalize_url,
     payload_hash,
 )
+from app.resumes.skill_quality import skill_key
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class ResumeDuplicateService:
 
     async def assess(self, user_id: UUID, claim_type: str, payload: dict[str, Any]) -> DuplicateAssessment:
         if claim_type == "skill":
-            requested_name = normalize_text(payload.get("name"))
+            requested_name = skill_key(payload.get("name") or "")
             if not requested_name:
                 return DuplicateAssessment("no_match", [], [])
             rows = (await self.session.scalars(select(Skill).where(Skill.user_id == user_id, Skill.deleted_at.is_(None)))).all()
@@ -63,7 +64,7 @@ class ResumeDuplicateService:
                     "safety_recommendation": "link_without_mutation",
                 }
                 for row in rows
-                if normalize_text(row.name) == requested_name
+                if skill_key(row.name or "") == requested_name
             ]
             return DuplicateAssessment("exact_match", candidates[:1], ["normalized_identity_match"] if candidates else []) if candidates else DuplicateAssessment("no_match", [], [])
         if claim_type in {"profile", "project"}:

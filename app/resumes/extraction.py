@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from app.resumes.skill_quality import normalize_skill_name, skill_key, skill_rejection_reason
 from app.validation.urls import normalize_http_url
 
 DatePrecision = Literal["day", "month", "year"]
@@ -90,10 +91,10 @@ _EXPLICIT_SKILL_LIST = re.compile(
     rf"\bmy\s+(?:core\s+)?{_SKILL_WORD_PATTERN}\s+(?:are|include)"
     rf"|\b(?:core|technical|professional)\s+{_SKILL_WORD_PATTERN}\s+(?:are|include)"
     rf"|\b(?:core\s+|technical\s+|professional\s+)?{_SKILL_WORD_PATTERN}\s*[:\-–—]"
-    r")\s*(?P<items>[^.\n]+)",
+    r")\s*(?P<items>[^\n]+)",
     re.IGNORECASE,
 )
-_SKILL_LIST_SEPARATOR = re.compile(r"\s*(?:,|;|\||•|·)\s*(?:(?i:and)\s+)?|\s+/\s+|\s+(?i:and)\s+")
+_SKILL_LIST_SEPARATOR = re.compile(r"\s*(?:,|;|\||•|·)\s*(?:(?i:and)\s+)?|\s+/\s+")
 _RESUME_SECTION_HEADING = re.compile(
     r"^(?:candidate\s+profile|profile|summary|objective|experience|employment|work\s+history|"
     r"education|certifications?|projects?|portfolio|languages?|awards?|interests?|references?)\s*$",
@@ -203,11 +204,16 @@ def _normalize_link_fields(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _skill_list_items(value: str, *, require_list: bool) -> list[str]:
-    items = [item.strip(" \t\r\n-–—•·|,;:.") for item in _SKILL_LIST_SEPARATOR.split(value)]
+    # End a narrative list at a following sentence without splitting .NET/Node.js.
+    value = re.split(r"(?<=[.!?])\s+(?=[A-Z])", value, maxsplit=1)[0]
+    items = [
+        item.strip(" \t\r\n-–—•·|,;:").rstrip(".")
+        for item in _SKILL_LIST_SEPARATOR.split(value)
+    ]
     items = [item for item in items if item]
     if require_list and len(items) < 2:
         return []
-    return [item for item in items if len(item) <= 128 and len(item.split()) <= 6]
+    return [item for item in items if len(item) <= 128]
 
 
 def _is_explicit_skill_heading(value: str) -> bool:
@@ -216,8 +222,7 @@ def _is_explicit_skill_heading(value: str) -> bool:
 
 def _skill_comparison_key(value: str) -> str:
     """Normalize benign list punctuation without erasing meaningful skill symbols."""
-    normalized = re.sub(r"\s*(?:,|;|\||•|·)\s*", " ", value.strip())
-    return " ".join(normalized.casefold().split())
+    return skill_key(value)
 
 
 def _is_redundant_composite_skill(candidate: str, explicit_names: list[str]) -> bool:
@@ -278,7 +283,12 @@ def _explicit_skill_names(extracted_text: str) -> list[str]:
 def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict[str, Any]:
     """Merge explicit labelled skills without inferring from employers, titles, or prose."""
     value = dict(payload)
-    explicit_names = _explicit_skill_names(extracted_text)
+    explicit_names = [normalize_skill_name(name) for name in _explicit_skill_names(extracted_text)]
+    explicit_names = [
+        name for name in explicit_names
+        if skill_rejection_reason(name, explicitly_listed=True) is None
+    ]
+    explicit_keys = {skill_key(name) for name in explicit_names}
     skills: list[Any] = []
     seen: set[str] = set()
     for skill in value.get("skills") or []:
@@ -286,7 +296,13 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
             skills.append(skill)
             continue
         item = dict(skill)
-        item["name"] = " ".join(item["name"].strip(" \t\r\n,;|•·:").split())
+        item["name"] = normalize_skill_name(item["name"])
+        reason = skill_rejection_reason(
+            item["name"], explicitly_listed=skill_key(item["name"]) in explicit_keys
+        )
+        if reason:
+            value.setdefault("warnings", []).append(f"skill_rejected_{reason}")
+            continue
         if _is_redundant_composite_skill(item["name"], explicit_names):
             value.setdefault("warnings", []).append("collapsed_explicit_skill_list_reconciled")
             continue
@@ -300,7 +316,12 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
         if key in seen:
             continue
         seen.add(key)
-        skills.append({"name": name})
+        # This confidence describes direct extraction from a labelled source list,
+        # not verification of the candidate's skill. Never upgrade model uncertainty.
+        skills.append({
+            "name": name, "confidence": 0.90,
+            "source_text_reference": f"Explicit skills list: {name}",
+        })
     value["skills"] = skills
     return value
 
