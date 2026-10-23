@@ -5,7 +5,14 @@ from datetime import date, datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from app.resumes.skill_quality import normalize_skill_name, skill_key, skill_rejection_reason
+from app.resumes.skill_quality import (
+    confident_for_selection,
+    normalize_skill_name,
+    recognized_inferred_skill,
+    skill_key,
+    skill_rejection_reason,
+)
+from app.resumes.skill_sections import grounded_section, section_heading, section_lines
 from app.validation.urls import normalize_http_url
 
 DatePrecision = Literal["day", "month", "year"]
@@ -217,7 +224,7 @@ def _skill_list_items(value: str, *, require_list: bool) -> list[str]:
 
 
 def _is_explicit_skill_heading(value: str) -> bool:
-    return _SKILL_SECTION_HEADING.fullmatch(value.strip()) is not None
+    return section_heading(value) == "skills"
 
 
 def _skill_comparison_key(value: str) -> str:
@@ -262,9 +269,7 @@ def _explicit_skill_names(extracted_text: str) -> list[str]:
     for index, line in enumerate(lines):
         if _is_explicit_skill_heading(line):
             for item_line in lines[index + 1 :]:
-                if not item_line:
-                    break
-                if _RESUME_SECTION_HEADING.fullmatch(item_line):
+                if section_heading(item_line):
                     break
                 candidates.extend(_skill_list_items(item_line, require_list=False))
         for match in _EXPLICIT_SKILL_LIST.finditer(line):
@@ -289,6 +294,7 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
         if skill_rejection_reason(name, explicitly_listed=True) is None
     ]
     explicit_keys = {skill_key(name) for name in explicit_names}
+    source_lines = section_lines(extracted_text)
     skills: list[Any] = []
     seen: set[str] = set()
     for skill in value.get("skills") or []:
@@ -309,6 +315,18 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
         key = _skill_comparison_key(item["name"])
         if not key or key in seen:
             continue
+        if key in explicit_keys:
+            item["source_section"] = "skills"
+        else:
+            section = grounded_section(item["name"], source_lines)
+            if not (
+                section is not None
+                and recognized_inferred_skill(item["name"])
+                and confident_for_selection(item.get("confidence"))
+            ):
+                value.setdefault("warnings", []).append("skill_rejected_unsupported_inference")
+                continue
+            item["source_section"] = section
         seen.add(key)
         skills.append(item)
     for name in explicit_names:
@@ -321,6 +339,7 @@ def enrich_explicit_skills(payload: dict[str, Any], extracted_text: str) -> dict
         skills.append({
             "name": name, "confidence": 0.90,
             "source_text_reference": f"Explicit skills list: {name}",
+            "source_section": "skills",
         })
     value["skills"] = skills
     return value

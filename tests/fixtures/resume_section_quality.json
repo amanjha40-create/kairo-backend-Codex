@@ -1,0 +1,17 @@
+{
+  "text": "PROFESSIONAL SUMMARY\nResearch professional using SQL for financial analysis.\nSKILLS\nFinancial Analysis & Reporting\nPitch Decks & Research Briefs\nInvestor Relations & Outreach\nProject & Process Management\nCross-Functional Coordination\nData Accuracy & Internal Reporting\nStakeholder Engagement\nVenture Capital, M&A, Private Markets Research\nPROFESSIONAL EXPERIENCE\nSynthetic Company A | Research Analyst | Jan 2023 - Present\nConducted market studies across regional offices.\nDesigned reports that increased coverage by 25%.\nPartnered with regional teams on weekly reports.\nSynthetic Company B | Associate | Jan 2022 - Dec 2022\nMentored 12 analysts and coordinated quarterly updates.\nSynthetic Company C | Intern | Jan 2021 - Dec 2021\nProduced research briefs for the northern region.\nSynthetic Company D | Intern | Jan 2020 - Dec 2020\nBuilt dashboards using Python.\nEDUCATION\nSynthetic College | Bachelor of Business Administration | 2017 - 2020\nCERTIFICATIONS\nSynthetic Financial Analysis Certificate\nPROJECTS\nSynthetic Research Dashboard",
+  "junk": [
+    "PROFESSIONAL EXPERIENCE", "Jan 2023 - Present", "Synthetic Company A",
+    "Research Analyst", "Synthetic Company B Associate", "Northern Region",
+    "Conducted market studies across regional offices", "Designed reports that increased coverage by 25%",
+    "Partnered with regional teams on weekly reports", "Mentored 12 analysts",
+    "Produced research briefs for the northern region", "25%", "2017 - 2020",
+    "weekly reports", "and regional teams", "regional offices", "research briefs for the northern region"
+  ],
+  "explicit": [
+    "Financial Analysis & Reporting", "Pitch Decks & Research Briefs",
+    "Investor Relations & Outreach", "Project & Process Management",
+    "Cross-Functional Coordination", "Data Accuracy & Internal Reporting",
+    "Stakeholder Engagement", "Venture Capital", "M&A", "Private Markets Research"
+  ]
+}

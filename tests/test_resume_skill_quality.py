@@ -27,7 +27,7 @@ def test_sanitized_over_extraction_reduces_claim_count_without_losing_core_claim
     result = normalized()
     skills = result["skills"]
     assert len(FIXTURE["payload"]["skills"]) == 18
-    assert len(skills) == 9
+    assert len(skills) == 7
     assert [item["name"] for item in skills] == [
         "Financial Modeling",
         "Portfolio Management",
@@ -36,15 +36,13 @@ def test_sanitized_over_extraction_reduces_claim_count_without_losing_core_claim
         "C#",
         ".NET",
         "Node.js",
-        "Scenario Planning",
-        "Risk Analysis",
     ]
     for kind in ("employments", "education", "certifications", "projects"):
         assert len(result[kind]) == len(FIXTURE["payload"][kind])
         for original, actual in zip(FIXTURE["payload"][kind], result[kind], strict=True):
             for key, value in original.items():
                 assert actual[key] == value
-    assert sum(len(result[k]) for k in FIXTURE["payload"]) == 15
+    assert sum(len(result[k]) for k in FIXTURE["payload"]) == 13
     ParsedResumeResult.model_validate(result)
 
 
@@ -164,7 +162,7 @@ async def test_real_review_creation_preserves_uncertain_claims_but_does_not_sele
     )
     await service.create(uuid4(), uuid4())
     items = [item for item in captured if isinstance(item, ResumeReviewItem)]
-    assert len(items) == 15
+    assert len(items) == 13
     for item in items:
         expected = confident_for_selection(item.confidence) and (
             duplicate_status == "no_match" or item.claim_type == "employment"
@@ -175,7 +173,6 @@ async def test_real_review_creation_preserves_uncertain_claims_but_does_not_sele
     assert {item.claim_type for item in items if not confident_for_selection(item.confidence)} == {
         "employment",
         "education",
-        "skill",
     }
 
 

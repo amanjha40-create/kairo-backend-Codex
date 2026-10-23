@@ -734,7 +734,10 @@ class ResumeReviewService:
 
     @staticmethod
     def _review_payload(claim_type: str, raw: dict[str, Any]) -> dict[str, Any]:
-        metadata = {"source_type", "source_text_reference", "confidence", "warnings", "selected_for_import"}
+        metadata = {
+            "source_type", "source_text_reference", "source_section", "confidence",
+            "warnings", "selected_for_import",
+        }
         value = {key: val for key, val in raw.items() if key not in metadata}
         if claim_type == "profile" and value.get("professional_headline"):
             value["professional_headline"] = value["professional_headline"][:255]

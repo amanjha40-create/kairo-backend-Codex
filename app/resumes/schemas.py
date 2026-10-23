@@ -141,6 +141,9 @@ class ProjectClaim(ClaimBase):
 
 
 class SkillClaim(ClaimBase):
+    source_section: Literal[
+        "skills", "experience", "education", "certifications", "summary", "other"
+    ] | None = None
     name: str | None = None
 
 

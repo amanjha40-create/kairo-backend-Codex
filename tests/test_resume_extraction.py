@@ -136,10 +136,10 @@ def test_nullable_model_collections_and_claim_metadata_are_normalized_safely() -
     assert result["employments"][0]["selected_for_import"] is False
 
 
-def test_skill_names_are_bounded_to_review_schema_limit() -> None:
+def test_unsupported_long_skill_is_rejected_not_truncated_into_a_claim() -> None:
     result = normalize_extracted_payload({"skills": [{"name": "x" * 200}]})
-    assert len(result["skills"][0]["name"]) == 128
-    assert "skill_name_truncated" in result["warnings"]
+    assert result["skills"] == []
+    assert "skill_rejected_unsupported_inference" in result["warnings"]
 
 
 @pytest.mark.parametrize(
@@ -294,7 +294,7 @@ def test_unsupported_combined_skill_is_not_split_without_source_evidence() -> No
         "Built reliable data platforms.",
     )
 
-    assert [item["name"] for item in result["skills"]] == ["Spark SQL Python"]
+    assert result["skills"] == []
 
 
 def test_ocr_text_repairs_are_source_backed_and_do_not_rewrite_alphanumeric_brands() -> None:
