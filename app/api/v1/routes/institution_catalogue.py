@@ -18,7 +18,17 @@ class InstitutionSuggestion(BaseModel):
     city: str
 
 
+class InstitutionCatalogueProvenance(BaseModel):
+    source_name: str
+    source_url: str
+    licence_name: str
+    licence_url: str
+    attribution: str
+    non_endorsement: str
+
+
 class InstitutionSearchResponse(BaseModel):
+    provenance: InstitutionCatalogueProvenance
     version: str
     scope: str
     available: bool

@@ -8,6 +8,14 @@ from pathlib import Path
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "institutions_india_v1.json"
 CATALOGUE_VERSION = "india-he-v1"
+CATALOGUE_PROVENANCE = {
+    "source_name": "Ministry of Education, Department of Higher Education, Government of India - List of colleges (AISHE Survey)",
+    "source_url": "https://data.gov.in/catalog/list-colleges-aishe-survey",
+    "licence_name": "Government Open Data License - India (GODL-India)",
+    "licence_url": "https://data.gov.in/Godl",
+    "attribution": "Institution catalogue source: Ministry of Education, Department of Higher Education, Government of India — List of colleges (AISHE Survey), Open Government Data Platform India. Published under the Government Open Data License – India.",
+    "non_endorsement": "KairoID is not affiliated with or endorsed by the Ministry of Education or data.gov.in.",
+}
 COMMON_WORDS = {
     word.upper(): word for word in (
         "College", "University", "Institute", "Institution", "Government", "Arts",
@@ -56,6 +64,7 @@ def search_index() -> tuple[tuple[dict, str, str], ...]:
 def search_institutions(query: str, state: str = "", district: str = "",
                         limit: int = 20, offset: int = 0) -> dict:
     result = {
+        "provenance": dict(CATALOGUE_PROVENANCE),
         "version": CATALOGUE_VERSION, "scope": "India higher education; incomplete historical snapshot",
         "available": True, "manual_entry_allowed": True,
         "fallback_label": "Institution not listed / Enter manually",

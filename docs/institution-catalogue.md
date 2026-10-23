@@ -79,8 +79,24 @@ redistribution terms. The README's stated upstream reference is
 does not establish redistribution rights. `Dump20221218.sql` suggests a December
 2022 export but does not establish the CSV's survey vintage. Snapshot version is
 `india-he-v1`; individual IDs hash normalized full source fields deterministically.
-CATALOGUE_LICENSING_REVIEW_REQUIRED=YES. Committing is authorized; Production
-deployment remains blocked until founder licensing review is complete.
+CATALOGUE_LICENSING_REVIEW_REQUIRED=NO (founder review approved 23 October 2026).
+The founder identifies the canonical source as
+https://data.gov.in/catalog/list-colleges-aishe-survey and approves reuse under
+Government Open Data License - India (https://data.gov.in/Godl), subject to
+attribution and non-endorsement. This records the founder's provenance review;
+it does not imply a newly established survey vintage or archive byte equivalence.
+
+Response-level `provenance` contains source_name, source_url, licence_name,
+licence_url, attribution and non_endorsement (not repeated in individual items).
+
+“Institution catalogue source: Ministry of Education, Department of Higher
+Education, Government of India — List of colleges (AISHE Survey), Open Government
+Data Platform India. Published under the Government Open Data License – India.”
+
+“KairoID is not affiliated with or endorsed by the Ministry of Education or data.gov.in.”
+
+Scope remains “India higher education; incomplete historical snapshot.” No claim
+of currentness, exhaustive coverage or government certification is made.
 
 ## Validation boundaries
 
@@ -122,4 +138,4 @@ code before downgrading; downgrade removes only these provenance columns.
 Passport, HR and verification continue using submitted institution names.
 Catalogue IDs never identify an organization or select a verification route.
 Client picker wiring and physical/simulator validation remain separate work.
-The existing licensing review gate still blocks Production catalogue deployment.
+Founder licensing review is closed subject to preserving the attribution above.

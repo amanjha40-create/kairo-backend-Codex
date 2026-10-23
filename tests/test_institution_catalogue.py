@@ -123,3 +123,20 @@ def test_page_and_search_alias_equivalence():
                             params={'q': 'college', 'offset': 3, 'limit': 3}).json()
     assert page == offset
     assert page['page'] == 2 and page['offset'] == 3
+
+
+def test_public_provenance_is_response_level_and_preserves_fallback():
+    app = FastAPI()
+    app.include_router(router, prefix='/api/v1')
+    with TestClient(app) as client:
+        for query in ('college', 'no-such-synthetic-institution-999999'):
+            response = client.get('/api/v1/catalogues/institutions', params={'search': query})
+            assert response.status_code == 200
+            data = response.json()
+            assert data['provenance']['source_url'] == 'https://data.gov.in/catalog/list-colleges-aishe-survey'
+            assert data['provenance']['licence_url'] == 'https://data.gov.in/Godl'
+            assert 'not affiliated with or endorsed' in data['provenance']['non_endorsement']
+            assert data['manual_entry_allowed'] is True
+            assert data['version'] == 'india-he-v1'
+            assert data['scope'] == 'India higher education; incomplete historical snapshot'
+            assert all('provenance' not in item for item in data['items'])
