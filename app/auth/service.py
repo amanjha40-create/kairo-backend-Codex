@@ -83,7 +83,6 @@ from app.schemas.auth import (
     TokenResponse,
     UnlinkProviderResponse,
 )
-from app.services.account_notification import notify_password_changed
 
 logger = logging.getLogger(__name__)
 SignupChannel = Literal["email", "phone"]
@@ -621,8 +620,14 @@ class AuthService:
         reset_event_id = token.id
         await self._session.commit()
         auth_audit("AUTH_SESSION_REVOKE_ALL", user_id=audit_user_id)
-        await notify_password_changed(self._session, self._settings, audit_user_id, reset_event_id)
+        await self._notify_password_changed(audit_user_id, reset_event_id)
         return ResetPasswordResponse()
+
+    async def _notify_password_changed(self, user_id: UUID, event_id: UUID) -> None:
+        # services.__init__ re-exports AuthService; import only after auth initialization.
+        from app.services.account_notification import notify_password_changed
+
+        await notify_password_changed(self._session, self._settings, user_id, event_id)
 
     async def refresh(self, data: RefreshRequest) -> TokenResponse:
         token_hash = hash_refresh_token(data.refresh_token)
@@ -907,7 +912,7 @@ class AuthService:
 
         user.password_hash = hash_password(data.password)
         await self._session.commit()
-        await notify_password_changed(self._session, self._settings, user_id, uuid4())
+        await self._notify_password_changed(user_id, uuid4())
         return SetPasswordResponse()
 
     async def change_password(self, user_id: UUID, data: ChangePasswordRequest) -> ChangePasswordResponse:
@@ -923,7 +928,7 @@ class AuthService:
 
         user.password_hash = hash_password(data.new_password)
         await self._session.commit()
-        await notify_password_changed(self._session, self._settings, user_id, uuid4())
+        await self._notify_password_changed(user_id, uuid4())
         return ChangePasswordResponse()
 
     async def link_provider(self, user_id: UUID, provider_name: str, data: LinkProviderRequest) -> LinkProviderResponse:
