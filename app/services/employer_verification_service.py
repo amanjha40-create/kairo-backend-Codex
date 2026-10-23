@@ -55,8 +55,9 @@ from app.schemas.employer_verification import (
     EmployerVerificationStatusResponse,
     EmployerVerifyBody,
 )
-from app.services.notification_service import NotificationService
 from app.services.employment_reference_service import EmploymentReferenceService
+from app.services.notification_service import NotificationService
+from app.services.verification_notification import notify_verification_attention
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
@@ -570,7 +571,7 @@ class EmployerVerificationService:
                     event_source=VerificationRequestEventSource.ORGANIZATION,
                     metadata=metadata,
                 )
-                await self._workflow.transition(
+                attention_event = await self._workflow.transition(
                     request,
                     target_status=VerificationRequestStatus.AWAITING_INFORMATION,
                     actor_user_id=None,
@@ -593,6 +594,11 @@ class EmployerVerificationService:
             )
             await self._session.commit()
             action_response = self._portal_action_response(req, employment, request)
+            if decision == EmployerVerificationDecision.ON_HOLD:
+                await notify_verification_attention(
+                    NotificationService(self._session, self._settings),
+                    self._session, request, attention_event,
+                )
             if decision in {EmployerVerificationDecision.CONFIRMED, EmployerVerificationDecision.DECLINED}:
                 try:
                     await self._notify_admin_quality_review_needed(request)

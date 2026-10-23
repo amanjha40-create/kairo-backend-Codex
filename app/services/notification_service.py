@@ -118,6 +118,10 @@ class NotificationService:
             event_type=request.normalized_event_type(),
             requested_channel=request.channel,
         )
+        selected_channel = preference.selected_channel
+        if request.channel == "in_app" and not request.recipient_email and selected_channel == "email":
+            # Inbox-only events have no email delivery contract or destination.
+            selected_channel = "in_app"
         notification = Notification(
             notification_type=request.notification_type.strip().lower(),
             event_type=request.normalized_event_type(),
@@ -130,7 +134,7 @@ class NotificationService:
             recipient_user_id=request.recipient_user_id,
             recipient_email=request.recipient_email,
             recipient_phone=request.recipient_phone,
-            channel=preference.selected_channel,
+            channel=selected_channel,
             template_key=template_key,
             template_version=template_version,
             payload=request.payload,

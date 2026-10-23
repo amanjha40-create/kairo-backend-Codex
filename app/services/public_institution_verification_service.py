@@ -30,6 +30,7 @@ from app.schemas.public_institution_verification import (
     PublicInstitutionVerificationRequestProjection,
 )
 from app.services.notification_service import NotificationService
+from app.services.verification_notification import notify_verification_attention
 from app.services.verification_request_service import VerificationRequestService
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.verification_requests.enums import (
@@ -355,7 +356,7 @@ class PublicInstitutionVerificationService:
                 )
             )
         elif action == "clarification":
-            await self._workflow.transition(
+            attention_event = await self._workflow.transition(
                 request,
                 target_status=VerificationRequestStatus.AWAITING_INFORMATION,
                 actor_user_id=None,
@@ -371,6 +372,10 @@ class PublicInstitutionVerificationService:
         row.response_note = metadata.get("note") if isinstance(metadata.get("note"), str) else None
         row.response_metadata = metadata
         await self._session.commit()
+        if action == "clarification":
+            await notify_verification_attention(
+                self._notifications, self._session, request, attention_event
+            )
         return await self.get_public_request(raw_token)
 
     async def _transition_to_in_progress_if_needed(

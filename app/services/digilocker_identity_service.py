@@ -9,6 +9,7 @@ from app.exceptions import ValidationAppError
 from app.integrations.digilocker.identity import Match, match_document
 from app.integrations.digilocker.provider import ProviderError
 from app.models import DigiLockerIdentityVerification, User
+from app.services.account_notification import notify_identity_result
 from app.services.canonical_trust import identity_current, identity_public_reason, resolve_identity
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_service import transaction
@@ -99,6 +100,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                     )
                 selected.append(next(iter(candidates.values())))
             now = self.now()
+            notices = []
             for item in selected:
                 integrity = "verified"
                 xml = bool(set(item["mime"]) & {"application/xml", "text/xml"})
@@ -183,9 +185,17 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                 row.document_valid_until = match.valid_until
                 row.profile_revision_at = user.updated_at
                 row.updated_at = now
+                notices.append((row, item["doctype"], match.result))
             await self.session.flush()
+            notices = [(str(row.id) + ":" + now.isoformat(), doctype, outcome)
+                       for row, doctype, outcome in notices]
             result = await self._results(user)
             await self.session.commit()
+            for event_id, doctype, outcome in notices:
+                await notify_identity_result(
+                    self.session, self.settings, user_id,
+                    document_type=doctype, result=outcome, event_id=event_id,
+                )
             return result
         except ProviderError as exc:
             raise self._failure(exc) from None

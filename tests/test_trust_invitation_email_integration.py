@@ -32,6 +32,10 @@ class FakeSession:
     def __init__(self) -> None:
         self.commits = 0
         self.rollbacks = 0
+        self.recipient = None
+
+    async def execute(self, statement):
+        return SimpleNamespace(scalar_one_or_none=lambda: self.recipient)
 
     async def commit(self) -> None:
         self.commits += 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -326,7 +327,9 @@ class OrganizationService:
         if refreshed is None:
             raise NotFoundError("Organization invitation not found")
         await self._deliver_team_invitation(refreshed, raw_token)
-        return self._to_invitation_response(refreshed)
+        response = self._to_invitation_response(refreshed)
+        await self._notify_team_invitation(refreshed)
+        return response
 
     async def list_invitations(
         self,
@@ -399,7 +402,9 @@ class OrganizationService:
         )
         if refreshed is None:
             raise NotFoundError("Organization invitation not found")
-        return self._to_invitation_response(refreshed)
+        response = self._to_invitation_response(refreshed)
+        await self._notify_team_invitation(refreshed)
+        return response
 
     async def cancel_invitation(
         self,
@@ -831,6 +836,15 @@ class OrganizationService:
             invitation.delivery_failed_at = datetime.now(tz=UTC)
             await self._session.commit()
             raise ValidationAppError("Team invitation email delivery failed") from exc
+
+    async def _notify_team_invitation(self, invitation: OrganizationInvitation) -> None:
+        from app.services.account_notification import notify_team_invitation
+
+        try:
+            await notify_team_invitation(self._session, self._settings, invitation)
+        except Exception:
+            await self._session.rollback()
+            logging.getLogger(__name__).warning("team_invitation_inbox_notification_failed")
 
     async def _record_hr_event(
         self,

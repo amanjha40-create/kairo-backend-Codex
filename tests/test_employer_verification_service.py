@@ -7,9 +7,10 @@ from uuid import uuid4
 
 import pytest
 
+from app.config import Settings
 from app.employment.enums import EmployerVerificationDecision
-from app.services.employer_verification_service import EmployerVerificationService
 from app.schemas.employer_verification import EmployerVerifyBody
+from app.services.employer_verification_service import EmployerVerificationService
 from app.verification_requests.enums import VerificationRequestStatus
 
 
@@ -84,12 +85,18 @@ def _service_for_portal_response(*, response: str = "pending"):
         expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
     )
     request = SimpleNamespace(
+        public_id=uuid4(),
+        subject_user_id=uuid4(),
         status=VerificationRequestStatus.PENDING_ORGANIZATION_ACCEPTANCE,
         organization=SimpleNamespace(name="Acme Corp"),
     )
     session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
     service = EmployerVerificationService.__new__(EmployerVerificationService)
     service._session = session
+    service._settings = Settings(
+        database_url="postgresql+asyncpg://kairo:kairo@localhost/kairo",
+        jwt_secret_key="synthetic-notification-tests-only-key",
+    )
     service._load_portal_token_for_update = AsyncMock(return_value=outreach)
     service._verification_requests = SimpleNamespace(get_by_id=AsyncMock(return_value=request))
     service._notify_admin_quality_review_needed = AsyncMock()
@@ -98,6 +105,7 @@ def _service_for_portal_response(*, response: str = "pending"):
 
     async def transition(row, *, target_status, **_kwargs):
         row.status = target_status
+        return SimpleNamespace(public_id=uuid4())
 
     service._workflow = SimpleNamespace(transition=AsyncMock(side_effect=transition))
     return service, session, outreach, request
@@ -142,8 +150,13 @@ async def test_portal_verify_transitions_to_admin_quality_review() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_clarify_transitions_to_awaiting_information() -> None:
+async def test_portal_clarify_transitions_to_awaiting_information(monkeypatch) -> None:
     service, session, outreach, request = _service_for_portal_response()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.employer_verification_service.NotificationService",
+        lambda *args: SimpleNamespace(create_and_dispatch=dispatch),
+    )
 
     response = await service.request_clarification_from_portal(
         "token-value-long-enough",
@@ -156,6 +169,10 @@ async def test_portal_clarify_transitions_to_awaiting_information() -> None:
     assert request.status is VerificationRequestStatus.AWAITING_INFORMATION
     service._emit_audit.assert_awaited_once()
     session.commit.assert_awaited_once()
+    notice = dispatch.await_args.args[0]
+    assert notice.recipient_user_id == request.subject_user_id
+    assert notice.metadata == {"verification_request_public_id": str(request.public_id)}
+    assert notice.event_type == "verification_information_required"
 
 
 @pytest.mark.asyncio

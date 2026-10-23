@@ -1,0 +1,126 @@
+{
+  "production_baseline": {
+    "api": 49,
+    "worker": 18,
+    "database": "095",
+    "source": "4805b43aa554b738e6f74737786fca6f44ff701f",
+    "scope": "Code-path audit; no Production notification test mutations"
+  },
+  "inbox_contract": {
+    "list": "GET /api/v1/notifications",
+    "unread": "GET /api/v1/notifications/unread-count",
+    "mark_read": "POST /api/v1/notifications/{public_id}/read",
+    "mark_all_read": "POST /api/v1/notifications/read-all",
+    "recipient": "Authenticated recipient_user_id only, independent of delivery channel",
+    "unread_initial_value": "read_at = null",
+    "response": ["public_id", "category", "event_type", "title", "body", "metadata", "read_at", "created_at"],
+    "legacy_preferences": "Existing disabled-preference/inbox visibility semantics preserved",
+    "delivery_boundary": "Business workflow commits first; notification failures are logged without reversing it. Existing infrastructure is best-effort, not a transactional outbox."
+  },
+  "events": [
+    {
+      "source": "VerificationRequestAdminReviewService._finalize_request / _notify_finalization",
+      "trigger": "Canonical final verified/rejected/unable_to_verify outcome",
+      "production_existing": "Yes, but all outcomes used generic completed wording",
+      "change": "Keep one existing email/inbox record; make title/body outcome-specific",
+      "event_type": "verification_completed",
+      "category": "verification",
+      "recipient": "request.subject_user_id; existing email delivery preserved",
+      "presentation": {
+        "verified": ["Verification approved", "Your verification has been approved."],
+        "rejected": ["Verification rejected", "Your verification was rejected. Open the request for details."],
+        "unable_to_verify": ["Verification could not be completed", "Your verification could not be completed. Open the request for details."]
+      },
+      "metadata": ["verification_request_public_id", "linked_record_type", "linked_record_id", "outcome"],
+      "dedupe": "verification-final:{request_public_id}:{outcome}:candidate",
+      "route": "Existing iOS/Android verification-request route"
+    },
+    {
+      "source": "VerificationRequestAdminReviewService._close_pre_dispatch_request",
+      "trigger": "Admin rejects or cannot verify before organization dispatch",
+      "production_existing": "No Candidate notice",
+      "change": "Use the same final-outcome emitter after commit"
+    },
+    {
+      "source": ["VerificationRequestAdminReviewService.request_corrections", "PublicInstitutionVerificationService._respond clarification", "EmployerVerificationService._respond_portal ON_HOLD"],
+      "trigger": "Committed transition to awaiting_subject_corrections or awaiting_information",
+      "production_existing": "No Candidate notice",
+      "event_type": "verification_information_required",
+      "category": "verification",
+      "recipient": "request.subject_user_id",
+      "title": "Verification needs your attention",
+      "body": "Additional information or corrections are needed. Open your verification request to continue.",
+      "metadata": ["verification_request_public_id"],
+      "dedupe": "verification-attention:{workflow_event_public_id}:candidate",
+      "route": "Existing iOS/Android verification-request route",
+      "privacy": "No reviewer comments, documents, contacts or personal evidence"
+    },
+    {
+      "source": "TrustInvitationService._deliver_invitation",
+      "trigger": "Sent or explicitly resent Trust invitation",
+      "production_existing": "Email notification existed without recipient_user_id; absent from Candidate inbox",
+      "change": "Link the same notification to the active verified exact-email owner; no parallel in-app copy",
+      "event_type": "trust_invitation_created",
+      "category": "verification",
+      "title": "Trust invitation",
+      "body": "You have received a Trust Passport verification invitation.",
+      "metadata": ["trust_invitation_public_id", "organization_public_id", "delivery_trigger"],
+      "dedupe": "Initial send keyed by invitation public ID. Explicit resend remains intentional existing behavior.",
+      "route": "iOS generic detail; Android Home fallback; never treat invitation ID as verification request or capability"
+    },
+    {
+      "source": "OrganizationService.create_invitation / resend_invitation / _notify_team_invitation",
+      "trigger": "Successful team invitation email queueing after invitation creation/rotation",
+      "production_existing": "Email only",
+      "event_type": "team_invitation_created",
+      "category": "system",
+      "recipient": "Active verified exact-email owner",
+      "title": "Organization invitation",
+      "body": "You have an organization invitation. Use the invitation email to review and respond.",
+      "metadata": ["organization_invitation_public_id"],
+      "dedupe": "team-invitation:{public_id}:{token_version}",
+      "route": "Generic detail/Home fallback; acceptance stays in the existing invitation email",
+      "privacy": "No invitation capability/token in notification metadata or body"
+    },
+    {
+      "source": "DigiLockerIdentityService.verify",
+      "trigger": "Persisted PAN/DL verification result, after commit",
+      "production_existing": "No inbox notice",
+      "event_type": "identity_verification_completed",
+      "category": "verification",
+      "recipient": "Authenticated user_id passed to verification",
+      "presentation": "Verified, partial/attention, or could-not-complete; never claim partial evidence is verified",
+      "metadata": ["document_type", "outcome"],
+      "dedupe": "identity-result:{saved_result_id}:{attempt_timestamp}",
+      "route": "Generic detail/Home fallback, not a Career verification request",
+      "privacy": "No document identifiers, XML, name, DOB, provider URI, or tokens",
+      "boundary": "Provider errors that abort without a saved result remain request errors, not fabricated persisted verification outcomes"
+    },
+    {
+      "source": "AuthService.reset_password / set_password / change_password",
+      "trigger": "Successful password mutation, after commit",
+      "production_existing": "No inbox notice; reset-request email already existed",
+      "event_type": "password_changed",
+      "category": "security",
+      "recipient": "Authenticated/validated reset-token owner",
+      "title": "Password updated",
+      "body": "Your KairoID password was updated. If this was not you, review your account security.",
+      "metadata": [],
+      "dedupe": "Reset ledger ID or unique successful authenticated mutation event ID",
+      "route": "Existing iOS/Android Settings route",
+      "privacy": "No password, reset token, recovery link or hash"
+    },
+    {
+      "source": "VerificationRequestService / PublicInstitutionVerificationService / EmployerVerificationService / TrustSafetyService admin emitters",
+      "production_existing": "Admin review/quality-review and investigation created/assigned notices already emitted",
+      "change": "None; preserve existing recipients, metadata and deduplication",
+      "boundary": "An organization discrepancy pending admin review is not a final Candidate rejection"
+    }
+  ],
+  "unchanged": ["No migration", "No mobile source changes", "No GPS/address matching changes", "No provider fetch behavior changes", "No OTP/recovery secrets added to inbox", "No Production deployment"],
+  "validation": {
+    "focused_tests": "Notification contracts, recipient eligibility, post-commit hooks, persistence, duplicate suppression, read state, identity and password regressions",
+    "synthetic_harness": "scripts/validate_notification_emission.py",
+    "staging_gate": "Must pass remote rollback-only synthetic check before claiming ready"
+  }
+}

@@ -77,6 +77,7 @@ def _build_invitation(*, organization, invited_by_user, role: OrganizationRole, 
 
 def _build_service() -> OrganizationService:
     service = OrganizationService.__new__(OrganizationService)
+    service._notify_team_invitation = AsyncMock()
     service._session = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     service._organizations = SimpleNamespace(
         get_by_public_id=AsyncMock(),

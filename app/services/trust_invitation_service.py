@@ -21,6 +21,7 @@ from app.models.trust_invitation_event import TrustInvitationEvent
 from app.notifications.contracts import NotificationRequest
 from app.organization.permissions import is_organization_manager
 from app.repositories.trust_invitation import TrustInvitationRepository
+from app.repositories.user import UserRepository
 from app.schemas.hr_v2 import DEFAULT_VERIFICATION_PREFERENCES
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.trust_invitation import (
@@ -593,10 +594,24 @@ class TrustInvitationService:
         invitation_url = self._build_invitation_url(invitation.public_id)
         invitation.delivery_state = TrustInvitationDeliveryState.QUEUED
         try:
+            recipient = await UserRepository(self._session).get_by_email(
+                invitation.subject_email.strip().lower()
+            )
             await self._notifications.create_and_dispatch(
                 NotificationRequest(
                     event_type="trust_invitation_created",
+                    recipient_user_id=(
+                        recipient.id
+                        if recipient is not None
+                        and recipient.is_active
+                        and recipient.email_verified_at is not None
+                        else None
+                    ),
                     recipient_email=invitation.subject_email,
+                    dedupe_key=(
+                        f"trust-invitation:{invitation.public_id}:sent"
+                        if trigger_event == TrustInvitationEventType.SENT else None
+                    ),
                     payload={
                         "organization_name": invitation.organization.name,
                         "subject_name": invitation.subject_name,

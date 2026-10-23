@@ -91,6 +91,10 @@ from app.services.public_institution_verification_service import (
     PublicInstitutionVerificationService,
 )
 from app.services.trust_registry_service import TrustRegistryCodeService
+from app.services.verification_notification import (
+    OUTCOME_PRESENTATION,
+    notify_verification_attention,
+)
 from app.services.verification_request_workflow_service import VerificationRequestWorkflowService
 from app.trust_registry.enums import (
     TrustRegistryLifecycleStatus,
@@ -544,7 +548,7 @@ class VerificationRequestAdminReviewService:
                     contact.reviewed_by_user_id = actor_user_id
                     contact.reviewed_at = datetime.now(tz=UTC)
 
-        await self._workflow.transition(
+        event = await self._workflow.transition(
             request,
             target_status=VerificationRequestStatus.AWAITING_SUBJECT_CORRECTIONS,
             actor_user_id=actor_user_id,
@@ -553,7 +557,10 @@ class VerificationRequestAdminReviewService:
             metadata={"corrections_count": len(payload.corrections)},
         )
         await self._session.commit()
-        refreshed = await self._requests.get_by_public_id(request.public_id)
+        await notify_verification_attention(
+            self._notifications, self._session, request, event, actor_user_id=actor_user_id
+        )
+        refreshed = await self._requests.get_by_public_id(verification_request_public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
         return await self._to_request_response(refreshed)
@@ -1145,7 +1152,7 @@ class VerificationRequestAdminReviewService:
         )
         await self._session.commit()
         await self._notify_finalization(request, actor_user_id, outcome)
-        refreshed = await self._requests.get_by_public_id(request.public_id)
+        refreshed = await self._requests.get_by_public_id(verification_request_public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
         return await self._to_request_response(refreshed)
@@ -1158,6 +1165,7 @@ class VerificationRequestAdminReviewService:
         target_status: VerificationRequestStatus,
         decision_summary: str,
     ) -> VerificationRequestResponse:  # noqa: ANN001
+        request_public_id = request.public_id
         review = await self._get_or_create_review(request, actor_user_id)
         review.review_status = VerificationRequestReviewStatus.REJECTED
         review.decision_by_user_id = actor_user_id
@@ -1179,7 +1187,8 @@ class VerificationRequestAdminReviewService:
                 decision_summary,
             )
         await self._session.commit()
-        refreshed = await self._requests.get_by_public_id(request.public_id)
+        await self._notify_finalization(request, actor_user_id, target_status.value)
+        refreshed = await self._requests.get_by_public_id(request_public_id)
         if refreshed is None:
             raise NotFoundError("Verification request not found")
         return await self._to_request_response(refreshed)
@@ -1239,10 +1248,14 @@ class VerificationRequestAdminReviewService:
         education_id = getattr(request, "education_id", None)
         linked_record_type = "employment" if employment_id is not None else "education"
         linked_record_id = employment_id if employment_id is not None else education_id
+        title, body = OUTCOME_PRESENTATION[outcome]
+        request_public_id = str(request.public_id)
         try:
             await self._notifications.create_and_dispatch(
                 NotificationRequest(
                     event_type="verification_completed",
+                    title=title,
+                    body=body,
                     recipient_user_id=request.subject_user_id,
                     recipient_email=request.subject_email,
                     dedupe_key=f"verification-final:{request.public_id}:{outcome}:candidate",
@@ -1263,6 +1276,7 @@ class VerificationRequestAdminReviewService:
                         else None,
                     },
                     metadata={
+                        "outcome": outcome,
                         "verification_request_public_id": str(request.public_id),
                         "linked_record_type": linked_record_type,
                         "linked_record_id": str(linked_record_id)
@@ -1273,10 +1287,11 @@ class VerificationRequestAdminReviewService:
                 actor_user_id=actor_user_id,
             )
         except Exception:
+            await self._session.rollback()
             logger.warning(
                 "verification_finalization_notification_failed",
                 extra={
-                    "verification_request_public_id": str(request.public_id),
+                    "verification_request_public_id": request_public_id,
                     "audience": "candidate",
                 },
             )

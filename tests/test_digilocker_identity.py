@@ -410,7 +410,7 @@ async def test_081_metadata_constraints():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["094"]
+    assert script.get_heads() == ["095"]
     migration = script.get_revision("081")
     assert migration.down_revision == "080"
     tree = ast.parse(Path(migration.path).read_text())

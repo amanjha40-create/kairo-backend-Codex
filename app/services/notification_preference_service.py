@@ -6,12 +6,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.exceptions import ConflictError
+from app.models.notification_preference import NotificationPreference
 from app.notifications.contracts import NotificationPreferenceDecision
 from app.notifications.enums import NotificationChannel
-from app.exceptions import ConflictError
 from app.repositories.notification import NotificationPreferenceRepository
 from app.schemas.notification import NotificationPreferenceUpsertRequest
-from app.models.notification_preference import NotificationPreference
 
 
 class NotificationPreferenceService:
@@ -22,6 +22,7 @@ class NotificationPreferenceService:
             "account_security",
             "email_verification",
             "password_reset_requested",
+            "password_changed",
             "phone_verification",
             "security_alert",
             "signup_otp_email",
