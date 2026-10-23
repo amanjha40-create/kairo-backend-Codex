@@ -32,6 +32,7 @@ from app.api.v1.routes import (
     health,
     hr_v2,
     institution_people,
+    institution_catalogue,
     institution_workspace,
     internships,
     notifications,
@@ -65,6 +66,7 @@ from app.api.v1.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(institution_catalogue.router)
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(auth.organization_signup_router)

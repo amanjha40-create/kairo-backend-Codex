@@ -745,7 +745,11 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert profile_suggestion.import_action == "skip"
         assert "email" not in profile_suggestion.edited_payload
         assert "phone" not in profile_suggestion.edited_payload
-        unedited_education = next(item for item in review.items if item.claim_type == "education")
+        unedited_education = next(
+            item for item in review.items
+            if item.claim_type == "education"
+            and item.edited_payload.get("institution_name") == "Synthetic University"
+        )
         assert unedited_education.edited_payload["start_date"] == "2015-01-01"
         assert unedited_education.edited_payload["start_date_precision"] == "year"
         assert unedited_education.edited_payload["end_date"] == "2019-12-31"
