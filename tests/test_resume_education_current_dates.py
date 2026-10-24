@@ -159,7 +159,7 @@ async def education_owner():
         await session.commit()
 
 
-async def create_review(session, uid, claim):
+async def create_review(session, uid, claim, extra_claims=None):
     doc = ResumeDocument(
         user_id=uid, storage_bucket="synthetic", storage_key=f"synthetic/{uuid4()}",
         original_filename="synthetic.pdf", normalized_filename="synthetic.pdf",
@@ -179,10 +179,97 @@ async def create_review(session, uid, claim):
     session.add(ResumeParsedResult(
         job_id=job.id, user_id=uid, schema_version="1",
         # These tests target date/import behavior, not uncertain review defaults.
-        structured_result={"schema_version": "1", "education": [{"confidence": 0.95, **claim}]},
+        structured_result={"schema_version": "1", "education": [{"confidence": 0.95, **claim}],
+                           **(extra_claims or {})},
     ))
     await session.commit()
     return await ResumeReviewService(session).create(uid, doc.id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dates", [
+    {"end_date": "2020-12-31"},
+    {"end_date_display": "2020", "end_date_precision": "year"},
+])
+@pytest.mark.parametrize("resolution", ["not_current", "clear_end"])
+async def test_parsed_conflict_reaches_review_and_requires_correction(
+    education_owner, dates, resolution,
+):
+    uid = education_owner
+    async with async_session_factory() as session:
+        service = ResumeReviewService(session)
+        review = await create_review(session, uid, {
+            "institution_name": "Synthetic", "is_current": True, **dates,
+        })
+        item = review.items[0]
+        original = deepcopy(item.original_payload)
+        assert item.edited_payload == original
+        assert original["is_current"] is True
+        assert all(original[key] == value for key, value in dates.items())
+        assert "current_claim_has_end_date" in item.conflict_warnings
+        assert item.selected is False
+        with pytest.raises(ValidationAppError) as error:
+            await service.update_item(uid, review.id, item.id, ReviewItemUpdateRequest(
+                expected_version=item.version, selected=True,
+            ))
+        assert error.value.code == "current_claim_has_end_date"
+        # Defense in depth: even a historical selected item cannot bypass final validation.
+        persisted = await session.get(ResumeReviewItem, item.id)
+        persisted.selected = True
+        await session.commit()
+        with pytest.raises(ValidationAppError) as error:
+            await service.import_review(uid, review.id, ReviewImportRequest(
+                expected_version=review.version, idempotency_key=str(uuid4()), confirmed=True,
+            ))
+        assert error.value.code == "review_not_importable"
+        corrected = (
+            dict(original, is_current=False) if resolution == "not_current"
+            else dict(original, end_date=None, end_date_display=None, end_date_precision=None)
+        )
+        updated = await service.update_item(uid, review.id, item.id, ReviewItemUpdateRequest(
+            expected_version=item.version, edited_payload=corrected, selected=True,
+        ))
+        assert "current_claim_has_end_date" not in updated.conflict_warnings
+        assert updated.original_payload == original
+        refreshed = await service.get(uid, review.id)
+        plan = await service.validate(uid, review.id, ReviewValidateRequest(
+            expected_version=refreshed.version,
+        ))
+        assert plan.ready
+        batch = await service.import_review(uid, review.id, ReviewImportRequest(
+            expected_version=plan.version, idempotency_key=str(uuid4()), confirmed=True,
+        ))
+        assert batch.imported_count == 1
+        row = await session.scalar(select(Education).where(Education.user_id == uid))
+        assert row.is_currently_studying == (resolution == "clear_end")
+        assert (row.end_date is None) == (resolution == "clear_end")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_conflicting_education_does_not_block_other_claims(education_owner):
+    async with async_session_factory() as session:
+        review = await create_review(session, education_owner, {}, {
+            "education": [
+                {"institution_name": "Synthetic A", "is_current": True,
+                 "end_date_display": "2020", "confidence": 0.95},
+                {"institution_name": "Synthetic B", "is_current": False,
+                 "end_date_display": "2020", "confidence": 0.95},
+            ],
+            "employments": [{"company_name": "Synthetic employer", "job_title": "Engineer",
+                             "confidence": 0.95}],
+            "skills": [{"name": "Python", "confidence": 0.95}],
+        })
+        assert len(review.items) == 4
+        conflicted = [i for i in review.items if "current_claim_has_end_date" in i.conflict_warnings]
+        assert len(conflicted) == 1 and not conflicted[0].selected
+        assert all(i.selected for i in review.items if i.id != conflicted[0].id)
+        plan = await ResumeReviewService(session).validate(
+            education_owner, review.id, ReviewValidateRequest(expected_version=review.version),
+        )
+        assert plan.ready
+        assert len(plan.items) == 3
 
 
 @pytest.mark.integration

@@ -104,16 +104,14 @@ class ResumeReviewService:
         self.session.add(review)
         await self.session.flush()
         for ordinal, (claim_type, raw) in enumerate(self._claims(validated)):
-            payload = self._normalize_review_payload(
-                claim_type,
-                self._review_payload(claim_type, raw),
-            )
+            payload, draft_issues = self._draft_review_payload(claim_type, raw)
             assessment = await self.duplicates.assess(user_id, claim_type, payload)
             source_claim_id = stable_claim_id(parsed.id, claim_type, ordinal, payload)
             exact = next((candidate for candidate in assessment.candidates if candidate["classification"] == "exact_match"), None)
             supported = claim_type in SUPPORTED_IMPORT_TYPES
             selected = (
                 supported
+                and not draft_issues
                 and confident_for_selection(raw.get("confidence"))
                 and (assessment.status == "no_match" or claim_type == "employment")
             )
@@ -128,7 +126,7 @@ class ResumeReviewService:
                 review_status="selected" if selected else "deselected",
                 duplicate_status=assessment.status,
                 duplicate_candidates=assessment.candidates,
-                conflict_warnings=assessment.warnings,
+                conflict_warnings=[*assessment.warnings, *draft_issues],
                 import_action="link_existing" if exact else ("create_new" if supported and assessment.status == "no_match" else "skip"),
                 target_record_id=UUID(exact["record_id"]) if exact else None,
                 source_reference=raw.get("source_text_reference"),
@@ -733,7 +731,29 @@ class ResumeReviewService:
         return output
 
     @staticmethod
+    def _draft_review_payload(
+        claim_type: str, raw: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str]]:
+        try:
+            return ResumeReviewService._normalize_review_payload(
+                claim_type, ResumeReviewService._review_payload(claim_type, raw),
+            ), []
+        except ValidationAppError as exc:
+            if claim_type != "education" or exc.code != "current_claim_has_end_date":
+                raise
+            # Only parsed draft creation may retain this contradiction. Edit and
+            # import paths still run the strict canonical normalizer.
+            return ResumeReviewService._review_fields(claim_type, raw), [exc.code]
+
+    @staticmethod
     def _review_payload(claim_type: str, raw: dict[str, Any]) -> dict[str, Any]:
+        value = ResumeReviewService._review_fields(claim_type, raw)
+        if claim_type == "education":
+            return normalize_education_review(value)
+        return review_claim_adapter.dump_python(review_claim_adapter.validate_python(value), mode="json")
+
+    @staticmethod
+    def _review_fields(claim_type: str, raw: dict[str, Any]) -> dict[str, Any]:
         metadata = {
             "source_type", "source_text_reference", "source_section", "confidence",
             "warnings", "selected_for_import",
@@ -746,8 +766,7 @@ class ResumeReviewService:
             # Parser-derived names are not a user-confirmed catalogue selection.
             for field in FIELDS:
                 value.pop(field, None)
-            return normalize_education_review(value)
-        return review_claim_adapter.dump_python(review_claim_adapter.validate_python(value), mode="json")
+        return value
 
     @staticmethod
     def _normalize_review_payload(claim_type: str, payload: dict[str, Any]) -> dict[str, Any]:
