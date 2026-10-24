@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from botocore.exceptions import ClientError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,8 @@ from app.models.resume_processing_job import ResumeProcessingJob
 from app.resumes.enums import ResumeProcessingStatus, ResumeUploadStatus
 from app.resumes.providers import (
     DeterministicDocxExtractor,
+    ResumeModelOutputRejected,
+    ResumeModelOutputTruncated,
     TextractDocumentExtractor,
     build_resume_parser,
 )
@@ -160,6 +164,8 @@ class ResumeService:
         job = ResumeProcessingJob(resume_document_id=resume_id, user_id=user_id, idempotency_key=str(uuid.uuid4()), parser_schema_version=self.settings.resume_parser_schema_version)
         self.session.add(job)
         row.processing_status = ResumeProcessingStatus.QUEUED.value
+        row.failure_code = None
+        row.last_error = None
         # The inline worker uses a separate session and must see the durable job.
         await self.session.commit()
         logger.info(
@@ -182,10 +188,18 @@ class ResumeService:
         return ResumeResponse.model_validate(await self._owned(user_id, resume_id))
 
     async def status(self, user_id: UUID, resume_id: UUID) -> ResumeProcessResponse:
-        row = await self._owned(user_id, resume_id)
+        row = await self._owned(user_id, resume_id, for_update=True)
         job = await self.session.scalar(select(ResumeProcessingJob).where(ResumeProcessingJob.resume_document_id == resume_id).order_by(ResumeProcessingJob.created_at.desc()))
         if not job:
             raise NotFoundError("Resume processing job not found")
+        if job.status in {"queued", "extracting", "parsing"}:
+            reference = job.updated_at or job.created_at
+            if reference < datetime.now(UTC) - timedelta(seconds=self.settings.resume_processing_stale_seconds):
+                job.status = row.processing_status = ResumeProcessingStatus.FAILED.value
+                job.failure_category = "StaleProcessingJob"
+                job.sanitized_failure_code = row.failure_code = "processing_stale"
+                job.completed_at = datetime.now(UTC)
+        await self.session.commit()
         return ResumeProcessResponse(resume_id=row.id, job_id=job.id, status=job.status)
 
     async def parsed_result(self, user_id: UUID, resume_id: UUID) -> ResumeParsedResultResponse:
@@ -205,17 +219,41 @@ class ResumeService:
         await self.session.commit()
         logger.info("resume.document.deleted", extra={"resume_id": str(resume_id)})
 
-    async def process_job(self, resume_id: UUID, job_id: UUID) -> None:
+    async def _lock_current_job(self, resume_id: UUID, job_id: UUID, statuses: set[str]):
+        """Fence every publication against deletion, retries and duplicate deliveries."""
         from app.services.private_owner_guard import lock_private_owner
 
         row = await self.session.get(ResumeDocument, resume_id)
-        job = await self.session.get(ResumeProcessingJob, job_id)
-        if row is None or job is None or row.deleted_at is not None or row.processing_status == ResumeProcessingStatus.DELETED.value:
-            return
+        if row is None:
+            return None
         try:
             await lock_private_owner(self.session, row.user_id)
         except NotFoundError:
+            return None
+        row = await self.session.scalar(select(ResumeDocument).where(
+            ResumeDocument.id == resume_id,
+        ).with_for_update().execution_options(populate_existing=True))
+        if row is None:
+            return None
+        job = await self.session.scalar(select(ResumeProcessingJob).where(
+            ResumeProcessingJob.id == job_id,
+            ResumeProcessingJob.resume_document_id == resume_id,
+            ResumeProcessingJob.user_id == row.user_id,
+        ).with_for_update().execution_options(populate_existing=True))
+        latest_id = await self.session.scalar(select(ResumeProcessingJob.id).where(
+            ResumeProcessingJob.resume_document_id == resume_id,
+        ).order_by(ResumeProcessingJob.created_at.desc(), ResumeProcessingJob.id.desc()).limit(1))
+        if (row.deleted_at is not None or row.processing_status == "deleted"
+                or job is None or job.id != latest_id or job.status not in statuses):
+            return None
+        return row, job
+
+    async def process_job(self, resume_id: UUID, job_id: UUID) -> None:
+        current = await self._lock_current_job(resume_id, job_id, {"queued"})
+        if current is None:
+            await self.session.rollback()
             return
+        row, job = current
         job.attempt_count += 1
         job.status = ResumeProcessingStatus.EXTRACTING.value
         job.started_at = datetime.now(UTC)
@@ -228,10 +266,11 @@ class ResumeService:
         row.processing_status = job.status
         row.failure_code = None
         row.last_error = None
-        await self.session.flush()
+        await self.session.commit()
         extraction_started_at = time.monotonic()
         extraction_provider = "textract" if row.content_type == "application/pdf" else "deterministic_docx"
         failure_stage = "extraction"
+        parser = None
         logger.info(
             "resume.extraction.started",
             extra={"resume_id": str(resume_id), "job_id": str(job_id), "provider": extraction_provider},
@@ -254,23 +293,36 @@ class ResumeService:
                     "duration_ms": round((time.monotonic() - extraction_started_at) * 1000),
                 },
             )
+            current = await self._lock_current_job(resume_id, job_id, {"extracting"})
+            if current is None:
+                await self.session.rollback()
+                return
+            row, job = current
             job.status = ResumeProcessingStatus.PARSING.value
             row.processing_status = job.status
-            await self.session.flush()
+            await self.session.commit()
             failure_stage = "parsing"
             parsing_started_at = time.monotonic()
             logger.info(
                 "resume.parsing.started",
                 extra={"resume_id": str(resume_id), "job_id": str(job_id), "provider": self.settings.resume_parser_provider},
             )
-            parsed = await build_resume_parser(self.settings).parse(extracted)
+            parser = build_resume_parser(self.settings)
+            parsed = await parser.parse(extracted)
             logger.info(
                 "resume.parsing.completed",
                 extra={
                     "resume_id": str(resume_id), "job_id": str(job_id), "provider": self.settings.resume_parser_provider,
                     "duration_ms": round((time.monotonic() - parsing_started_at) * 1000),
+                    "attempt_count": job.attempt_count,
+                    **getattr(parser, "safe_metadata", {}),
                 },
             )
+            current = await self._lock_current_job(resume_id, job_id, {"parsing"})
+            if current is None:
+                await self.session.rollback()
+                return
+            row, job = current
             result = ResumeParsedResult(
                 job_id=job.id, user_id=row.user_id, schema_version=parsed.schema_version,
                 structured_result=parsed.model_dump(mode="json"),
@@ -278,6 +330,7 @@ class ResumeService:
                     "provider": self.settings.resume_parser_provider,
                     "model_id": self.settings.bedrock_model_id,
                     "extraction_provider": extraction_provider,
+                    **getattr(parser, "safe_metadata", {}),
                 },
                 warnings=parsed.warnings,
             )
@@ -295,17 +348,41 @@ class ResumeService:
                 },
             )
         except Exception as exc:
+            await self.session.rollback()
+            current = await self._lock_current_job(resume_id, job_id, {"extracting", "parsing"})
+            if current is None:
+                await self.session.rollback()
+                return
+            row, job = current
             job.status = ResumeProcessingStatus.FAILED.value
             row.processing_status = job.status
             job.failure_category = type(exc).__name__[:64]
-            job.sanitized_failure_code = "processing_failed"
+            code = "processing_failed"
+            if isinstance(exc, ResumeModelOutputTruncated):
+                code = "model_output_truncated"
+            elif isinstance(exc, ResumeModelOutputRejected):
+                code = "model_output_rejected"
+            elif isinstance(exc, json.JSONDecodeError):
+                code = "model_output_invalid_json"
+            elif isinstance(exc, TimeoutError):
+                code = "processing_timeout"
+            elif isinstance(exc, ClientError):
+                provider_code = exc.response.get("Error", {}).get("Code")
+                code = "provider_transient" if provider_code in {
+                    "ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException",
+                    "InternalServerException", "InternalServerError", "ModelTimeoutException",
+                } else "provider_rejected"
+            job.sanitized_failure_code = code
             job.completed_at = datetime.now(UTC)
-            row.failure_code = "processing_failed"
+            row.failure_code = code
             logger.warning(
                 "resume.processing.failed",
                 extra={
                     "resume_id": str(resume_id), "job_id": str(job_id), "error_type": type(exc).__name__,
                     "failure_stage": failure_stage, "retry_count": job.attempt_count - 1,
+                    "failure_code": code, "attempt_count": job.attempt_count,
+                    "provider": self.settings.resume_parser_provider if failure_stage == "parsing" else extraction_provider,
+                    **getattr(parser, "safe_metadata", {}),
                 },
             )
             await self.session.flush()

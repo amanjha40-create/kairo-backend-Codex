@@ -25,6 +25,18 @@ from app.resumes.skill_sections import section_heading
 
 logger = logging.getLogger(__name__)
 
+# The full claim schema regularly exceeds the former 4,096-token output ceiling.
+NOVA_RESUME_MAX_OUTPUT_TOKENS = 10_000
+
+
+class ResumeModelOutputTruncated(ValueError):
+    """The provider ended before completing its structured response."""
+
+
+class ResumeModelOutputRejected(ValueError):
+    """The provider did not finish a usable structured response."""
+
+
 _UNTRUSTED_DIRECTIVE_MARKERS = (
     "ignore all prior instructions",
     "ignore previous instructions",
@@ -287,6 +299,11 @@ def _log_model_usage(payload: dict[str, Any], *, provider: str, model_id: str) -
 
 
 def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> ParsedResumeResult:
+    stop_reason = payload.get("stopReason")
+    if stop_reason == "max_tokens":
+        raise ResumeModelOutputTruncated("Resume model output reached its token limit")
+    if stop_reason not in (None, "end_turn", "stop_sequence"):
+        raise ResumeModelOutputRejected("Resume model output did not complete normally")
     text = payload.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Bedrock returned empty structured output")
@@ -303,6 +320,10 @@ class NovaResumeParser(ResumeParser):
         if not settings.bedrock_model_id:
             raise ValueError("BEDROCK_MODEL_ID is required")
         self._settings = settings
+        self.safe_metadata: dict[str, Any] = {
+            "output_token_limit": NOVA_RESUME_MAX_OUTPUT_TOKENS,
+            "stop_reason": "unknown",
+        }
 
     async def parse(self, extracted_text: str) -> ParsedResumeResult:
         _validate_parser_input(self._settings, extracted_text)
@@ -337,7 +358,8 @@ class NovaResumeParser(ResumeParser):
             f"{schema}"
         )
         client = _bedrock_client(self._settings)
-        response = client.invoke_model(
+        response = await asyncio.to_thread(
+            client.invoke_model,
             modelId=self._settings.bedrock_model_id,
             body=json.dumps(
                 {
@@ -351,13 +373,33 @@ class NovaResumeParser(ResumeParser):
                             ],
                         }
                     ],
-                    "inferenceConfig": {"maxTokens": 4096, "temperature": 0},
+                    "inferenceConfig": {"maxTokens": NOVA_RESUME_MAX_OUTPUT_TOKENS, "temperature": 0},
                 }
             ),
             contentType="application/json",
             accept="application/json",
         )
-        payload = json.loads(response["body"].read())
+        try:
+            payload = json.loads(await asyncio.to_thread(response["body"].read))
+        finally:
+            close = getattr(response["body"], "close", None)
+            if close is not None:
+                close()
+        reason = payload.get("stopReason")
+        self.safe_metadata["stop_reason"] = reason if reason in {
+            "end_turn", "stop_sequence", "max_tokens", "content_filtered",
+            "malformed_model_output", "malformed_tool_use", "service_unavailable",
+        } else "unknown"
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            for key in ("inputTokens", "outputTokens", "totalTokens"):
+                value = usage.get(key)
+                if type(value) is int and value >= 0:
+                    self.safe_metadata[key] = value
+        logger.info(
+            "resume.parser.stop",
+            extra={"provider": "nova", **self.safe_metadata},
+        )
         _log_model_usage(
             payload,
             provider="nova",
