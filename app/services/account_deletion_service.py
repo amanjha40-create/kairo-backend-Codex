@@ -124,14 +124,7 @@ class AccountDeletionService:
         actor_user_id: UUID,
         payload: AccountDeletionRequest,
     ) -> None:
-        user = (
-            await self._session.execute(
-                select(User)
-                .where(User.id == actor_user_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        ).scalar_one_or_none()
+        user = await self._lock_user(actor_user_id)
         if user is None:
             raise NotFoundError("User not found")
 
@@ -147,8 +140,44 @@ class AccountDeletionService:
             await self._session.commit()
             return
 
-        self._assert_confirmation(payload.confirm)
         self._assert_recent_password_reauthentication(user, payload.current_password)
+        await self._delete_locked_user(user)
+
+    async def delete_candidate_account_by_operator(self, target_user_id: UUID) -> UUID:
+        """Delete one exact Candidate through the canonical transaction.
+
+        This is an internal operator primitive, not an HTTP endpoint. The caller
+        must validate its signed allowlist and environment gates first. Role
+        enforcement here is intentionally redundant so an admin or service
+        identity can never reach the destructive transaction.
+        """
+        user = await self._lock_user(target_user_id)
+        if user is None:
+            raise NotFoundError("User not found")
+        if user.role != "user":
+            raise ValidationAppError("Only Candidate accounts may be operator-deleted")
+        if user.deleted_at is not None:
+            previous = await self._session.scalar(
+                select(AccountDeletion.id).where(AccountDeletion.user_id == user.id)
+            )
+            if previous is None:
+                raise NotFoundError("User not found")
+            await self._session.commit()
+            return previous
+        return await self._delete_locked_user(user)
+
+    async def _lock_user(self, user_id: UUID) -> User | None:
+        return (
+            await self._session.execute(
+                select(User)
+                .where(User.id == user_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+
+    async def _delete_locked_user(self, user: User) -> UUID:
+        """Execute the shared, irreversible deletion transaction for a locked user."""
 
         now = datetime.now(tz=UTC)
         tombstone_email = self._tombstone_email(user.id)
@@ -158,7 +187,9 @@ class AccountDeletionService:
         try:
             snapshot = await self._build_snapshot(user)
             await self._session.execute(
-                delete(DigiLockerIdentityVerification).where(DigiLockerIdentityVerification.user_id == user.id)
+                delete(DigiLockerIdentityVerification).where(
+                    DigiLockerIdentityVerification.user_id == user.id
+                )
             )
             digilocker_removed = (
                 await self._session.execute(
@@ -222,6 +253,7 @@ class AccountDeletionService:
                 )
             except Exception:
                 logger.warning("account_deletion.queue_acceleration_unavailable")
+        return deletion.id
 
     def _assert_confirmation(self, confirm: str) -> None:
         if confirm != "DELETE":

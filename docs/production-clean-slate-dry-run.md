@@ -385,3 +385,47 @@ Stop before the first mutation if any of the following is true:
 7. RDS snapshot/PITR and S3 restorable-backup evidence.
 8. Final distributed Android/iOS smoke completion and an approved maintenance window.
 
+## Administrative Orchestrator Interface
+
+The bounded operator entry point is `python -m app.ops.clean_slate`. It accepts one strict JSON
+artifact containing only schema version 1, the exact environment, explicit user, pending-signup,
+organization, storage-object fingerprint and protected-identity lists, plus Production backup
+evidence. The SHA-256 of the raw artifact is supplied separately; unknown keys, duplicate IDs,
+environment drift, DB revision drift, unlisted dependencies, unknown storage ownership and
+protected identities fail closed.
+
+Dry run is the default and starts a read-only transaction:
+
+```bash
+python -m app.ops.clean_slate \
+  --allowlist /secure/path/production-clean-slate-v1.json \
+  --allowlist-sha256 '<approved-sha256>'
+```
+
+Future Production execution requires all founder gates in this document, the exact dry-run
+artifact with its discovered storage fingerprints, a verified AVAILABLE RDS snapshot and
+restorable S3 backup, a durable S3 progress location, API/Worker/queue/Overdue health inputs,
+and both explicit Production flags:
+
+```bash
+python -m app.ops.clean_slate \
+  --allowlist /secure/path/production-clean-slate-v1.json \
+  --allowlist-sha256 '<approved-sha256>' \
+  --execute \
+  --confirm-environment production \
+  --confirm-production-clean-slate \
+  --progress-file /secure/path/production-clean-slate-progress.json \
+  --progress-s3-uri 's3://<approved-backup-bucket>/<approved-progress-key>' \
+  --ecs-cluster '<production-cluster>' \
+  --api-service '<production-api-service>' \
+  --worker-service '<production-worker-service>' \
+  --live-url 'https://api.kairoid.com/api/v1/health/live' \
+  --ready-url 'https://api.kairoid.com/api/v1/health/ready' \
+  --overdue-alarm '<production-account-deletion-overdue-alarm>'
+```
+
+This command is documentation only. It must not be run until a separately approved maintenance
+window and final allowlists/backups exist. The tool calls the canonical per-user deletion
+transaction sequentially; durable deletion sweeps remain responsible for due-time physical S3
+cleanup and must be certified complete before maintenance mode ends.
+
