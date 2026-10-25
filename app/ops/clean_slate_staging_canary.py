@@ -292,14 +292,16 @@ async def certify() -> dict[str, object]:
         raise CanaryFailure("preseeded_run_id_required")
     s3 = get_s3_client(settings)
     storage = PurgeStorage(settings)
+    resume_scope = f"resumes/{target_id}/"
 
     async def list_versioned_objects(bucket: str, scopes: tuple[str, ...]) -> set[str]:
+        if resume_scope not in scopes:
+            raise CanaryFailure("resume_storage_scope_missing")
         keys: set[str] = set()
-        for scope in scopes:
-            discovered, truncated = await storage.discover(bucket, scope)
-            if truncated:
-                raise CanaryFailure("storage_listing_truncated")
-            keys.update(discovered)
+        discovered, truncated = await storage.discover(bucket, resume_scope)
+        if truncated:
+            raise CanaryFailure("storage_listing_truncated")
+        keys.update(discovered)
         return keys
 
     fixtures = await _create_fixtures(settings, run=run, target_id=target_id)
