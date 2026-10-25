@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class AppException(Exception):
     """Base application error with stable machine code for API clients."""
 
-    def __init__(self, message: str, *, code: str = "app_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "app_error",
+        details: list[dict[str, Any]] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details
 
 
 class NotFoundError(AppException):
@@ -40,12 +49,23 @@ class ForbiddenError(AppException):
 class ValidationAppError(AppException):
     """Business-rule validation separate from Pydantic HTTP 422."""
 
-    def __init__(self, message: str, *, code: str = "validation_error") -> None:
-        super().__init__(message, code=code)
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "validation_error",
+        details: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message, code=code, details=details)
 
 
 class RateLimitError(AppException):
-    def __init__(self, message: str = "Too many requests", *, retry_after_seconds: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str = "Too many requests",
+        *,
+        retry_after_seconds: int | None = None,
+    ) -> None:
         super().__init__(message, code="rate_limited")
         self.retry_after_seconds = retry_after_seconds
 

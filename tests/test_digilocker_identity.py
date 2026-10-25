@@ -13,7 +13,7 @@ from test_digilocker_lifecycle import harness  # noqa: F401
 from app.api.v1.routes.digilocker import get_identity_service
 from app.auth.deps import CurrentUser, get_current_user
 from app.db.session import async_session_factory, engine
-from app.exceptions import ServiceUnavailableError, ValidationAppError
+from app.exceptions import ValidationAppError
 from app.integrations.digilocker.documents import RetrievedDocument, normalize_items
 from app.integrations.digilocker.identity import match_document
 from app.integrations.digilocker.provider import ProviderError
@@ -300,6 +300,24 @@ async def test_selection_consent_required_before_provider(identity, types, conse
     identity.docs.retrieve.assert_not_awaited()
 
 
+@pytest.mark.parametrize("doctype", ["PANCR", "DRVLC"])
+async def test_missing_profile_dob_blocks_before_provider(identity, doctype):
+    async with async_session_factory() as session:
+        user = await session.get(User, identity.h.ids[0])
+        user.date_of_birth = None
+        await session.commit()
+
+    with pytest.raises(ValidationAppError) as error:
+        await identity.call([doctype])
+
+    assert error.value.code == "profile_field_missing"
+    assert error.value.details == [
+        {"field": "date_of_birth", "message": "Required for identity verification"}
+    ]
+    identity.docs.issued.assert_not_awaited()
+    identity.docs.retrieve.assert_not_awaited()
+
+
 async def test_inventory_owner_and_ambiguity(identity):
     t = identity
     with pytest.raises(ValidationAppError):
@@ -323,7 +341,6 @@ async def test_expired_connection_no_refresh(identity):
 
 async def test_hmac_failure_persisted_only_as_failure(identity):
     t = identity
-    await t.call(["PANCR"])
     t.docs.retrieve.side_effect = ProviderError("integrity_failed")
     result = await t.call(["PANCR"])
     assert not result["identity_verified"]
@@ -332,10 +349,50 @@ async def test_hmac_failure_persisted_only_as_failure(identity):
     assert result["items"][0]["verified_at"] is None
 
 
-async def test_timeout_rolls_back_entire_selection(identity):
-    identity.docs.retrieve.side_effect = [certificate(), ProviderError("transport_error")]
-    with pytest.raises(ServiceUnavailableError):
-        await identity.call(["PANCR", "DRVLC"])
+async def test_combined_provider_failure_retains_success_and_retry_is_idempotent(identity):
+    identity.docs.retrieve.side_effect = [
+        certificate("DRVLC"),
+        ProviderError("document_request_rejected"),
+    ]
+
+    partial = await identity.call(["DRVLC", "PANCR"])
+
+    assert partial["identity_verified"]
+    assert [item["document_type"] for item in partial["items"]] == ["DRVLC"]
+    assert partial["document_outcomes"] == [
+        {
+            "document_type": "DRVLC",
+            "status": "verified",
+            "verification_id": partial["items"][0]["id"],
+            "retryable": False,
+        },
+        {
+            "document_type": "PANCR",
+            "status": "failed",
+            "error_code": "digilocker_document_request_rejected",
+            "retryable": True,
+        },
+    ]
+
+    identity.docs.retrieve.side_effect = lambda token, uri, **kwargs: certificate("PANCR")
+    retried = await identity.call(["PANCR"])
+    assert retried["identity_verified"]
+    assert {item["document_type"] for item in retried["items"]} == {"PANCR", "DRVLC"}
+
+    identity.docs.retrieve.reset_mock()
+    repeated = await identity.call(["DRVLC", "PANCR"])
+    identity.docs.issued.assert_awaited()
+    identity.docs.retrieve.assert_not_awaited()
+    assert {item["status"] for item in repeated["document_outcomes"]} == {
+        "already_verified"
+    }
+
+
+async def test_single_provider_failure_preserves_existing_error_contract(identity):
+    identity.docs.retrieve.side_effect = ProviderError("document_request_rejected")
+    with pytest.raises(ValidationAppError) as error:
+        await identity.call(["PANCR"])
+    assert error.value.code == "digilocker_document_request_rejected"
     assert not (await identity.call())["items"]
 
 

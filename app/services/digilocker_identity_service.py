@@ -24,6 +24,34 @@ def reference_fingerprint(doctype, uri):
 
 
 class DigiLockerIdentityService(DigiLockerDocumentService):
+    @staticmethod
+    def _profile_precondition(user):
+        missing = []
+        if not isinstance(user.full_name, str) or not user.full_name.strip():
+            missing.append("full_name")
+        if user.date_of_birth is None:
+            missing.append("date_of_birth")
+        if missing:
+            raise ValidationAppError(
+                "Complete the required profile details before verifying identity documents.",
+                code="profile_field_missing",
+                details=[
+                    {"field": field, "message": "Required for identity verification"}
+                    for field in missing
+                ],
+            )
+
+    @staticmethod
+    def _failed_outcome(doctype, exc):
+        failure = DigiLockerIdentityService._failure(exc)
+        return {
+            "document_type": doctype,
+            "status": "failed",
+            "error_code": failure.code,
+            "retryable": exc.category
+            in {"document_request_rejected", "provider_unavailable", "transport_error"},
+        }
+
     @transaction
     async def trust(self, user_id):
         await self._owner(user_id)
@@ -81,13 +109,51 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
         ):
             raise ValidationAppError("Select PAN and/or Driving Licence.")
         try:
-            # Owner lock serializes concurrent verification, profile edits and account deletion.
-            token, _ = await self._read_context(user_id)
+            # Owner lock serializes verification, profile edits and account deletion. Profile
+            # readiness is checked before any provider call, including issued-document discovery.
+            await self._owner(user_id)
             user = await self.session.get(User, user_id)
+            self._profile_precondition(user)
+
+            existing = (
+                await self.session.scalars(
+                    select(DigiLockerIdentityVerification)
+                    .where(
+                        DigiLockerIdentityVerification.user_id == user_id,
+                        DigiLockerIdentityVerification.document_type.in_(document_types),
+                    )
+                    .order_by(DigiLockerIdentityVerification.updated_at.desc())
+                )
+            ).all()
+            current = {}
+            for row in existing:
+                if row.document_type not in current and identity_current(
+                    row, user, self.now().date()
+                ):
+                    current[row.document_type] = row
+
+            outcomes = [
+                {
+                    "document_type": doctype,
+                    "status": "already_verified",
+                    "verification_id": str(current[doctype].id),
+                    "retryable": False,
+                }
+                for doctype in document_types
+                if doctype in current
+            ]
+            pending_types = [doctype for doctype in document_types if doctype not in current]
+            if not pending_types:
+                result = await self._results(user)
+                result["document_outcomes"] = outcomes
+                await self.session.rollback()
+                return result
+
+            token, _ = await self._read_context(user_id)
             connection = await self._connection(user_id)
             items, _ = await self.documents.issued(token)
             selected = []
-            for doctype in document_types:
+            for doctype in pending_types:
                 candidates = {
                     item["uri"]: item
                     for item in items
@@ -101,6 +167,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                 selected.append(next(iter(candidates.values())))
             now = self.now()
             notices = []
+            provider_failures = []
             for item in selected:
                 integrity = "verified"
                 xml = bool(set(item["mime"]) & {"application/xml", "text/xml"})
@@ -144,7 +211,9 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                         del document
                 except ProviderError as exc:
                     if exc.category != "integrity_failed":
-                        raise
+                        provider_failures.append(exc)
+                        outcomes.append(self._failed_outcome(item["doctype"], exc))
+                        continue
                     diagnostic["hmac_result"] = "FAIL"
                     integrity, match = (
                         "failed",
@@ -185,11 +254,25 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                 row.document_valid_until = match.valid_until
                 row.profile_revision_at = user.updated_at
                 row.updated_at = now
+                await self.session.flush()
                 notices.append((row, item["doctype"], match.result))
+                outcomes.append(
+                    {
+                        "document_type": item["doctype"],
+                        "status": "verified"
+                        if match.result == "VERIFIED_MATCH"
+                        else "needs_review",
+                        "verification_id": str(row.id),
+                        "retryable": False,
+                    }
+                )
+            if not notices and provider_failures and not current:
+                raise self._failure(provider_failures[0])
             await self.session.flush()
             notices = [(str(row.id) + ":" + now.isoformat(), doctype, outcome)
                        for row, doctype, outcome in notices]
             result = await self._results(user)
+            result["document_outcomes"] = outcomes
             await self.session.commit()
             for event_id, doctype, outcome in notices:
                 await notify_identity_result(
