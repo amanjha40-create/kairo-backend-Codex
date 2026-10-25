@@ -48,21 +48,42 @@ postflight gate, not a product-code change or a deployment command.
 
 ## Rollout-controller integration contract
 
-There is no deploy/retry capability in this module. A future separately approved
-rollout controller must use these functions instead of the removed temporary
-`health.py` and must not catch `PostflightFailed` and replace it with a generic
-exception category:
+There is no deploy/retry capability in this module. A separately approved rollout
+controller must capture the deployment ID returned by `update_service`, then call
+`require_rollout_completion_then_postflight`. Do not rely on the SDK's generic
+`services_stable` waiter: the DigiLocker API54 rollout demonstrated that it can
+return while the exact new PRIMARY deployment still reports
+`rolloutState=IN_PROGRESS`.
+
+The completion gate polls the exact captured deployment ID and task-definition ARN.
+It requires desired/running/pending counts to match, the exact deployment to remain
+PRIMARY, its current tasks to own healthy targets, and `rolloutState=COMPLETED`.
+An older completed deployment cannot satisfy the gate. `FAILED` stops immediately;
+an `IN_PROGRESS` deployment is bounded by the explicit timeout. Both paths persist
+deployment state/reason, counts, task and target IDs, elapsed time and poll count
+before invoking rollback. The durable postflight remains a separate, unchanged
+fail-closed evaluation after this wait:
 
 ```python
-snapshot = collect_ecs(ecs, elb, cluster=cluster, service_name=service,
-                       expected_definition=definition, expected_desired=1,
-                       previous_tasks=pre_update_tasks)
-snapshot.update(collect_checks(cw, sqs, base_url=base_url,
-                               alarm_names=expected_alarm_names,
-                               queue_urls=queue_and_dlq))
-snapshot['companions'] = companion_service_observations
-report = evaluate(snapshot)
-require_postflight(report, unique_evidence_path, rollback=rollback_to_baseline)
+updated = ecs.update_service(...)
+deployment_id = capture_deployment_identity(updated["service"], definition)
+
+require_rollout_completion_then_postflight(
+    collect_rollout_snapshot=lambda: collect_ecs(
+        ecs, elb, cluster=cluster, service_name=service,
+        expected_definition=definition, expected_desired=1,
+        previous_tasks=pre_update_tasks,
+    ),
+    collect_postflight_snapshot=collect_full_postflight_snapshot,
+    expected_deployment_id=deployment_id,
+    expected_definition=definition,
+    expected_desired=1,
+    rollout_evidence_path=unique_completion_evidence_path,
+    postflight_evidence_path=unique_postflight_evidence_path,
+    rollback=rollback_to_baseline,
+    timeout_seconds=600,
+    poll_interval_seconds=15,
+)
 ```
 
 Use bounded SDK timeouts and disable SDK retries in the controller. An observation

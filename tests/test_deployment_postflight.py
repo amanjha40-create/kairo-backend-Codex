@@ -10,11 +10,16 @@ import pytest
 
 from scripts.deployment_postflight import (
     PostflightFailed,
+    RolloutCompletionFailed,
+    RolloutCompletionTimeout,
+    capture_deployment_identity,
     collect_checks,
     collect_ecs,
     evaluate,
     require_postflight,
+    require_rollout_completion_then_postflight,
     task_record,
+    wait_for_rollout_completion,
 )
 
 
@@ -51,6 +56,60 @@ def snapshot():
 
 def failed(report):
     return {a["check"] for a in report["ASSERTIONS"] if a["status"] == "FAIL"}
+
+
+class FakeClock:
+    def __init__(self):
+        self.value = 0.0
+
+    def __call__(self):
+        return self.value
+
+    def sleep(self, seconds):
+        self.value += seconds
+
+
+class SnapshotSequence:
+    def __init__(self, values):
+        self.values = list(values)
+        self.calls = 0
+
+    def __call__(self):
+        index = min(self.calls, len(self.values) - 1)
+        self.calls += 1
+        return copy.deepcopy(self.values[index])
+
+
+def rollout_snapshot(state="IN_PROGRESS", *, target_state="healthy", old_completed=True):
+    deployments = [{
+        "id": "new", "status": "PRIMARY", "state": state,
+        "definition": "api:54", "reason": None,
+    }]
+    if old_completed:
+        deployments.append({
+            "id": "old", "status": "ACTIVE", "state": "COMPLETED",
+            "definition": "api:53", "reason": None,
+        })
+    return {
+        "service": {
+            "name": "api", "definition": "api:54", "expected_definition": "api:54",
+            "desired": 1, "running": 1, "pending": 0, "expected_desired": 1,
+            "target_port": 8000, "deployments": deployments,
+        },
+        "tasks": [
+            {"id": "current", "definition": "api:54", "deployment_id": "new",
+             "status": "RUNNING", "group": "service:api", "addresses": ["192.0.2.2"]},
+            {"id": "previous", "definition": "api:53", "deployment_id": "old",
+             "status": "RUNNING", "group": "service:api", "addresses": ["192.0.2.1"]},
+        ],
+        "known_previous_deployments": ["old"],
+        "targets": [
+            {"id": "192.0.2.2", "port": 8000,
+             "state": target_state, "reason": None},
+            {"id": "192.0.2.1", "port": 8000, "state": "draining",
+             "reason": "Target.DeregistrationInProgress"},
+        ],
+    }
 
 
 def test_a_current_healthy_previous_draining(snapshot):
@@ -312,3 +371,229 @@ def test_offline_cli_dry_run(snapshot, tmp_path, unhealthy):
                             capture_output=True, text=True, check=False)
     assert result.returncode == int(unhealthy)
     assert json.loads(output.read_text())["passed"] is not unhealthy
+
+
+def test_rollout_waits_for_in_progress_then_runs_postflight(snapshot, tmp_path):
+    clock = FakeClock()
+    rollout = SnapshotSequence([
+        rollout_snapshot(),
+        rollout_snapshot(state="COMPLETED", old_completed=False),
+    ])
+    postflight = Mock(return_value=snapshot)
+
+    report = require_rollout_completion_then_postflight(
+        rollout,
+        postflight,
+        expected_deployment_id="new",
+        expected_definition="api:54",
+        expected_desired=1,
+        rollout_evidence_path=tmp_path / "rollout.json",
+        postflight_evidence_path=tmp_path / "postflight.json",
+        timeout_seconds=10,
+        poll_interval_seconds=1,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report["passed"]
+    assert rollout.calls == 2
+    postflight.assert_called_once_with()
+    saved = json.loads((tmp_path / "rollout.json").read_text())
+    assert saved["passed"]
+    assert saved["deployment"]["state"] == "COMPLETED"
+    assert saved["poll_count"] == 2
+
+
+def test_rollout_does_not_run_postflight_during_multiple_in_progress_polls(
+    snapshot, tmp_path,
+):
+    clock = FakeClock()
+    rollout = SnapshotSequence([
+        rollout_snapshot(),
+        rollout_snapshot(),
+        rollout_snapshot(),
+        rollout_snapshot(state="COMPLETED", old_completed=False),
+    ])
+    postflight = Mock(return_value=snapshot)
+
+    require_rollout_completion_then_postflight(
+        rollout,
+        postflight,
+        expected_deployment_id="new",
+        expected_definition="api:54",
+        expected_desired=1,
+        rollout_evidence_path=tmp_path / "rollout.json",
+        postflight_evidence_path=tmp_path / "postflight.json",
+        timeout_seconds=10,
+        poll_interval_seconds=1,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert rollout.calls == 4
+    postflight.assert_called_once_with()
+
+
+def test_failed_rollout_fails_immediately_and_persists_diagnostics(tmp_path):
+    clock = FakeClock()
+    value = rollout_snapshot(state="FAILED")
+    value["service"]["deployments"][0]["reason"] = "fixture deployment failed"
+    rollout = SnapshotSequence([value])
+    rollback = Mock()
+    evidence = tmp_path / "failed.json"
+
+    with pytest.raises(RolloutCompletionFailed, match="rollout_failed"):
+        wait_for_rollout_completion(
+            rollout,
+            expected_deployment_id="new",
+            expected_definition="api:54",
+            expected_desired=1,
+            evidence_path=evidence,
+            rollback=rollback,
+            timeout_seconds=10,
+            poll_interval_seconds=1,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    saved = json.loads(evidence.read_text())
+    assert saved["failure_code"] == "rollout_failed"
+    assert saved["deployment"]["reason"] == "fixture deployment failed"
+    assert saved["poll_count"] == 1
+    assert saved["task_ids"] == ["current"]
+    assert saved["current_targets"] == [{
+        "id": "192.0.2.2", "port": 8000, "state": "healthy", "reason": None,
+    }]
+    rollback.assert_called_once_with()
+
+
+def test_rollout_completion_timeout_is_bounded_and_persisted(tmp_path):
+    clock = FakeClock()
+    rollout = SnapshotSequence([rollout_snapshot()])
+    rollback = Mock()
+    evidence = tmp_path / "timeout.json"
+
+    with pytest.raises(RolloutCompletionTimeout, match="rollout_completion_timeout"):
+        wait_for_rollout_completion(
+            rollout,
+            expected_deployment_id="new",
+            expected_definition="api:54",
+            expected_desired=1,
+            evidence_path=evidence,
+            rollback=rollback,
+            timeout_seconds=2,
+            poll_interval_seconds=1,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    saved = json.loads(evidence.read_text())
+    assert saved["failure_code"] == "rollout_completion_timeout"
+    assert saved["elapsed_seconds"] == 2
+    assert saved["poll_count"] == 3
+    assert saved["timeout_reason"]
+    rollback.assert_called_once_with()
+
+
+def test_old_completed_deployment_cannot_satisfy_new_generation(tmp_path):
+    clock = FakeClock()
+    rollout = SnapshotSequence([
+        rollout_snapshot(),
+        rollout_snapshot(state="COMPLETED", old_completed=False),
+    ])
+
+    result = wait_for_rollout_completion(
+        rollout,
+        expected_deployment_id="new",
+        expected_definition="api:54",
+        expected_desired=1,
+        evidence_path=tmp_path / "rollout.json",
+        timeout_seconds=10,
+        poll_interval_seconds=1,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert result["passed"]
+    assert result["deployment"]["id"] == "new"
+    assert result["poll_count"] == 2
+    assert capture_deployment_identity(
+        {"deployments": [
+            {"id": "new", "status": "PRIMARY", "taskDefinition": "api:54"},
+            {"id": "old", "status": "ACTIVE", "taskDefinition": "api:53"},
+        ]},
+        "api:54",
+    ) == "new"
+
+
+def test_completed_rollout_with_previous_target_draining_passes(snapshot, tmp_path):
+    clock = FakeClock()
+    result = require_rollout_completion_then_postflight(
+        SnapshotSequence([rollout_snapshot(state="COMPLETED")]),
+        Mock(return_value=snapshot),
+        expected_deployment_id="new",
+        expected_definition="api:54",
+        expected_desired=1,
+        rollout_evidence_path=tmp_path / "rollout.json",
+        postflight_evidence_path=tmp_path / "postflight.json",
+        timeout_seconds=10,
+        poll_interval_seconds=1,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert result["passed"]
+    assert len(result["TARGET_GROUP"]["previous"]) == 1
+
+
+def test_postflight_still_rejects_unhealthy_target_after_completion(snapshot, tmp_path):
+    clock = FakeClock()
+    snapshot["targets"][0].update(state="unhealthy", reason="Target.FailedHealthChecks")
+    rollback = Mock()
+
+    with pytest.raises(PostflightFailed, match="current_targets_healthy"):
+        require_rollout_completion_then_postflight(
+            SnapshotSequence([rollout_snapshot(state="COMPLETED")]),
+            Mock(return_value=snapshot),
+            expected_deployment_id="new",
+            expected_definition="api:54",
+            expected_desired=1,
+            rollout_evidence_path=tmp_path / "rollout.json",
+            postflight_evidence_path=tmp_path / "postflight.json",
+            rollback=rollback,
+            timeout_seconds=10,
+            poll_interval_seconds=1,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    assert json.loads((tmp_path / "rollout.json").read_text())["passed"]
+    assert not json.loads((tmp_path / "postflight.json").read_text())["passed"]
+    rollback.assert_called_once_with()
+
+
+def test_rollout_failure_evidence_survives_rollback_failure(tmp_path):
+    clock = FakeClock()
+    evidence = tmp_path / "failed.json"
+
+    def rollback():
+        saved = json.loads(evidence.read_text())
+        assert saved["failure_code"] == "rollout_failed"
+        assert saved["deployment"]["id"] == "new"
+        raise RuntimeError("rollback failed")
+
+    with pytest.raises(RuntimeError, match="rollback failed"):
+        wait_for_rollout_completion(
+            SnapshotSequence([rollout_snapshot(state="FAILED")]),
+            expected_deployment_id="new",
+            expected_definition="api:54",
+            expected_desired=1,
+            evidence_path=evidence,
+            rollback=rollback,
+            timeout_seconds=10,
+            poll_interval_seconds=1,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    assert json.loads(evidence.read_text())["failure_code"] == "rollout_failed"

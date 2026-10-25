@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
@@ -19,6 +21,23 @@ class PostflightFailed(RuntimeError):
     def __init__(self, report):
         self.report = report
         super().__init__(report["rollback_trigger_reason"])
+
+
+class RolloutCompletionFailed(RuntimeError):
+    def __init__(self, report):
+        self.report = report
+        super().__init__(report["failure_code"])
+
+
+class RolloutCompletionTimeout(RolloutCompletionFailed):
+    pass
+
+
+def _write_once(path: Path, value: object) -> None:
+    with path.open("x") as handle:
+        json.dump(value, handle, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def task_record(task):
@@ -38,6 +57,223 @@ def task_record(task):
         "group": task.get("group"),
         "addresses": addresses,
     }
+
+
+def capture_deployment_identity(service: dict, expected_definition: str) -> str:
+    """Capture the exact new PRIMARY generation from update_service output."""
+    matching = [
+        item
+        for item in service.get("deployments", [])
+        if item.get("status") == "PRIMARY"
+        and item.get("taskDefinition", item.get("definition")) == expected_definition
+    ]
+    if len(matching) != 1 or not matching[0].get("id"):
+        raise ValueError("expected_exact_new_primary_deployment")
+    return matching[0]["id"]
+
+
+def _rollout_observation(
+    snapshot: dict,
+    *,
+    expected_deployment_id: str,
+    expected_definition: str,
+    expected_desired: int,
+    poll_count: int,
+    elapsed_seconds: float,
+    timeout_seconds: float,
+) -> dict:
+    """Build a sanitized observation for one exact ECS deployment generation."""
+    service = snapshot["service"]
+    deployments = service["deployments"]
+    matching = [item for item in deployments if item["id"] == expected_deployment_id]
+    primary = [item for item in deployments if item["status"] == "PRIMARY"]
+    deployment = matching[0] if len(matching) == 1 else None
+    primary_matches = (
+        deployment is not None
+        and len(primary) == 1
+        and primary[0]["id"] == expected_deployment_id
+        and deployment["definition"] == expected_definition
+    )
+    counts = {
+        "desired": service["desired"],
+        "running": service["running"],
+        "pending": service["pending"],
+    }
+    counts_ready = counts == {
+        "desired": expected_desired,
+        "running": expected_desired,
+        "pending": 0,
+    }
+
+    service_tasks = [
+        item
+        for item in snapshot["tasks"]
+        if item["group"] == "service:" + service["name"]
+    ]
+    tasks = [
+        item
+        for item in service_tasks
+        if item["definition"] == expected_definition
+        and item["deployment_id"] == expected_deployment_id
+        and item["status"] == "RUNNING"
+    ]
+    target_port = service["target_port"]
+    expected_targets = {
+        (address, target_port)
+        for task in tasks
+        for address in task["addresses"]
+    }
+    current_targets = [
+        item
+        for item in snapshot["targets"]
+        if (item["id"], item["port"]) in expected_targets
+    ]
+    actual_targets = {(item["id"], item["port"]) for item in current_targets}
+    targets_ready = (
+        len(tasks) == expected_desired
+        and all(task["addresses"] for task in tasks)
+        and bool(expected_targets)
+        and expected_targets == actual_targets
+        and all(item["state"] == "healthy" for item in current_targets)
+    )
+    rollout_state = deployment.get("state") if deployment else None
+    ready = (
+        primary_matches
+        and counts_ready
+        and rollout_state == "COMPLETED"
+        and targets_ready
+    )
+    failure_code = ""
+    if deployment is None:
+        failure_code = "rollout_deployment_identity_missing"
+    elif rollout_state == "FAILED":
+        failure_code = "rollout_failed"
+
+    return {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "passed": ready,
+        "failure_code": failure_code,
+        "expected": {
+            "deployment_id": expected_deployment_id,
+            "task_definition": expected_definition,
+            "desired": expected_desired,
+        },
+        "deployment": deployment,
+        "primary_deployments": primary,
+        "counts": counts,
+        "task_ids": sorted(item["id"] for item in tasks),
+        "observed_task_ids": sorted(item["id"] for item in service_tasks),
+        "targets": [
+            {
+                "id": item["id"],
+                "port": item["port"],
+                "state": item["state"],
+                "reason": item.get("reason"),
+            }
+            for item in snapshot["targets"]
+        ],
+        "current_targets": [
+            {
+                "id": item["id"],
+                "port": item["port"],
+                "state": item["state"],
+                "reason": item.get("reason"),
+            }
+            for item in current_targets
+        ],
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "poll_count": poll_count,
+        "timeout_seconds": timeout_seconds,
+        "timeout_reason": "",
+    }
+
+
+def wait_for_rollout_completion(
+    collect_snapshot: Callable[[], dict],
+    *,
+    expected_deployment_id: str,
+    expected_definition: str,
+    expected_desired: int,
+    evidence_path: Path,
+    rollback: Callable[[], None] | None = None,
+    timeout_seconds: float = 600,
+    poll_interval_seconds: float = 15,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> dict:
+    """Wait for one captured ECS generation before durable postflight.
+
+    A failure report is exclusively created and fsynced before rollback. The
+    generic ECS services-stable waiter is intentionally not used because it may
+    return before the PRIMARY deployment reports rolloutState=COMPLETED.
+    """
+    if timeout_seconds <= 0 or poll_interval_seconds <= 0 or expected_desired <= 0:
+        raise ValueError("invalid_rollout_wait_configuration")
+    started = clock()
+    poll_count = 0
+    while True:
+        poll_count += 1
+        elapsed = max(0.0, clock() - started)
+        report = _rollout_observation(
+            collect_snapshot(),
+            expected_deployment_id=expected_deployment_id,
+            expected_definition=expected_definition,
+            expected_desired=expected_desired,
+            poll_count=poll_count,
+            elapsed_seconds=elapsed,
+            timeout_seconds=timeout_seconds,
+        )
+        if report["passed"]:
+            _write_once(evidence_path, report)
+            return report
+        if report["failure_code"]:
+            _write_once(evidence_path, report)
+            if rollback is not None:
+                rollback()
+            raise RolloutCompletionFailed(report)
+        if elapsed >= timeout_seconds:
+            report["failure_code"] = "rollout_completion_timeout"
+            report["timeout_reason"] = (
+                "exact PRIMARY deployment did not reach COMPLETED with healthy "
+                "current targets before the bounded deadline"
+            )
+            _write_once(evidence_path, report)
+            if rollback is not None:
+                rollback()
+            raise RolloutCompletionTimeout(report)
+        sleeper(min(poll_interval_seconds, timeout_seconds - elapsed))
+
+
+def require_rollout_completion_then_postflight(
+    collect_rollout_snapshot: Callable[[], dict],
+    collect_postflight_snapshot: Callable[[], dict],
+    *,
+    expected_deployment_id: str,
+    expected_definition: str,
+    expected_desired: int,
+    rollout_evidence_path: Path,
+    postflight_evidence_path: Path,
+    rollback: Callable[[], None] | None = None,
+    timeout_seconds: float = 600,
+    poll_interval_seconds: float = 15,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> dict:
+    """Run postflight only after the exact new ECS generation is complete."""
+    wait_for_rollout_completion(
+        collect_rollout_snapshot,
+        expected_deployment_id=expected_deployment_id,
+        expected_definition=expected_definition,
+        expected_desired=expected_desired,
+        evidence_path=rollout_evidence_path,
+        rollback=rollback,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        clock=clock,
+        sleeper=sleeper,
+    )
+    report = evaluate(collect_postflight_snapshot())
+    return require_postflight(report, postflight_evidence_path, rollback=rollback)
 
 
 def evaluate(snapshot):
@@ -149,10 +385,7 @@ def evaluate(snapshot):
 
 def require_postflight(report, evidence_path, rollback=None):
     """Never overwrite original evidence, including if rollback itself raises."""
-    with Path(evidence_path).open("x") as handle:
-        json.dump(report, handle, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
+    _write_once(Path(evidence_path), report)
     if not report["passed"]:
         if rollback is not None:
             rollback()
@@ -172,7 +405,8 @@ def collect_ecs(ecs, elb, *, cluster, service_name, expected_definition,
         raise ValueError("ecs_service_lookup_failed")
     service = response["services"][0]
     deployments = [{"id": d["id"], "status": d["status"],
-                    "definition": d["taskDefinition"], "state": d.get("rolloutState")}
+                    "definition": d["taskDefinition"], "state": d.get("rolloutState"),
+                    "reason": d.get("rolloutStateReason")}
                    for d in service["deployments"]]
     task_arns = []
     for page in ecs.get_paginator("list_tasks").paginate(
