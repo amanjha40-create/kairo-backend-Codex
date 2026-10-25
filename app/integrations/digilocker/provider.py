@@ -16,8 +16,9 @@ from app.integrations.digilocker.diagnostics import ExchangeDiagnostics
 
 
 class ProviderError(Exception):
-    def __init__(self, category):
+    def __init__(self, category, *, safe_code=None):
         self.category = category
+        self.safe_code = safe_code
         super().__init__("DigiLocker provider request failed")
 
 

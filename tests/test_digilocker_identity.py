@@ -449,6 +449,37 @@ async def test_single_provider_failure_preserves_existing_error_contract(identit
     assert not (await identity.call())["items"]
 
 
+async def test_single_pan_uri_missing_returns_actionable_stale_reference_contract(identity):
+    identity.docs.retrieve.side_effect = ProviderError(
+        "document_request_rejected", safe_code="uri_missing"
+    )
+
+    with pytest.raises(ValidationAppError) as error:
+        await identity.call(["PANCR"])
+
+    assert error.value.code == "digilocker_pan_reference_unavailable"
+    assert "uri_missing" not in error.value.message
+    assert not (await identity.call())["items"]
+
+
+async def test_combined_pan_uri_missing_preserves_dl_and_is_not_immediately_retryable(identity):
+    identity.docs.retrieve.side_effect = [
+        certificate("DRVLC"),
+        ProviderError("document_request_rejected", safe_code="uri_missing"),
+    ]
+
+    partial = await identity.call(["DRVLC", "PANCR"])
+
+    assert partial["identity_verified"]
+    assert [item["document_type"] for item in partial["items"]] == ["DRVLC"]
+    assert partial["document_outcomes"][1] == {
+        "document_type": "PANCR",
+        "status": "failed",
+        "error_code": "digilocker_pan_reference_unavailable",
+        "retryable": False,
+    }
+
+
 async def test_profile_edit_invalidates_current_badge_but_preserves_history(identity):
     await identity.call(["PANCR"])
     async with async_session_factory() as session:

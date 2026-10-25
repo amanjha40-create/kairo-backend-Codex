@@ -72,6 +72,25 @@ async def test_provider_400_is_sanitized_rejection_not_outage(doctype, caplog):
     assert "synthetic-private-document" not in caplog.text
 
 
+async def test_provider_uri_missing_retains_only_safe_classification(caplog):
+    def handler(request):
+        assert str(request.url) == XML_URL + item("PANCR")["uri"]
+        return httpx.Response(
+            400,
+            json={"error": "uri_missing", "error_description": "PRIVATE_PROVIDER_PROSE"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderError) as error:
+            await DigiLockerDocuments(settings(), client=client).retrieve(
+                SecretStr("synthetic-access"), item("PANCR")["uri"], xml=True
+            )
+
+    assert error.value.category == "document_request_rejected"
+    assert error.value.safe_code == "uri_missing"
+    assert "PRIVATE_PROVIDER_PROSE" not in caplog.text
+
+
 def test_normalize_multiple_none_and_doctype_not_name():
     assert normalize_items({"items": []}) == ([], 0)
     records, bad = normalize_items(

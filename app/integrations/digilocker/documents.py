@@ -167,7 +167,9 @@ class DigiLockerDocuments:
                 asyncio.timeout(20),
                 client.stream(
                     "GET",
-                    (XML_URL if xml else FILE_URL) + uri if uri is not None else self.settings.digilocker_issued_documents_url,
+                    (XML_URL if xml else FILE_URL) + uri
+                    if uri is not None
+                    else self.settings.digilocker_issued_documents_url,
                     headers={
                         "Authorization": "Bearer " + token.get_secret_value(),
                         "Accept-Encoding": "identity",
@@ -202,7 +204,8 @@ class DigiLockerDocuments:
                             401: "invalid_token",
                             403: "insufficient_scope",
                             404: "document_not_found",
-                        }.get(status, "provider_unavailable")
+                        }.get(status, "provider_unavailable"),
+                        safe_code=rejection_code,
                     )
                 if response.headers.get("content-encoding", "identity").lower() != "identity":
                     raise ProviderError("invalid_response")

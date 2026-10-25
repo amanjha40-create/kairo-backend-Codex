@@ -42,13 +42,28 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             )
 
     @staticmethod
+    def _provider_failure(doctype, exc):
+        if (
+            doctype == "PANCR"
+            and exc.category == "document_request_rejected"
+            and exc.safe_code == "uri_missing"
+        ):
+            return ValidationAppError(
+                "DigiLocker could not resolve the saved PAN reference. Refresh or re-add "
+                "PAN in DigiLocker, then return to KairoID and try again.",
+                code="digilocker_pan_reference_unavailable",
+            )
+        return DigiLockerIdentityService._failure(exc)
+
+    @staticmethod
     def _failed_outcome(doctype, exc):
-        failure = DigiLockerIdentityService._failure(exc)
+        failure = DigiLockerIdentityService._provider_failure(doctype, exc)
         return {
             "document_type": doctype,
             "status": "failed",
             "error_code": failure.code,
-            "retryable": exc.category
+            "retryable": failure.code != "digilocker_pan_reference_unavailable"
+            and exc.category
             in {"document_request_rejected", "provider_unavailable", "transport_error"},
         }
 
@@ -212,7 +227,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                         del document
                 except ProviderError as exc:
                     if exc.category != "integrity_failed":
-                        provider_failures.append(exc)
+                        provider_failures.append((item["doctype"], exc))
                         outcomes.append(self._failed_outcome(item["doctype"], exc))
                         continue
                     diagnostic["hmac_result"] = "FAIL"
@@ -273,7 +288,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                     }
                 )
             if not notices and provider_failures and not current:
-                raise self._failure(provider_failures[0])
+                raise self._provider_failure(*provider_failures[0])
             await self.session.flush()
             notices = [(str(row.id) + ":" + now.isoformat(), doctype, outcome)
                        for row, doctype, outcome in notices]
