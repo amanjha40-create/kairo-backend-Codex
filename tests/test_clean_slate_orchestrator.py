@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,6 +20,7 @@ from app.models import (
     User,
 )
 from app.ops.clean_slate import ProgressStore, load_allowlist
+from app.ops.clean_slate_staging_canary import CanaryFailure, certify
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.services.account_deletion_service import AccountDeletionService
 from app.services.clean_slate_orchestrator import (
@@ -111,6 +113,16 @@ def test_progress_store_rejects_other_allowlist(tmp_path) -> None:  # noqa: ANN0
             s3_uri=None,
             settings=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_staging_canary_refuses_every_other_environment(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "app.ops.clean_slate_staging_canary.get_settings",
+        lambda: SimpleNamespace(app_env=SimpleNamespace(value="production")),
+    )
+    with pytest.raises(CanaryFailure, match="staging_environment_required"):
+        await certify()
 
 
 async def _user(session, *, role: str = "user") -> User:  # noqa: ANN001
