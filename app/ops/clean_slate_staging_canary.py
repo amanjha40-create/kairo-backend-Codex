@@ -469,8 +469,11 @@ async def certify() -> dict[str, object]:
                         "health_checks": health_calls,
                     }
                 )
-            results["G_EXACT_S3_REMOVED"] = not await _s3_exists(
-                s3, settings.s3_documents_bucket, str(fixtures["storage_key"])
+            remaining_keys, truncated = await storage.discover(
+                settings.s3_documents_bucket, str(fixtures["storage_key"])
+            )
+            results["G_EXACT_S3_REMOVED"] = (
+                not truncated and str(fixtures["storage_key"]) not in remaining_keys
             )
             async with async_session_factory() as session:
                 orchestrator = CleanSlateOrchestrator(
