@@ -20,6 +20,26 @@ class Match:
     valid_until: date | None = None
     category: str = "XML_SUPPORTED"
     diagnostics: dict = field(default_factory=dict)
+    masked_identifier: str | None = None
+
+
+def mask_document_identifier(value, doctype):
+    """Return a display-only identifier or fail closed without retaining the source value."""
+    if not isinstance(value, str):
+        return None
+    value = unicodedata.normalize("NFKC", value).strip().upper()
+    if doctype == "PANCR":
+        if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", value):
+            return None
+        return "\u2022" * 6 + value[-4:]
+    if doctype == "DRVLC":
+        if len(value) > 64 or not re.fullmatch(r"[A-Z0-9 /-]+", value):
+            return None
+        compact = re.sub(r"[^A-Z0-9]", "", value)
+        if len(compact) <= 4:
+            return None
+        return "\u2022" * 8 + compact[-4:]
+    return None
 
 
 def _match_diagnostics(given, expected, birth, dob):
@@ -152,6 +172,7 @@ def match_document(document, doctype, name, dob, today):
                 "MISSING_REQUIRED_FIELDS", "PERSON_CARDINALITY", "EXPECTED_NODE_MISSING"
             )
         person = persons[0]
+        masked_identifier = mask_document_identifier(root.get("number"), doctype)
         given, expected = normalize_name(person.get("name")), normalize_name(name)
         try:
             birth = _date(person.get("dob"))
@@ -180,7 +201,12 @@ def match_document(document, doctype, name, dob, today):
         }:
             return Match("MISMATCH", until, diagnostics=diagnostic)
         if given and expected and birth and dob:
-            return Match("VERIFIED_MATCH", until, diagnostics=diagnostic)
+            return Match(
+                "VERIFIED_MATCH",
+                until,
+                diagnostics=diagnostic,
+                masked_identifier=masked_identifier,
+            )
         if (given and expected) or (birth and dob):
             return Match("PARTIAL_MATCH", until, diagnostics=diagnostic)
         return Match("UNABLE_TO_VERIFY", until, "IDENTITY_FIELDS_NOT_AVAILABLE", diagnostic)

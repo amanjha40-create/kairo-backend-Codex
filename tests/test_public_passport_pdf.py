@@ -183,6 +183,9 @@ def test_pdf_branded_permission_limited_and_no_identifiers():
         str(data.share.id),
         str(data.vault.educations[0].id),
         "01 Jan 2020",
+        "masked_identifier",
+        "••••••234F",
+        "••••••••1234",
     ):
         assert hidden not in rendered
     assert "Employment" not in rendered

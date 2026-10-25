@@ -198,6 +198,7 @@ async def test_get_public_passport_returns_backend_authoritative_payload() -> No
     assert body["trust_score"]["overall"] == 75
     assert body["vault"]["employments"][0]["employer_legal_name"] is None
     assert body["share"]["permissions"]["show_employer_names"] is False
+    assert "masked_identifier" not in str(body)
 
 
 @pytest.mark.asyncio

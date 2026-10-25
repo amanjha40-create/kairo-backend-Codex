@@ -70,6 +70,7 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             "integrity_result": row.integrity_result,
             "match_result": row.match_result,
             "match_reason": identity_public_reason(row),
+            "masked_identifier": row.masked_identifier if current else None,
             "verified_at": row.verified_at,
             "document_valid_until": row.document_valid_until,
             "consent_purpose": row.consent_purpose,
@@ -249,6 +250,11 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
                     match.diagnostics.get("mismatch_reason")
                     if match.result != "VERIFIED_MATCH"
                     else match.diagnostics.get("name_match_reason")
+                )
+                row.masked_identifier = (
+                    match.masked_identifier
+                    if integrity == "verified" and match.result == "VERIFIED_MATCH"
+                    else None
                 )
                 row.verified_at = now if match.result == "VERIFIED_MATCH" else None
                 row.document_valid_until = match.valid_until

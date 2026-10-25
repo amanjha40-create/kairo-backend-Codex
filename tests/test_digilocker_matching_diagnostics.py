@@ -140,7 +140,8 @@ async def test_live_shape_safe_logging_and_existing_row_update(identity, caplog)
         "DRVLC": "VERIFIED_MATCH",
     }
     logs = [r for r in caplog.records if r.message == "digilocker_identity_match"]
-    assert len(logs) == 4
+    # The already-current DL result is not fetched again; only the PAN mismatch is re-evaluated.
+    assert len(logs) == 3
     pan = next(r for r in logs if r.document_type == "PANCR")
     assert pan.mismatch_reason == "NAME_MISMATCH" and pan.normalized_dob_match
     serialized = str([r.__dict__ for r in logs])

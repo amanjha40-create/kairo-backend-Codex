@@ -15,7 +15,7 @@ from app.auth.deps import CurrentUser, get_current_user
 from app.db.session import async_session_factory, engine
 from app.exceptions import ValidationAppError
 from app.integrations.digilocker.documents import RetrievedDocument, normalize_items
-from app.integrations.digilocker.identity import match_document
+from app.integrations.digilocker.identity import mask_document_identifier, match_document
 from app.integrations.digilocker.provider import ProviderError
 from app.main import app
 from app.models import (
@@ -36,14 +36,54 @@ TODAY = date(2026, 9, 24)
 DOB = date(1990, 1, 2)
 
 
-def certificate(doctype="PANCR", name="Test Candidate", dob="02-01-1990", extra="", expiry=""):
+def certificate(
+    doctype="PANCR",
+    name="Test Candidate",
+    dob="02-01-1990",
+    extra="",
+    expiry="",
+    number="SYNTHETIC-PRIVATE-ID",
+):
     return RetrievedDocument(
         (
-            f'<Certificate type="{doctype}" number="SYNTHETIC-PRIVATE-ID" status="A" {expiry}>'
+            f'<Certificate type="{doctype}" number="{number}" status="A" {expiry}>'
             f'<IssuedTo><Person name="{name}" dob="{dob}"/>{extra}</IssuedTo></Certificate>'
         ).encode(),
         "application/xml",
     )
+
+
+@pytest.mark.parametrize(
+    "doctype,value,expected",
+    [
+        ("PANCR", "abcde1234f", "••••••234F"),
+        ("DRVLC", "MH-12 2020/001234", "••••••••1234"),
+        ("PANCR", None, None),
+        ("PANCR", "AB12", None),
+        ("PANCR", "SYNTHETIC-PRIVATE-ID", None),
+        ("DRVLC", "1234", None),
+        ("DRVLC", "ABCD\n1234", None),
+        ("EAADHAAR", "ABCDE1234F", None),
+    ],
+)
+def test_mask_document_identifier_fails_closed(doctype, value, expected):
+    assert mask_document_identifier(value, doctype) == expected
+
+
+@pytest.mark.parametrize(
+    "doctype,number,expected",
+    [
+        ("PANCR", "ABCDE1234F", "••••••234F"),
+        ("DRVLC", "MH-12 2020/001234", "••••••••1234"),
+    ],
+)
+def test_verified_match_carries_only_masked_identifier(doctype, number, expected):
+    result = match_document(
+        certificate(doctype, number=number), doctype, "Test Candidate", DOB, TODAY
+    )
+    assert result.result == "VERIFIED_MATCH"
+    assert result.masked_identifier == expected
+    assert number not in repr(result)
 
 
 @pytest.mark.parametrize("doctype", ["PANCR", "DRVLC"])
@@ -142,7 +182,8 @@ async def identity(harness):  # noqa: F811 - imported pytest fixture
         issued=AsyncMock(return_value=normalize_items({"items": [item(), item("DRVLC")]})),
         retrieve=AsyncMock(
             side_effect=lambda token, uri, **kwargs: certificate(
-                "DRVLC" if "DRVLC" in uri else "PANCR"
+                "DRVLC" if "DRVLC" in uri else "PANCR",
+                number="MH-12 2020/001234" if "DRVLC" in uri else "ABCDE1234F",
             )
         ),
     )
@@ -174,6 +215,12 @@ async def test_persistence_privacy_repeat_concurrency_no_score_or_profile_mutati
         )
     results = await asyncio.gather(t.call(["PANCR", "DRVLC"]), t.call(["PANCR", "DRVLC"]))
     assert all(r["identity_verified"] and len(r["items"]) == 2 for r in results)
+    assert {r["masked_identifier"] for r in results[0]["items"]} == {
+        "••••••234F",
+        "••••••••1234",
+    }
+    assert "ABCDE1234F" not in str(results)
+    assert "MH-12 2020/001234" not in str(results)
     assert {r["id"] for r in results[0]["items"]} == {r["id"] for r in results[1]["items"]}
     async with async_session_factory() as session:
         rows = (
@@ -189,7 +236,13 @@ async def test_persistence_privacy_repeat_concurrency_no_score_or_profile_mutati
         )
         assert all(
             secret not in serialized
-            for secret in ["SYNTHETIC-PRIVATE-ID", item()["uri"], "<Certificate", "Test Candidate"]
+            for secret in [
+                "ABCDE1234F",
+                "MH-12 2020/001234",
+                item()["uri"],
+                "<Certificate",
+                "Test Candidate",
+            ]
         )
         assert all(
             row.consent_purpose == "identity_verification" and row.consent_version == "v1"
@@ -467,7 +520,7 @@ async def test_081_metadata_constraints():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["095"]
+    assert script.get_heads() == ["096"]
     migration = script.get_revision("081")
     assert migration.down_revision == "080"
     tree = ast.parse(Path(migration.path).read_text())
@@ -499,7 +552,7 @@ async def test_081_metadata_constraints():
             f["referred_table"]: f["options"]["ondelete"]
             for f in inspector.get_foreign_keys(table.name)
         } == {"users": "CASCADE", "digilocker_connections": "SET NULL"}
-        assert len(inspector.get_check_constraints(table.name)) == 8
+        assert len(inspector.get_check_constraints(table.name)) == 9
         assert [u["column_names"] for u in inspector.get_unique_constraints(table.name)] == [
             ["user_id", "document_type", "provider_reference_fingerprint"]
         ]
