@@ -247,7 +247,10 @@ class CleanSlateOrchestrator:
                         AccountDeletion,
                         AccountDeletion.id == OrganizationDeletionResolution.deletion_id,
                     )
-                    .where(AccountDeletion.user_id.in_(allowlist.approved_user_ids))
+                    .where(
+                        AccountDeletion.user_id.in_(allowlist.approved_user_ids),
+                        OrganizationDeletionResolution.action.in_({"close", "transfer"}),
+                    )
                 )
             ).all()
         )

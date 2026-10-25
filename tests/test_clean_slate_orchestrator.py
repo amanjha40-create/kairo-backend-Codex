@@ -386,6 +386,75 @@ async def test_operator_deletion_is_canonical_and_idempotent() -> None:
         await _cleanup(ids)
 
 
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_rerun_ignores_leave_resolution_for_retained_organization() -> None:
+    settings = get_settings().model_copy(
+        update={
+            "s3_documents_bucket": "clean-slate-test",
+            "s3_document_key_prefix": "test",
+            "sqs_main_queue_url": None,
+        }
+    )
+    user_ids: list[UUID] = []
+    organization_ids: list[UUID] = []
+    try:
+        async with async_session_factory() as session:
+            target = await _user(session)
+            survivor = await _user(session)
+            user_ids.extend((target.id, survivor.id))
+            owned = Organization(
+                id=uuid4(),
+                created_by_user_id=target.id,
+                name="Synthetic owned organization",
+                organization_type=OrganizationType.EMPLOYER,
+            )
+            retained = Organization(
+                id=uuid4(),
+                created_by_user_id=survivor.id,
+                name="Synthetic retained institution",
+                organization_type=OrganizationType.UNIVERSITY,
+            )
+            session.add_all((owned, retained))
+            await session.flush()
+            organization_ids.extend((owned.id, retained.id))
+            session.add_all(
+                (
+                    OrganizationMember(
+                        organization_id=owned.id,
+                        user_id=target.id,
+                        role=OrganizationRole.OWNER,
+                    ),
+                    OrganizationMember(
+                        organization_id=retained.id,
+                        user_id=survivor.id,
+                        role=OrganizationRole.OWNER,
+                    ),
+                    OrganizationMember(
+                        organization_id=retained.id,
+                        user_id=target.id,
+                        role=OrganizationRole.REVIEWER,
+                    ),
+                )
+            )
+            await session.commit()
+            service = AccountDeletionService(session, settings, FakeRedis())
+            deletion_id = await service.delete_candidate_account_by_operator(target.id)
+            orchestrator = CleanSlateOrchestrator(
+                session,
+                settings,
+                FakeRedis(),
+                object_lister=lambda _bucket, _scopes: _empty_keys(),
+            )
+            plan = await orchestrator.plan(
+                _allowlist(target.id, organizations=frozenset({owned.id}))
+            )
+            assert plan.organizations == (str(owned.id),)
+            assert await service.delete_candidate_account_by_operator(target.id) == deletion_id
+    finally:
+        await _cleanup(user_ids, organization_ids)
+
+
 async def _cleanup(user_ids: list[UUID], organization_ids: list[UUID] | None = None) -> None:
     organization_ids = organization_ids or []
     async with async_session_factory() as session:

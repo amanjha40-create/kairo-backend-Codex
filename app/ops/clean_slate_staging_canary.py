@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
 from sqlalchemy import delete, func, select, text
@@ -35,30 +36,17 @@ from app.models import (
     User,
 )
 from app.organization.enums import OrganizationRole, OrganizationType
-from app.services.account_deletion_purge import sweep_deletions
+from app.services.account_deletion_purge import PurgeStorage, sweep_deletions
 from app.services.clean_slate_orchestrator import (
     CleanSlateAllowlist,
     CleanSlateOrchestrator,
     CleanSlateSafetyError,
+    storage_identity,
 )
 
 
 class CanaryFailure(RuntimeError):
     pass
-
-
-async def _s3_put(client, bucket: str, key: str) -> None:  # noqa: ANN001
-    await asyncio.to_thread(
-        client.put_object,
-        Bucket=bucket,
-        Key=key,
-        Body=b"synthetic-clean-slate-canary",
-        ContentType="application/pdf",
-    )
-
-
-async def _s3_delete(client, bucket: str, key: str) -> None:  # noqa: ANN001
-    await asyncio.to_thread(client.delete_object, Bucket=bucket, Key=key)
 
 
 async def _s3_exists(client, bucket: str, key: str) -> bool:  # noqa: ANN001
@@ -71,11 +59,13 @@ async def _s3_exists(client, bucket: str, key: str) -> bool:  # noqa: ANN001
         raise
 
 
-async def _create_fixtures(settings) -> dict[str, object]:  # noqa: ANN001
+async def _create_fixtures(
+    settings, *, run: str, target_id: UUID
+) -> dict[str, object]:  # noqa: ANN001
     now = datetime.now(UTC)
-    run = uuid4().hex
     async with async_session_factory() as session:
         target = User(
+            id=target_id,
             email=f"clean-slate-target-{run}@example.test",
             full_name="Synthetic Clean Slate Target",
             role="user",
@@ -244,9 +234,10 @@ async def _create_fixtures(settings) -> dict[str, object]:  # noqa: ANN001
         }
 
 
-async def _cleanup(fixtures: dict[str, object], settings, s3) -> None:  # noqa: ANN001
+async def _cleanup(fixtures: dict[str, object], settings) -> None:  # noqa: ANN001
+    storage = PurgeStorage(settings)
     for field in ("storage_key", "drift_key"):
-        await _s3_delete(s3, settings.s3_documents_bucket, str(fixtures[field]))
+        await storage.purge(settings.s3_documents_bucket, str(fixtures[field]))
     user_ids = (
         fixtures["target"],
         fixtures["survivor"],
@@ -291,11 +282,24 @@ async def certify() -> dict[str, object]:
         raise CanaryFailure("staging_environment_required")
     if settings.s3_documents_bucket is None:
         raise CanaryFailure("staging_storage_required")
+    run = os.environ.get("CLEAN_SLATE_CANARY_RUN", "")
+    raw_target_id = os.environ.get("CLEAN_SLATE_CANARY_TARGET_ID", "")
+    try:
+        target_id = UUID(raw_target_id)
+    except ValueError as error:
+        raise CanaryFailure("preseeded_target_id_required") from error
+    if len(run) != 32 or any(character not in "0123456789abcdef" for character in run):
+        raise CanaryFailure("preseeded_run_id_required")
     s3 = get_s3_client(settings)
-    fixtures = await _create_fixtures(settings)
+    fixtures = await _create_fixtures(settings, run=run, target_id=target_id)
     results: dict[str, object] = {}
     try:
-        await _s3_put(s3, settings.s3_documents_bucket, str(fixtures["storage_key"]))
+        if not await _s3_exists(
+            s3, settings.s3_documents_bucket, str(fixtures["storage_key"])
+        ) or not await _s3_exists(
+            s3, settings.s3_documents_bucket, str(fixtures["drift_key"])
+        ):
+            raise CanaryFailure("preseeded_storage_required")
         async with Redis.from_url(settings.redis_url) as redis:
             async with async_session_factory() as session:
                 protected_ids = frozenset(
@@ -323,7 +327,7 @@ async def certify() -> dict[str, object]:
                         User.id.in_((fixtures["target"], fixtures["survivor"]))
                     )
                 )
-                dry = await orchestrator.plan(base)
+                await orchestrator.plan(base)
                 await session.rollback()
                 async with async_session_factory() as verify:
                     after = await verify.scalar(
@@ -338,7 +342,14 @@ async def certify() -> dict[str, object]:
                 strict = CleanSlateAllowlist(
                     **{
                         **base.__dict__,
-                        "approved_storage_object_ids": frozenset(dry.storage_object_ids),
+                        "approved_storage_object_ids": frozenset(
+                            {
+                                storage_identity(
+                                    settings.s3_documents_bucket,
+                                    str(fixtures["storage_key"]),
+                                )
+                            }
+                        ),
                     }
                 )
                 blocked_admin = CleanSlateAllowlist(
@@ -357,7 +368,6 @@ async def certify() -> dict[str, object]:
                     results["D_PROTECTED_ADMIN_BLOCKED"] = (
                         str(error) == "protected_identity_targeted"
                     )
-                await _s3_put(s3, settings.s3_documents_bucket, str(fixtures["drift_key"]))
                 try:
                     await orchestrator.plan(strict, require_storage_allowlist=True)
                     results["H_UNKNOWN_STORAGE_FAILS_CLOSED"] = False
@@ -365,7 +375,9 @@ async def certify() -> dict[str, object]:
                     results["H_UNKNOWN_STORAGE_FAILS_CLOSED"] = (
                         str(error) == "storage_allowlist_mismatch"
                     )
-                await _s3_delete(s3, settings.s3_documents_bucket, str(fixtures["drift_key"]))
+                await PurgeStorage(settings).purge(
+                    settings.s3_documents_bucket, str(fixtures["drift_key"])
+                )
                 health_calls = 0
 
                 async def health() -> None:
@@ -469,7 +481,7 @@ async def certify() -> dict[str, object]:
             raise CanaryFailure("deletion_not_fully_complete")
         return {"status": "PASS", **results}
     finally:
-        await _cleanup(fixtures, settings, s3)
+        await _cleanup(fixtures, settings)
 
 
 async def main_async() -> None:
