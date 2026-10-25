@@ -291,6 +291,17 @@ async def certify() -> dict[str, object]:
     if len(run) != 32 or any(character not in "0123456789abcdef" for character in run):
         raise CanaryFailure("preseeded_run_id_required")
     s3 = get_s3_client(settings)
+    storage = PurgeStorage(settings)
+
+    async def list_versioned_objects(bucket: str, scopes: tuple[str, ...]) -> set[str]:
+        keys: set[str] = set()
+        for scope in scopes:
+            discovered, truncated = await storage.discover(bucket, scope)
+            if truncated:
+                raise CanaryFailure("storage_listing_truncated")
+            keys.update(discovered)
+        return keys
+
     fixtures = await _create_fixtures(settings, run=run, target_id=target_id)
     results: dict[str, object] = {}
     try:
@@ -321,7 +332,12 @@ async def certify() -> dict[str, object]:
                     approved_storage_object_ids=frozenset(),
                     protected_user_ids=protected_ids,
                 )
-                orchestrator = CleanSlateOrchestrator(session, settings, redis)
+                orchestrator = CleanSlateOrchestrator(
+                    session,
+                    settings,
+                    redis,
+                    object_lister=list_versioned_objects,
+                )
                 before = await session.scalar(
                     select(func.count()).select_from(User).where(
                         User.id.in_((fixtures["target"], fixtures["survivor"]))
@@ -375,7 +391,7 @@ async def certify() -> dict[str, object]:
                     results["H_UNKNOWN_STORAGE_FAILS_CLOSED"] = (
                         str(error) == "storage_allowlist_mismatch"
                     )
-                await PurgeStorage(settings).purge(
+                await storage.purge(
                     settings.s3_documents_bucket, str(fixtures["drift_key"])
                 )
                 health_calls = 0
@@ -455,7 +471,12 @@ async def certify() -> dict[str, object]:
                 s3, settings.s3_documents_bucket, str(fixtures["storage_key"])
             )
             async with async_session_factory() as session:
-                orchestrator = CleanSlateOrchestrator(session, settings, redis)
+                orchestrator = CleanSlateOrchestrator(
+                    session,
+                    settings,
+                    redis,
+                    object_lister=list_versioned_objects,
+                )
 
                 async def health_again() -> None:
                     revision = await session.scalar(text("SELECT version_num FROM alembic_version"))
