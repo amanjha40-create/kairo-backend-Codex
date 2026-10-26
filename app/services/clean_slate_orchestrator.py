@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.signup_otp import SignupOtpStore
 from app.config import Settings
+from app.core.constants import Role
+from app.exceptions import ValidationAppError
 from app.infrastructure.s3.client import get_s3_client
 from app.models import (
     AccountDeletion,
@@ -37,6 +39,7 @@ from app.models import (
     OrganizationDeletionResolution,
     OrganizationLogoUpload,
     OrganizationMember,
+    OrganizationRosterImport,
     PassportShareLink,
     PendingSignup,
     PortfolioItem,
@@ -59,6 +62,11 @@ from app.models import (
 from app.organization.enums import OrganizationRole
 from app.services.account_deletion_inventory import safe_key
 from app.services.account_deletion_service import AccountDeletionService
+from app.services.clean_slate_synthetic_organization import (
+    SyntheticOrganizationPurgeError,
+    SyntheticOrganizationPurgeTarget,
+    inspect_synthetic_organization_purge,
+)
 
 
 class CleanSlateSafetyError(RuntimeError):
@@ -95,6 +103,10 @@ class CleanSlateAllowlist:
     approved_storage_object_ids: frozenset[str]
     protected_user_ids: frozenset[UUID]
     backup_evidence: BackupEvidence | None = None
+    approved_admin_user_ids: frozenset[UUID] = frozenset()
+    organization_purge_targets: tuple[SyntheticOrganizationPurgeTarget, ...] = ()
+    organization_preserve_ids: frozenset[UUID] = frozenset()
+    retention_records: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,6 +114,7 @@ class CleanSlatePlan:
     environment: str
     users: tuple[str, ...]
     organizations: tuple[str, ...]
+    preserved_organizations: tuple[str, ...]
     pending_signups: tuple[str, ...]
     dependent_counts: dict[str, int]
     storage_object_ids: tuple[str, ...]
@@ -115,6 +128,7 @@ class CleanSlatePlan:
             "environment": self.environment,
             "users": list(self.users),
             "organizations": list(self.organizations),
+            "preserved_organizations": list(self.preserved_organizations),
             "pending_signups": list(self.pending_signups),
             "dependent_counts": self.dependent_counts,
             "storage_object_ids": list(self.storage_object_ids),
@@ -164,6 +178,11 @@ class CleanSlateOrchestrator:
         require_storage_allowlist: bool = False,
     ) -> CleanSlatePlan:
         environment = self.settings.app_env.value
+        if allowlist.schema_version == 2:
+            return await self._plan_v2(
+                allowlist,
+                require_storage_allowlist=require_storage_allowlist,
+            )
         if allowlist.schema_version != 1 or allowlist.environment != environment:
             raise CleanSlateSafetyError("allowlist_environment_or_version_mismatch")
         if not allowlist.approved_user_ids:
@@ -367,6 +386,284 @@ class CleanSlateOrchestrator:
             organizations=tuple(
                 str(value) for value in sorted(protected_dependencies, key=str)
             ),
+            preserved_organizations=(),
+            pending_signups=tuple(
+                str(value) for value in sorted(approved_signup_ids, key=str)
+            ),
+            dependent_counts=counts,
+            storage_object_ids=tuple(sorted(actual_ids)),
+            storage_object_count=len(actual_keys),
+            missing_referenced_object_count=len(referenced - actual_keys),
+            retained_counts=retained,
+            predicted_post_reset=predicted,
+        )
+
+    async def _plan_v2(
+        self,
+        allowlist: CleanSlateAllowlist,
+        *,
+        require_storage_allowlist: bool,
+    ) -> CleanSlatePlan:
+        environment = self.settings.app_env.value
+        if allowlist.environment != environment:
+            raise CleanSlateSafetyError("allowlist_environment_or_version_mismatch")
+        candidate_ids = set(allowlist.approved_user_ids)
+        admin_ids = set(allowlist.approved_admin_user_ids)
+        if not candidate_ids and not admin_ids:
+            raise CleanSlateSafetyError("empty_user_allowlist")
+        if candidate_ids & admin_ids:
+            raise CleanSlateSafetyError("duplicate_user_role_allowlist")
+        target_ids = candidate_ids | admin_ids
+        if target_ids & set(allowlist.protected_user_ids):
+            raise CleanSlateSafetyError("protected_identity_targeted")
+        if len(admin_ids) > 1:
+            raise CleanSlateSafetyError("bulk_admin_deletion_not_supported")
+
+        users = list(
+            (
+                await self.session.scalars(
+                    select(User).where(User.id.in_(target_ids)).order_by(User.id)
+                )
+            ).all()
+        )
+        if {user.id for user in users} != target_ids:
+            raise CleanSlateSafetyError("unknown_user_id")
+        if any(user.id in candidate_ids and user.role != Role.USER.value for user in users):
+            raise CleanSlateSafetyError("candidate_role_mismatch")
+        if any(user.id in admin_ids and user.role != Role.ADMIN.value for user in users):
+            raise CleanSlateSafetyError("admin_role_mismatch")
+        if any(user.role == Role.SUPERADMIN.value for user in users):
+            raise CleanSlateSafetyError("protected_identity_targeted")
+
+        protected_existing = set(
+            (
+                await self.session.scalars(
+                    select(User.id).where(User.id.in_(allowlist.protected_user_ids))
+                )
+            ).all()
+        )
+        if protected_existing != set(allowlist.protected_user_ids):
+            raise CleanSlateSafetyError("unknown_protected_identity")
+        active_staff = set(
+            (
+                await self.session.scalars(
+                    select(User.id).where(
+                        User.role != Role.USER.value,
+                        User.is_active.is_(True),
+                        User.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        if not (active_staff - admin_ids).issubset(allowlist.protected_user_ids):
+            raise CleanSlateSafetyError("protected_identity_manifest_incomplete")
+        active_superadmins = set(
+            (
+                await self.session.scalars(
+                    select(User.id).where(
+                        User.role == Role.SUPERADMIN.value,
+                        User.is_active.is_(True),
+                        User.deleted_at.is_(None),
+                        User.suspended_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        if not active_superadmins:
+            raise CleanSlateSafetyError("active_superadmin_required")
+        if not active_superadmins.issubset(allowlist.protected_user_ids):
+            raise CleanSlateSafetyError("superadmin_not_protected")
+
+        purge_ids = {
+            target.organization_id for target in allowlist.organization_purge_targets
+        }
+        if len(purge_ids) != len(allowlist.organization_purge_targets):
+            raise CleanSlateSafetyError("duplicate_organization_purge_target")
+        preserve_ids = set(allowlist.organization_preserve_ids)
+        if purge_ids & preserve_ids:
+            raise CleanSlateSafetyError("organization_disposition_conflict")
+        disposition_ids = purge_ids | preserve_ids
+        organizations = list(
+            (
+                await self.session.scalars(
+                    select(Organization).where(Organization.id.in_(disposition_ids))
+                )
+            ).all()
+        )
+        if {row.id for row in organizations} != disposition_ids:
+            raise CleanSlateSafetyError("unknown_organization_id")
+
+        memberships = list(
+            (
+                await self.session.scalars(
+                    select(OrganizationMember).where(
+                        OrganizationMember.user_id.in_(target_ids)
+                    )
+                )
+            ).all()
+        )
+        creator_org_ids = set(
+            (
+                await self.session.scalars(
+                    select(Organization.id).where(
+                        Organization.created_by_user_id.in_(target_ids),
+                        Organization.closed_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        resolved_org_ids = set(
+            (
+                await self.session.scalars(
+                    select(OrganizationDeletionResolution.organization_id)
+                    .join(
+                        AccountDeletion,
+                        AccountDeletion.id == OrganizationDeletionResolution.deletion_id,
+                    )
+                    .where(AccountDeletion.user_id.in_(target_ids))
+                )
+            ).all()
+        )
+        connected_ids = (
+            {row.organization_id for row in memberships}
+            | creator_org_ids
+            | resolved_org_ids
+        )
+        if not connected_ids.issubset(disposition_ids):
+            raise CleanSlateSafetyError("organization_disposition_incomplete")
+        if not disposition_ids.issubset(connected_ids):
+            raise CleanSlateSafetyError("unrelated_organization_disposition")
+        if any(
+            row.role == OrganizationRole.OWNER
+            and row.organization_id in preserve_ids
+            and row.user_id in target_ids
+            for row in memberships
+        ):
+            raise CleanSlateSafetyError("preserved_organization_owned_by_target")
+
+        service = AccountDeletionService(self.session, self.settings, self.redis)
+        for admin_id in admin_ids:
+            try:
+                await service.assert_clean_slate_admin_eligible(
+                    admin_id,
+                    purge_ids=frozenset(purge_ids),
+                )
+            except ValidationAppError as error:
+                raise CleanSlateSafetyError("admin_cleanup_precondition_failed") from error
+
+        synthetic_people = 0
+        for target in allowlist.organization_purge_targets:
+            try:
+                state = await inspect_synthetic_organization_purge(
+                    self.session,
+                    target,
+                    approved_user_ids=frozenset(target_ids),
+                )
+            except SyntheticOrganizationPurgeError as error:
+                raise CleanSlateSafetyError(str(error)) from error
+            synthetic_people += state.person_count
+            owner_ids = {
+                row.user_id
+                for row in memberships
+                if row.organization_id == target.organization_id
+                and row.role == OrganizationRole.OWNER
+            }
+            if not state.already_purged and (
+                len(owner_ids) != 1 or not owner_ids.issubset(admin_ids)
+            ):
+                raise CleanSlateSafetyError("synthetic_purge_owner_not_approved_admin")
+
+        matched_signup_ids: set[UUID] = set()
+        for user in users:
+            predicates = [
+                PendingSignup.completed_user_id == user.id,
+                PendingSignup.email == user.email,
+            ]
+            if user.phone is not None:
+                predicates.append(PendingSignup.phone == user.phone)
+            matched_signup_ids.update(
+                (
+                    await self.session.scalars(
+                        select(PendingSignup.id).where(or_(*predicates))
+                    )
+                ).all()
+            )
+        approved_signup_ids = set(allowlist.approved_pending_signup_ids)
+        if not matched_signup_ids.issubset(approved_signup_ids):
+            raise CleanSlateSafetyError("pending_signup_not_allowlisted")
+
+        counts = await self._dependent_counts(target_ids)
+        counts["synthetic_organization_people"] = synthetic_people
+        scopes, referenced = await self._storage_scope_and_references(users, purge_ids)
+        actual_keys = await self.object_lister(
+            self.settings.s3_documents_bucket,
+            tuple(sorted(scopes)),
+        )
+        if any(not self._owned_by_any_scope(key, scopes) for key in actual_keys):
+            raise CleanSlateSafetyError("unknown_storage_ownership")
+        if any(not self._owned_by_any_scope(key, scopes) for key in referenced):
+            raise CleanSlateSafetyError("unsafe_storage_reference")
+        actual_ids = {
+            storage_identity(self.settings.s3_documents_bucket, key) for key in actual_keys
+        }
+        active_targets = [user for user in users if user.deleted_at is None]
+        supplied_storage = allowlist.approved_storage_object_ids
+        if require_storage_allowlist and not actual_ids.issubset(supplied_storage):
+            raise CleanSlateSafetyError("storage_allowlist_mismatch")
+        if (
+            require_storage_allowlist
+            and len(active_targets) == len(users)
+            and supplied_storage != actual_ids
+        ):
+            raise CleanSlateSafetyError("storage_allowlist_mismatch")
+        if require_storage_allowlist and referenced - actual_keys:
+            raise CleanSlateSafetyError("referenced_storage_missing")
+
+        retained = {
+            "deletion_requests": int(
+                await self.session.scalar(select(func.count()).select_from(AccountDeletion)) or 0
+            ),
+            "deletion_items": int(
+                await self.session.scalar(select(func.count()).select_from(AccountDeletionItem))
+                or 0
+            ),
+            "deleted_user_tombstones": int(
+                await self.session.scalar(
+                    select(func.count()).select_from(User).where(User.deleted_at.is_not(None))
+                )
+                or 0
+            ),
+            "declared_retention_records": len(allowlist.retention_records),
+        }
+        active_candidates = int(
+            await self.session.scalar(
+                select(func.count()).select_from(User).where(
+                    User.role == Role.USER.value,
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                )
+            )
+            or 0
+        )
+        predicted = {
+            "active_non_admin_users": active_candidates
+            - sum(user.id in candidate_ids and user.deleted_at is None for user in users),
+            "active_admin_targets": 0,
+            "target_sessions": 0,
+            "target_resume_rows": 0,
+            "target_digilocker_rows": 0,
+            "target_passport_shares": 0,
+            "target_storage_objects": 0,
+            "active_synthetic_organization_people": 0,
+            "catalogue_records": 43119,
+        }
+        return CleanSlatePlan(
+            environment=environment,
+            users=tuple(str(user.id) for user in users),
+            organizations=tuple(str(value) for value in sorted(purge_ids, key=str)),
+            preserved_organizations=tuple(
+                str(value) for value in sorted(preserve_ids, key=str)
+            ),
             pending_signups=tuple(
                 str(value) for value in sorted(approved_signup_ids, key=str)
             ),
@@ -408,14 +705,34 @@ class CleanSlateOrchestrator:
         plan = await self.plan(allowlist, require_storage_allowlist=True)
         deletion_ids: list[UUID] = []
         service = AccountDeletionService(self.session, self.settings, self.redis)
-        for raw_user_id in plan.users:
+        if allowlist.schema_version == 2:
+            ordered_user_ids = [
+                *sorted(allowlist.approved_user_ids, key=str),
+                *sorted(allowlist.approved_admin_user_ids, key=str),
+            ]
+        else:
+            ordered_user_ids = [UUID(value) for value in plan.users]
+        approved_v2_ids = frozenset(
+            set(allowlist.approved_user_ids) | set(allowlist.approved_admin_user_ids)
+        )
+        for user_id in ordered_user_ids:
             await health_check()
-            user_id = UUID(raw_user_id)
-            deletion_id = await service.delete_candidate_account_by_operator(user_id)
+            if allowlist.schema_version == 2:
+                is_admin = user_id in allowlist.approved_admin_user_ids
+                deletion_id = await service.delete_account_by_clean_slate_operator(
+                    user_id,
+                    approved_role=Role.ADMIN.value if is_admin else Role.USER.value,
+                    approved_user_ids=approved_v2_ids,
+                    synthetic_organization_purges=(
+                        allowlist.organization_purge_targets if is_admin else ()
+                    ),
+                )
+            else:
+                deletion_id = await service.delete_candidate_account_by_operator(user_id)
             deletion_ids.append(deletion_id)
             progress({
                 "event": "clean_slate_user_committed",
-                "user_id": raw_user_id,
+                "user_id": str(user_id),
                 "deletion_id": str(deletion_id),
             })
         if allowlist.approved_pending_signup_ids:
@@ -600,6 +917,13 @@ class CleanSlateOrchestrator:
                 for organization_id in organization_ids
             }
             scopes.update(organization_scope.values())
+            roster_scopes = {
+                organization_id: (
+                    f"{prefix}/organization-rosters/organizations/{organization_id}/"
+                )
+                for organization_id in organization_ids
+            }
+            scopes.update(roster_scopes.values())
             references.update(
                 value
                 for value in (
@@ -618,6 +942,17 @@ class CleanSlateOrchestrator:
                     await self.session.scalars(
                         select(OrganizationLogoUpload.object_key).where(
                             OrganizationLogoUpload.organization_id.in_(organization_ids)
+                        )
+                    )
+                ).all()
+                if value
+            )
+            references.update(
+                value
+                for value in (
+                    await self.session.scalars(
+                        select(OrganizationRosterImport.source_storage_key).where(
+                            OrganizationRosterImport.organization_id.in_(organization_ids)
                         )
                     )
                 ).all()

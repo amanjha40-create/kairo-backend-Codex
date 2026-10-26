@@ -21,8 +21,11 @@ from app.services.clean_slate_orchestrator import (
     CleanSlateSafetyError,
     verify_artifact_checksum,
 )
+from app.services.clean_slate_synthetic_organization import (
+    SyntheticOrganizationPurgeTarget,
+)
 
-_ALLOWLIST_KEYS = {
+_V1_ALLOWLIST_KEYS = {
     "schema_version",
     "environment",
     "approved_user_ids",
@@ -30,6 +33,19 @@ _ALLOWLIST_KEYS = {
     "approved_organization_ids",
     "approved_storage_object_ids",
     "protected_user_ids",
+    "backup_evidence",
+}
+_V2_ALLOWLIST_KEYS = {
+    "schema_version",
+    "environment",
+    "user_deletion_ids",
+    "admin_deletion_ids",
+    "pending_signup_deletion_ids",
+    "organization_purge_targets",
+    "organization_preserve_ids",
+    "storage_deletion_object_ids",
+    "protected_user_ids",
+    "retention_records",
     "backup_evidence",
 }
 _BACKUP_KEYS = {
@@ -76,13 +92,18 @@ def load_allowlist(payload: bytes) -> CleanSlateAllowlist:
         value = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise CleanSlateSafetyError("invalid_allowlist_json") from error
-    if not isinstance(value, dict) or set(value) != _ALLOWLIST_KEYS:
+    if not isinstance(value, dict) or not isinstance(value.get("schema_version"), int):
         raise CleanSlateSafetyError("invalid_allowlist_schema")
-    if not isinstance(value["schema_version"], int) or not isinstance(
-        value["environment"], str
-    ):
+    version = value["schema_version"]
+    expected_keys = _V1_ALLOWLIST_KEYS if version == 1 else _V2_ALLOWLIST_KEYS
+    if version not in {1, 2} or set(value) != expected_keys:
         raise CleanSlateSafetyError("invalid_allowlist_schema")
-    storage = value["approved_storage_object_ids"]
+    if not isinstance(value["environment"], str):
+        raise CleanSlateSafetyError("invalid_allowlist_schema")
+    storage_field = (
+        "approved_storage_object_ids" if version == 1 else "storage_deletion_object_ids"
+    )
+    storage = value[storage_field]
     if not isinstance(storage, list) or any(
         not isinstance(item, str) or len(item) != 64 for item in storage
     ):
@@ -97,19 +118,69 @@ def load_allowlist(payload: bytes) -> CleanSlateAllowlist:
         if any(not isinstance(backup_value[key], str) for key in _BACKUP_KEYS):
             raise CleanSlateSafetyError("invalid_backup_evidence")
         backup = BackupEvidence(**backup_value)
+    if version == 1:
+        return CleanSlateAllowlist(
+            schema_version=1,
+            environment=value["environment"],
+            approved_user_ids=_uuid_set(value["approved_user_ids"], "approved_user_ids"),
+            approved_pending_signup_ids=_uuid_set(
+                value["approved_pending_signup_ids"], "approved_pending_signup_ids"
+            ),
+            approved_organization_ids=_uuid_set(
+                value["approved_organization_ids"], "approved_organization_ids"
+            ),
+            approved_storage_object_ids=frozenset(storage),
+            protected_user_ids=_uuid_set(value["protected_user_ids"], "protected_user_ids"),
+            backup_evidence=backup,
+        )
+
+    raw_purges = value["organization_purge_targets"]
+    if not isinstance(raw_purges, list):
+        raise CleanSlateSafetyError("invalid_organization_purge_targets")
+    purges: list[SyntheticOrganizationPurgeTarget] = []
+    for raw in raw_purges:
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != {"organization_id", "expected_person_count"}
+            or not isinstance(raw["organization_id"], str)
+            or not isinstance(raw["expected_person_count"], int)
+            or raw["expected_person_count"] < 0
+        ):
+            raise CleanSlateSafetyError("invalid_organization_purge_targets")
+        try:
+            organization_id = UUID(raw["organization_id"])
+        except ValueError as error:
+            raise CleanSlateSafetyError("invalid_organization_purge_targets") from error
+        purges.append(
+            SyntheticOrganizationPurgeTarget(
+                organization_id=organization_id,
+                expected_person_count=raw["expected_person_count"],
+            )
+        )
+    retention_records = value["retention_records"]
+    if not isinstance(retention_records, list) or any(
+        not isinstance(item, str) or not item for item in retention_records
+    ):
+        raise CleanSlateSafetyError("invalid_retention_records")
     return CleanSlateAllowlist(
-        schema_version=value["schema_version"],
+        schema_version=2,
         environment=value["environment"],
-        approved_user_ids=_uuid_set(value["approved_user_ids"], "approved_user_ids"),
+        approved_user_ids=_uuid_set(value["user_deletion_ids"], "user_deletion_ids"),
         approved_pending_signup_ids=_uuid_set(
-            value["approved_pending_signup_ids"], "approved_pending_signup_ids"
+            value["pending_signup_deletion_ids"], "pending_signup_deletion_ids"
         ),
-        approved_organization_ids=_uuid_set(
-            value["approved_organization_ids"], "approved_organization_ids"
-        ),
+        approved_organization_ids=frozenset(),
         approved_storage_object_ids=frozenset(storage),
         protected_user_ids=_uuid_set(value["protected_user_ids"], "protected_user_ids"),
         backup_evidence=backup,
+        approved_admin_user_ids=_uuid_set(
+            value["admin_deletion_ids"], "admin_deletion_ids"
+        ),
+        organization_purge_targets=tuple(purges),
+        organization_preserve_ids=_uuid_set(
+            value["organization_preserve_ids"], "organization_preserve_ids"
+        ),
+        retention_records=tuple(retention_records),
     )
 
 

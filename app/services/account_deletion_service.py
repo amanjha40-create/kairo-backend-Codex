@@ -10,11 +10,14 @@ from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.admin_review.enums import VerificationRequestReviewStatus
 from app.auth.passwords import verify_password
 from app.config import Settings
+from app.core.constants import Role
+from app.employment.enums import VerificationStatus
 from app.exceptions import (
     NotFoundError,
     ServiceUnavailableError,
@@ -42,6 +45,7 @@ from app.models import (
     InternshipDocument,
     Notification,
     NotificationPreference,
+    OrganizationMember,
     OrganizationPerson,
     PassportShareLink,
     PasswordResetToken,
@@ -62,6 +66,7 @@ from app.models import (
     ResumeReviewSession,
     Skill,
     TrustInvitation,
+    TrustSafetyInvestigation,
     TrustScoreSnapshot,
     User,
     UserDocument,
@@ -69,11 +74,17 @@ from app.models import (
     VerificationContact,
     VerificationRequest,
     VerificationRequestEvidence,
+    VerificationRequestReview,
 )
 from app.models.account_deletion import AccountDeletion
+from app.organization.enums import OrganizationRole
 from app.schemas.account_deletion import AccountDeletionRequest
 from app.services.account_deletion_inventory import inventory_deletion
 from app.services.account_deletion_policy import revoke_and_scrub_related, scrub_invitation_events
+from app.services.clean_slate_synthetic_organization import (
+    SyntheticOrganizationPurgeTarget,
+    purge_synthetic_organization_for_clean_slate,
+)
 from app.services.organization_account_deletion import resolve_organizations_for_account_deletion
 from app.verification_requests.enums import VerificationRequestStatus
 
@@ -166,6 +177,141 @@ class AccountDeletionService:
             return previous
         return await self._delete_locked_user(user)
 
+    async def delete_account_by_clean_slate_operator(
+        self,
+        target_user_id: UUID,
+        *,
+        approved_role: str,
+        approved_user_ids: frozenset[UUID],
+        synthetic_organization_purges: tuple[SyntheticOrganizationPurgeTarget, ...] = (),
+    ) -> UUID:
+        """Exact-manifest operator deletion for Candidate or one approved Admin.
+
+        This capability is intentionally separate from the ordinary operator
+        primitive. The caller must bind both the exact target ID and expected role
+        from a checksum-verified Clean Slate v2 manifest.
+        """
+        user = await self._lock_user(target_user_id)
+        if user is None:
+            raise NotFoundError("User not found")
+        if user.role == Role.SUPERADMIN.value:
+            raise ValidationAppError("Superadmin accounts cannot be clean-slate targets")
+        if user.deleted_at is not None:
+            previous = await self._session.scalar(
+                select(AccountDeletion.id).where(AccountDeletion.user_id == user.id)
+            )
+            if previous is None:
+                raise NotFoundError("User not found")
+            await self._session.commit()
+            return previous
+        if approved_role not in {Role.USER.value, Role.ADMIN.value} or user.role != approved_role:
+            raise ValidationAppError("Clean-slate account role does not match the manifest")
+        if approved_role == Role.ADMIN.value:
+            await self.assert_clean_slate_admin_eligible(
+                user.id,
+                purge_ids=frozenset(
+                    target.organization_id for target in synthetic_organization_purges
+                ),
+            )
+        return await self._delete_locked_user(
+            user,
+            synthetic_organization_purges=synthetic_organization_purges,
+            clean_slate_approved_user_ids=approved_user_ids,
+        )
+
+    async def assert_clean_slate_admin_eligible(
+        self,
+        user_id: UUID,
+        *,
+        purge_ids: frozenset[UUID],
+    ) -> None:
+        superadmin_count = int(
+            await self._session.scalar(
+                select(func.count()).select_from(User).where(
+                    User.role == Role.SUPERADMIN.value,
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                    User.suspended_at.is_(None),
+                )
+            )
+            or 0
+        )
+        if superadmin_count < 1:
+            raise ValidationAppError("An active Superadmin must remain")
+        owned_ids = set(
+            (
+                await self._session.scalars(
+                    select(OrganizationMember.organization_id).where(
+                        OrganizationMember.user_id == user_id,
+                        OrganizationMember.role == OrganizationRole.OWNER,
+                        OrganizationMember.suspended_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        if not owned_ids.issubset(purge_ids):
+            raise ValidationAppError("Admin still owns a preserved organization")
+        if await self._active_operational_assignment_count(user_id):
+            raise ValidationAppError("Admin has unresolved operational assignments")
+
+    async def _active_operational_assignment_count(self, user_id: UUID) -> int:
+        active_request_statuses = {
+            value.value
+            for value in VerificationRequestStatus
+            if value
+            not in {
+                VerificationRequestStatus.VERIFIED,
+                VerificationRequestStatus.REJECTED,
+                VerificationRequestStatus.UNABLE_TO_VERIFY,
+                VerificationRequestStatus.CANCELLED,
+                VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE,
+                VerificationRequestStatus.EXPIRED,
+            }
+        }
+        active_review_statuses = {
+            VerificationRequestReviewStatus.PENDING,
+            VerificationRequestReviewStatus.ASSIGNED,
+            VerificationRequestReviewStatus.IN_REVIEW,
+            VerificationRequestReviewStatus.CORRECTIONS_REQUESTED,
+        }
+        active_employment_statuses = {
+            VerificationStatus.SUBMITTED.value,
+            VerificationStatus.UNDER_REVIEW.value,
+            VerificationStatus.ADDITIONAL_INFO_REQUESTED.value,
+        }
+        counts = (
+            await self._session.scalar(
+                select(func.count()).select_from(VerificationRequest).where(
+                    VerificationRequest.assigned_to_user_id == user_id,
+                    VerificationRequest.status.in_(active_request_statuses),
+                )
+            )
+            or 0,
+            await self._session.scalar(
+                select(func.count()).select_from(VerificationRequestReview).where(
+                    VerificationRequestReview.assigned_reviewer_user_id == user_id,
+                    VerificationRequestReview.review_status.in_(active_review_statuses),
+                )
+            )
+            or 0,
+            await self._session.scalar(
+                select(func.count()).select_from(Employment).where(
+                    Employment.assigned_reviewer_user_id == user_id,
+                    Employment.verification_status.in_(active_employment_statuses),
+                    Employment.deleted_at.is_(None),
+                )
+            )
+            or 0,
+            await self._session.scalar(
+                select(func.count()).select_from(TrustSafetyInvestigation).where(
+                    TrustSafetyInvestigation.assigned_admin_user_id == user_id,
+                    TrustSafetyInvestigation.status.in_({"open", "in_progress"}),
+                )
+            )
+            or 0,
+        )
+        return sum(int(value) for value in counts)
+
     async def _lock_user(self, user_id: UUID) -> User | None:
         return (
             await self._session.execute(
@@ -176,12 +322,20 @@ class AccountDeletionService:
             )
         ).scalar_one_or_none()
 
-    async def _delete_locked_user(self, user: User) -> UUID:
+    async def _delete_locked_user(
+        self,
+        user: User,
+        *,
+        synthetic_organization_purges: tuple[SyntheticOrganizationPurgeTarget, ...] = (),
+        clean_slate_approved_user_ids: frozenset[UUID] = frozenset(),
+    ) -> UUID:
         """Execute the shared, irreversible deletion transaction for a locked user."""
 
         now = datetime.now(tz=UTC)
-        tombstone_email = self._tombstone_email(user.id)
-        deleted_name = "Deleted Candidate"
+        tombstone_email = self._tombstone_email(user.id, role=user.role)
+        deleted_name = (
+            "Deleted Account" if user.role == Role.ADMIN.value else "Deleted Candidate"
+        )
         original_email = user.email
 
         try:
@@ -199,6 +353,14 @@ class AccountDeletionService:
                 )
             ).scalar_one_or_none() is not None
             deletion = await inventory_deletion(self._session, self._settings, user, snapshot)
+            for purge_target in synthetic_organization_purges:
+                await purge_synthetic_organization_for_clean_slate(
+                    self._session,
+                    self._settings,
+                    deletion,
+                    purge_target,
+                    approved_user_ids=clean_slate_approved_user_ids,
+                )
             await resolve_organizations_for_account_deletion(self._session, user, deletion)
             await revoke_and_scrub_related(self._session, user.id, snapshot, now)
             await self._purge_verification_requests(snapshot.verification_request_ids_to_purge)
@@ -703,5 +865,6 @@ class AccountDeletionService:
         user.suspension_reason = None
         user.deleted_at = now
 
-    def _tombstone_email(self, user_id: UUID) -> str:
-        return f"deleted-candidate+{user_id.hex}@deleted.kairoid.invalid"
+    def _tombstone_email(self, user_id: UUID, *, role: str = Role.USER.value) -> str:
+        label = "account" if role == Role.ADMIN.value else "candidate"
+        return f"deleted-{label}+{user_id.hex}@deleted.kairoid.invalid"

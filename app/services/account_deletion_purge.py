@@ -11,8 +11,8 @@ from sqlalchemy import select
 from app.auth.signup_otp import SignupOtpStore
 from app.infrastructure.s3.client import get_s3_client
 from app.models.account_deletion import AccountDeletion, AccountDeletionItem
-from app.models.user import User
 from app.models.organization import Organization
+from app.models.user import User
 from app.services.account_deletion_inventory import identity, safe_key
 from app.services.account_deletion_telemetry import current_metrics, observe_sweep
 
@@ -110,10 +110,15 @@ def permitted_scope(request, item):
         "avatar": f"{prefix}/users/{uid}/avatar.",
     }
     scope = item.scope_prefix
-    if item.source_type == "closed_org_logo":
-        return isinstance(item.source_id, UUID) and scope == (
+    if item.source_type in {"closed_org_logo", "synthetic_org_roster"}:
+        if not isinstance(item.source_id, UUID):
+            return False
+        expected = (
             f"{prefix}/organizations/{item.source_id}/logo/"
+            if item.source_type == "closed_org_logo"
+            else f"{prefix}/organization-rosters/organizations/{item.source_id}/"
         )
+        return scope == expected
     if item.source_type in {"education", "pack_snapshot"}:
         stem = "education-documents" if item.source_type == "education" else "document-share-packs"
         start = f"{prefix}/{stem}/"
@@ -203,7 +208,10 @@ async def sweep_deletions(
                 if item.kind not in {"object", "namespace"}:
                     raise UnsafeReference()
                 assert_owned_reference(request, item)
-                if item.source_type == "closed_org_logo" and item.source_id not in closed_organizations:
+                if (
+                    item.source_type in {"closed_org_logo", "synthetic_org_roster"}
+                    and item.source_id not in closed_organizations
+                ):
                     raise UnsafeReference()
                 if (
                     not request.storage_bucket
@@ -233,7 +241,10 @@ async def sweep_deletions(
                     await SignupOtpStore(redis, settings).clear_all(item.source_id)
                 else:
                     assert_owned_reference(request, item)
-                    if item.source_type == "closed_org_logo" and item.source_id not in closed_organizations:
+                    if (
+                        item.source_type in {"closed_org_logo", "synthetic_org_roster"}
+                        and item.source_id not in closed_organizations
+                    ):
                         raise UnsafeReference()
                     if (
                         not request.storage_bucket
