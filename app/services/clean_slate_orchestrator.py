@@ -616,7 +616,14 @@ class CleanSlateOrchestrator:
             and supplied_storage != actual_ids
         ):
             raise CleanSlateSafetyError("storage_allowlist_mismatch")
-        if require_storage_allowlist and referenced - actual_keys:
+        # Candidate deletion already treats a proven-owned missing object as
+        # successfully absent. Keep the stricter gate for staff/org cleanup,
+        # where retained or organization-owned storage has broader impact.
+        if (
+            require_storage_allowlist
+            and referenced - actual_keys
+            and (admin_ids or purge_ids)
+        ):
             raise CleanSlateSafetyError("referenced_storage_missing")
 
         retained = {

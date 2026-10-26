@@ -146,6 +146,33 @@ async def test_v2_candidate_cleanup_succeeds() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_v2_candidate_allows_proven_owned_already_absent_storage() -> None:
+    user_ids: list[UUID] = []
+    try:
+        async with async_session_factory() as session:
+            candidate = await _user(session, Role.USER.value)
+            superadmin = await _user(session, Role.SUPERADMIN.value)
+            user_ids.extend((candidate.id, superadmin.id))
+            candidate.avatar_key = f"test/users/{candidate.id}/avatar.jpg"
+            await session.commit()
+
+            allowlist = _allowlist(
+                candidates=frozenset({candidate.id}),
+                protected=frozenset({superadmin.id}),
+            )
+            plan = await _orchestrator(session).plan(
+                allowlist,
+                require_storage_allowlist=True,
+            )
+
+            assert plan.storage_object_count == 0
+            assert plan.missing_referenced_object_count == 1
+    finally:
+        await _cleanup(user_ids, [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_v2_admin_purges_100_people_and_preserves_creator_org_idempotently() -> None:
     user_ids: list[UUID] = []
     organization_ids: list[UUID] = []
