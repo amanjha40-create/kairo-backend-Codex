@@ -17,6 +17,7 @@ from app.models import (
     OrganizationDeletionResolution,
     OrganizationMember,
     OrganizationPerson,
+    OrganizationRosterImport,
     TrustSafetyInvestigation,
     User,
 )
@@ -28,6 +29,7 @@ from app.services.clean_slate_orchestrator import (
     CleanSlateAllowlist,
     CleanSlateOrchestrator,
     CleanSlateSafetyError,
+    storage_identity,
 )
 from app.services.clean_slate_synthetic_organization import (
     SyntheticOrganizationPurgeTarget,
@@ -194,6 +196,19 @@ async def test_v2_admin_purges_100_people_and_preserves_creator_org_idempotently
                 )
                 for index in range(100)
             )
+            roster_key = (
+                f"test/organization-rosters/organizations/{synthetic.id}/synthetic.csv"
+            )
+            session.add(
+                OrganizationRosterImport(
+                    organization_id=synthetic.id,
+                    uploaded_by_user_id=admin.id,
+                    roster_type="student",
+                    source_format="csv",
+                    original_filename="synthetic.csv",
+                    source_storage_key=roster_key,
+                )
+            )
             await session.commit()
             allowlist = _allowlist(
                 admins=frozenset({admin.id}),
@@ -206,7 +221,24 @@ async def test_v2_admin_purges_100_people_and_preserves_creator_org_idempotently
                 ),
                 preserves=frozenset({preserved.id}),
             )
-            orchestrator = _orchestrator(session)
+            allowlist = CleanSlateAllowlist(
+                **{
+                    **allowlist.__dict__,
+                    "approved_storage_object_ids": frozenset(
+                        {storage_identity("clean-slate-v2-test", roster_key)}
+                    ),
+                }
+            )
+
+            async def roster_keys(_bucket, _scopes):  # noqa: ANN001, ANN202
+                return {roster_key}
+
+            orchestrator = CleanSlateOrchestrator(
+                session,
+                _settings(),
+                FakeRedis(),
+                object_lister=roster_keys,
+            )
             before = await session.scalar(
                 select(User.deleted_at).where(User.id == admin.id)
             )
@@ -225,15 +257,19 @@ async def test_v2_admin_purges_100_people_and_preserves_creator_org_idempotently
                 progress=lambda _event: None,
             )
             deletion = await session.get(AccountDeletion, first[0])
-            roster_item = await session.scalar(
+            roster_items = list(
+                (
+                    await session.scalars(
                 select(AccountDeletionItem).where(
                     AccountDeletionItem.deletion_id == first[0],
                     AccountDeletionItem.source_type == "synthetic_org_roster",
-                    AccountDeletionItem.kind == "namespace",
                 )
+                    )
+                ).all()
             )
-            assert deletion is not None and roster_item is not None
-            assert permitted_scope(deletion, roster_item)
+            assert deletion is not None and len(roster_items) == 2
+            assert all(item.source_id == synthetic.id for item in roster_items)
+            assert all(permitted_scope(deletion, item) for item in roster_items)
             second = await orchestrator.execute(
                 allowlist,
                 confirmation="EXECUTE STAGING CLEAN SLATE",

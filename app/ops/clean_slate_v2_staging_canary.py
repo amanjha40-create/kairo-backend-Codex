@@ -184,8 +184,12 @@ async def _create_fixtures(settings, run: str) -> dict[str, object]:  # noqa: AN
 
 async def _cleanup(fixtures: dict[str, object], settings) -> None:  # noqa: ANN001
     storage = PurgeStorage(settings)
-    for key in fixtures["storage_keys"]:
-        await storage.purge(settings.s3_documents_bucket, str(key))
+    storage_error: Exception | None = None
+    try:
+        for key in fixtures["storage_keys"]:
+            await storage.purge(settings.s3_documents_bucket, str(key))
+    except Exception as error:  # Cleanup must still remove the synthetic DB fixtures.
+        storage_error = error
     user_ids = tuple(fixtures["users"])
     organization_ids = tuple(fixtures["organizations"])
     async with async_session_factory() as session:
@@ -204,6 +208,8 @@ async def _cleanup(fixtures: dict[str, object], settings) -> None:  # noqa: ANN0
         )
         await session.execute(delete(User).where(User.id.in_(user_ids)))
         await session.commit()
+    if storage_error is not None:
+        raise storage_error
 
 
 async def certify() -> dict[str, object]:
@@ -440,8 +446,9 @@ async def certify() -> dict[str, object]:
                     progress=lambda _event: None,
                 )
                 results["IDEMPOTENT_RERUN"] = rerun == deletion_ids
-        if not all(value is True for value in results.values()):
-            raise CanaryFailure("v2_certification_assertion_failed")
+        failed = sorted(key for key, value in results.items() if value is not True)
+        if failed:
+            raise CanaryFailure(f"v2_certification_assertion_failed:{','.join(failed)}")
         return {"status": "PASS", **results}
     finally:
         await _cleanup(fixtures, settings)

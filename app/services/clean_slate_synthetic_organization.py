@@ -246,7 +246,7 @@ async def purge_synthetic_organization_for_clean_slate(
                 deletion_id=deletion.id,
                 identity_hash=identity("object", key),
                 source_type="synthetic_org_roster",
-                source_id=row.id,
+                source_id=organization.id,
                 kind="object",
                 object_key=key if valid else None,
                 scope_prefix=roster_scope,
