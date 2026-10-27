@@ -56,7 +56,7 @@ def test_request_boundary_emits_only_allowlist(output, monkeypatch, caplog, oper
     assert places.logger.propagate is False
     expected = [{
         "event": places.EVENT, "environment": "production",
-        "operation": operation, "outcome": outcome,
+        "operation": operation, "provider": "amazon_location", "outcome": outcome,
     } for outcome in ("started", "failed" if fails else "succeeded")]
     assert [json.loads(line) for line in output.getvalue().splitlines()] == expected
     assert sentinel not in output.getvalue()
@@ -79,7 +79,7 @@ def test_formatter_discards_sensitive_extras_message_and_traceback(environment):
     result = places.PlacesFormatter(environment).format(record)
     assert json.loads(result) == {
         "event": places.EVENT, "environment": environment,
-        "operation": "reverse_geocode", "outcome": "failed",
+        "operation": "reverse_geocode", "provider": "unknown", "outcome": "failed",
     }
     assert private not in result
 
@@ -89,7 +89,7 @@ def test_untrusted_field_values_are_not_serialized(invalid):
     record = logging.makeLogRecord({"operation": invalid, "outcome": invalid})
     assert json.loads(places.PlacesFormatter(invalid).format(record)) == {
         "event": places.EVENT, "environment": "unknown",
-        "operation": "unknown", "outcome": "unknown",
+        "operation": "unknown", "provider": "unknown", "outcome": "unknown",
     }
 
 
@@ -145,7 +145,10 @@ def test_application_startup_configures_allowlist_even_for_text_logs(
             pass
         records = [json.loads(line) for line in output.getvalue().splitlines()]
         assert len(records) == 2
-        assert all(set(row) == {"event", "environment", "operation", "outcome"} for row in records)
+        assert all(
+            set(row) == {"event", "environment", "operation", "provider", "outcome"}
+            for row in records
+        )
         assert all(row["environment"] == "production" for row in records)
     finally:
         root.handlers[:] = before[0]

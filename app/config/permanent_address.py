@@ -22,7 +22,15 @@ def validate_configuration(settings):
             settings.permanent_address_key_id,
             environment,
         )
-        if settings.permanent_address_places_region != "us-east-1":
+        provider = settings.permanent_address_geocoder_provider
+        if provider == "amazon_location":
+            if settings.permanent_address_places_region != "us-east-1":
+                raise ValueError()
+        elif provider == "google":
+            key = settings.google_geocoding_api_key
+            if key is None or not key.get_secret_value().strip():
+                raise ValueError()
+        else:
             raise ValueError()
         if environment != "test":
             bucket = settings.s3_documents_bucket or ""

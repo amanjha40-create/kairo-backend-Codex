@@ -40,7 +40,7 @@ from app.models.user_document import UserDocument
 from app.schemas.permanent_address import LocationChallenge, PermanentAddressState
 from app.services.document_pack_storage import DocumentPackStorage
 from app.services.permanent_address_documents import AddressDocumentMixin
-from app.services.permanent_address_geocoder import AmazonAddressGeocoder, TargetCipher
+from app.services.permanent_address_geocoder import TargetCipher, build_address_geocoder
 from app.services.permanent_address_manual_review import (
     LOCKED_SOURCES,
     REVIEWABLE,
@@ -69,10 +69,7 @@ ALLOWED_EVIDENCE = {"address_proof", "driving_license", "passport", "voter_id", 
 class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
     def __init__(self, session, settings, *, geocoder=None, clock=None, storage=None):
         self.db, self.settings = session, settings
-        self.geocoder = geocoder or AmazonAddressGeocoder(
-            region=settings.permanent_address_places_region,
-            street_unavailable_radius_m=settings.permanent_address_street_unavailable_radius_m
-        )
+        self.geocoder = geocoder or build_address_geocoder(settings)
         self.storage = storage or DocumentPackStorage(settings)
         self.clock = clock or (lambda: datetime.now(UTC))
         if clock is not None and str(settings.app_env) != "test":
@@ -322,7 +319,7 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         except ServiceUnavailableError:
             metadata, target = (
                 {
-                    "provider": "amazon_location",
+                    "provider": getattr(self.geocoder, "provider_name", "unavailable"),
                     "classification": "ADDRESS_NEEDS_REVIEW",
                     "reasons": ["provider_unavailable"],
                 },

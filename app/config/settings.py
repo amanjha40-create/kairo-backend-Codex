@@ -642,6 +642,15 @@ class Settings(BaseSettings):
     permanent_address_places_region: str = Field(
         default="us-east-1", validation_alias="PERMANENT_ADDRESS_PLACES_REGION"
     )
+    permanent_address_geocoder_provider: Literal["amazon_location", "google"] = Field(
+        default="amazon_location",
+        validation_alias="PERMANENT_ADDRESS_GEOCODER_PROVIDER",
+    )
+    google_geocoding_api_key: SecretStr | None = Field(
+        default=None,
+        repr=False,
+        validation_alias="GOOGLE_GEOCODING_API_KEY",
+    )
     permanent_address_document_max_age_days: dict[str, int] = Field(
         default_factory=dict, validation_alias="PERMANENT_ADDRESS_DOCUMENT_MAX_AGE_DAYS"
     )
@@ -658,6 +667,15 @@ class Settings(BaseSettings):
     @field_validator("permanent_address_keys", mode="before")
     @classmethod
     def validate_permanent_address_secret_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, (str, SecretStr)):
+            from app.config.permanent_address import PermanentAddressConfigurationError
+
+            raise PermanentAddressConfigurationError()
+        return value
+
+    @field_validator("google_geocoding_api_key", mode="before")
+    @classmethod
+    def validate_google_geocoding_secret_type(cls, value: object) -> object:
         if value is not None and not isinstance(value, (str, SecretStr)):
             from app.config.permanent_address import PermanentAddressConfigurationError
 

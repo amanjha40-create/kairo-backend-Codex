@@ -78,6 +78,8 @@ async def test_complete_production_on_exposes_normal_empty_state_without_provide
     {"aws_region": "ap-south-1"},
     {"aws_endpoint_url": "https://example.test"},
     {"permanent_address_places_region": "ap-south-1"},
+    {"permanent_address_geocoder_provider": "google", "google_geocoding_api_key": None},
+    {"permanent_address_geocoder_provider": "google", "google_geocoding_api_key": ""},
 ])
 def test_production_on_fails_closed_with_sanitized_error(changes):
     with pytest.raises(PermanentAddressConfigurationError) as error:
@@ -93,6 +95,18 @@ def test_off_accepts_unprovisioned_address_config():
         permanent_address_keys="not-provisioned", s3_documents_bucket=None,
     )
     assert not PermanentAddressService(None, settings).enabled()
+
+
+def test_google_provider_uses_secret_and_does_not_require_aws_places_region():
+    settings = configuration(
+        permanent_address_geocoder_provider="google",
+        google_geocoding_api_key="synthetic-google-key",
+        permanent_address_places_region="ap-south-1",
+    )
+    service = PermanentAddressService(None, settings)
+    assert service.enabled()
+    assert service.geocoder.provider_name == "google"
+    assert "synthetic-google-key" not in repr(settings)
 
 
 def test_environment_alias_and_staging_key_separation(monkeypatch):

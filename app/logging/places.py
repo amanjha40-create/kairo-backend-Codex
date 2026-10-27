@@ -9,6 +9,7 @@ LOGGER_NAME = "kairo.safe_places"
 EVENT = "permanent_address.places_call"
 OPERATIONS = frozenset({"geocode", "reverse_geocode"})
 OUTCOMES = frozenset({"started", "succeeded", "failed"})
+PROVIDERS = frozenset({"amazon_location", "google"})
 ENVIRONMENTS = frozenset({"production", "staging", "development", "test"})
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -26,6 +27,7 @@ class PlacesFormatter(logging.Formatter):
     def format(self, record):
         operation = getattr(record, "operation", None)
         outcome = getattr(record, "outcome", None)
+        provider = getattr(record, "provider", None)
         # Construct a new object, not a redacted copy of an enriched LogRecord.
         return json.dumps({
             "event": EVENT,
@@ -33,6 +35,7 @@ class PlacesFormatter(logging.Formatter):
             "operation": (
                 operation if type(operation) is str and operation in OPERATIONS else "unknown"
             ),
+            "provider": provider if type(provider) is str and provider in PROVIDERS else "unknown",
             "outcome": outcome if type(outcome) is str and outcome in OUTCOMES else "unknown",
         }, separators=(",", ":"))
 
@@ -46,14 +49,25 @@ def configure_places_logging(environment):
 
 
 @contextmanager
-def places_call(operation):
+def places_call(operation, provider="amazon_location"):
     if operation not in OPERATIONS:
         raise ValueError("Unsupported Places operation")
-    logger.info(EVENT, extra={"operation": operation, "outcome": "started"})
+    if provider not in PROVIDERS:
+        raise ValueError("Unsupported Places provider")
+    logger.info(
+        EVENT,
+        extra={"operation": operation, "provider": provider, "outcome": "started"},
+    )
     try:
         yield
     except Exception:
-        logger.info(EVENT, extra={"operation": operation, "outcome": "failed"})
+        logger.info(
+            EVENT,
+            extra={"operation": operation, "provider": provider, "outcome": "failed"},
+        )
         raise
     else:
-        logger.info(EVENT, extra={"operation": operation, "outcome": "succeeded"})
+        logger.info(
+            EVENT,
+            extra={"operation": operation, "provider": provider, "outcome": "succeeded"},
+        )
