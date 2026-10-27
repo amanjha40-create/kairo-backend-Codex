@@ -32,8 +32,17 @@ GOOGLE_GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 
 @dataclass(frozen=True)
+class GoogleResultDiagnostic:
+    location_type: str | None
+    partial_match: bool
+    result_type_class: str
+    required_component_presence: dict[str, bool]
+
+
+@dataclass(frozen=True)
 class GoogleProviderResult:
     items: list[dict]
+    diagnostics: tuple[GoogleResultDiagnostic, ...]
     correlation_id: str
     http_status: int
     google_status: str
@@ -246,11 +255,96 @@ def _google_place_type(result):
     location_type = (result.get("geometry") or {}).get("location_type")
     if result.get("partial_match") is True:
         return "Other"
-    if location_type == "ROOFTOP":
+    result_type = _google_result_type_class(result)
+    if location_type == "ROOFTOP" and result_type in {
+        "street_address",
+        "premise",
+        "subpremise",
+    }:
         return "PointAddress"
-    if location_type == "RANGE_INTERPOLATED":
+    if location_type == "RANGE_INTERPOLATED" and result_type in {
+        "street_address",
+        "premise",
+        "subpremise",
+        "route",
+    }:
         return "InterpolatedAddress"
     return "Other"
+
+
+def _google_result_type_class(result):
+    types = set(result.get("types") or [])
+    for result_type in (
+        "subpremise",
+        "premise",
+        "street_address",
+        "route",
+        "postal_code",
+        "locality",
+    ):
+        if result_type in types:
+            return result_type
+    return "other"
+
+
+def _google_required_component_presence(result):
+    component_types = {
+        component_type
+        for component in (result.get("address_components") or [])
+        if isinstance(component, dict)
+        for component_type in (component.get("types") or [])
+    }
+    return {
+        "country": "country" in component_types,
+        "state": "administrative_area_level_1" in component_types,
+        "locality": bool(
+            component_types
+            & {"locality", "postal_town", "administrative_area_level_2"}
+        ),
+        "postal_code": "postal_code" in component_types,
+        "street": "route" in component_types,
+        "address_number": "street_number" in component_types,
+    }
+
+
+def _google_result_diagnostic(result):
+    location_type = (result.get("geometry") or {}).get("location_type")
+    if location_type not in {
+        "ROOFTOP",
+        "RANGE_INTERPOLATED",
+        "GEOMETRIC_CENTER",
+        "APPROXIMATE",
+    }:
+        location_type = None
+    return GoogleResultDiagnostic(
+        location_type=location_type,
+        partial_match=result.get("partial_match") is True,
+        result_type_class=_google_result_type_class(result),
+        required_component_presence=_google_required_component_presence(result),
+    )
+
+
+def _google_result_sort_key(indexed_result):
+    index, result = indexed_result
+    diagnostic = _google_result_diagnostic(result)
+    location_rank = {
+        "ROOFTOP": 0,
+        "RANGE_INTERPOLATED": 1,
+        "GEOMETRIC_CENTER": 2,
+        "APPROXIMATE": 3,
+        None: 4,
+    }[diagnostic.location_type]
+    type_rank = {
+        "subpremise": 0,
+        "premise": 1,
+        "street_address": 2,
+        "route": 3,
+        "postal_code": 4,
+        "locality": 5,
+        "other": 6,
+    }[diagnostic.result_type_class]
+    completeness = sum(diagnostic.required_component_presence.values())
+    return (diagnostic.partial_match, location_rank, type_rank, -completeness, index)
 
 
 def normalize_google_result(result):
@@ -297,6 +391,22 @@ def _google_coordinates_present(result):
         and math.isfinite(value)
         for value in (latitude, longitude)
     ) and (-90 <= latitude <= 90 and -180 <= longitude <= 180)
+
+
+def _google_decision_diagnostics(provider_result, decision):
+    selected = decision.selected_index if decision.selected_index is not None else 0
+    diagnostic = (
+        provider_result.diagnostics[selected]
+        if selected < len(provider_result.diagnostics)
+        else GoogleResultDiagnostic(None, False, "other", {})
+    )
+    candidate_reasons = (
+        tuple(decision.candidates[selected].get("reasons") or ())
+        if selected < len(decision.candidates)
+        else ()
+    )
+    eligibility_reasons = tuple(dict.fromkeys((*decision.reasons, *candidate_reasons)))
+    return diagnostic, eligibility_reasons
 
 
 class GoogleAddressGeocoder:
@@ -369,7 +479,7 @@ class GoogleAddressGeocoder:
                 status = payload.get("status")
                 if status == "ZERO_RESULTS":
                     result = GoogleProviderResult(
-                        [], correlation_id, http_status, status, 0, False
+                        [], (), correlation_id, http_status, status, 0, False
                     )
                     log_google_geocode_diagnostic(
                         operation=operation,
@@ -417,6 +527,13 @@ class GoogleAddressGeocoder:
                         google_status=status,
                         result_count=len(results),
                     )
+                results = [
+                    result
+                    for _, result in sorted(
+                        enumerate(results), key=_google_result_sort_key
+                    )
+                ]
+                diagnostics = tuple(_google_result_diagnostic(result) for result in results)
                 coordinates_present = any(
                     _google_coordinates_present(result) for result in results
                 )
@@ -439,6 +556,7 @@ class GoogleAddressGeocoder:
                     ) from None
                 return GoogleProviderResult(
                     items,
+                    diagnostics,
                     correlation_id,
                     http_status,
                     status,
@@ -494,6 +612,9 @@ class GoogleAddressGeocoder:
         )
         metadata = asdict(decision)
         metadata.update(provider=self.provider_name, policy_version=POLICY_VERSION)
+        diagnostic, eligibility_reasons = _google_decision_diagnostics(
+            provider_result, decision
+        )
         if not decision.eligible:
             if provider_result.google_status != "ZERO_RESULTS":
                 log_google_geocode_diagnostic(
@@ -504,6 +625,14 @@ class GoogleAddressGeocoder:
                     google_status=provider_result.google_status,
                     result_count=provider_result.result_count,
                     coordinates_present=provider_result.coordinates_present,
+                    google_location_type=diagnostic.location_type,
+                    partial_match=diagnostic.partial_match,
+                    selected_result_type_class=diagnostic.result_type_class,
+                    required_component_presence=(
+                        diagnostic.required_component_presence
+                    ),
+                    provider_neutral_quality=decision.quality,
+                    eligibility_reasons=eligibility_reasons,
                 )
             return metadata, None
         log_google_geocode_diagnostic(
@@ -515,6 +644,12 @@ class GoogleAddressGeocoder:
             result_count=provider_result.result_count,
             coordinates_present=provider_result.coordinates_present,
             normalized_result_eligible=True,
+            google_location_type=diagnostic.location_type,
+            partial_match=diagnostic.partial_match,
+            selected_result_type_class=diagnostic.result_type_class,
+            required_component_presence=diagnostic.required_component_presence,
+            provider_neutral_quality=decision.quality,
+            eligibility_reasons=eligibility_reasons,
         )
         chosen = items[decision.selected_index]
         private = {

@@ -21,6 +21,53 @@ GOOGLE_STATUSES = frozenset({
     "INVALID_REQUEST",
     "UNKNOWN_ERROR",
 })
+GOOGLE_LOCATION_TYPES = frozenset({
+    "ROOFTOP",
+    "RANGE_INTERPOLATED",
+    "GEOMETRIC_CENTER",
+    "APPROXIMATE",
+})
+GOOGLE_RESULT_TYPE_CLASSES = frozenset({
+    "street_address",
+    "premise",
+    "subpremise",
+    "route",
+    "postal_code",
+    "locality",
+    "other",
+})
+PROVIDER_NEUTRAL_QUALITIES = frozenset({
+    "precise_address",
+    "approximate_address",
+    "precise_address_street_unavailable",
+})
+ELIGIBILITY_REASONS = frozenset({
+    "country_mismatch",
+    "state_mismatch",
+    "locality_mismatch",
+    "pin_mismatch_or_missing",
+    "street_missing_or_mismatch",
+    "number_warning_requires_complete_structure",
+    "country_component_score_invalid",
+    "state_component_score_invalid",
+    "city_component_score_invalid",
+    "pin_component_score_invalid",
+    "approximate_requires_complete_structure",
+    "broad_or_unsupported_place_type",
+    "invalid_position",
+    "candidate_list_truncated",
+    "foreign_result",
+    "competing_candidates",
+    "no_eligible_target",
+})
+REQUIRED_COMPONENTS = (
+    "country",
+    "state",
+    "locality",
+    "postal_code",
+    "street",
+    "address_number",
+)
 GOOGLE_DIAGNOSTIC_REASONS = frozenset({
     "GOOGLE_GEOCODE_SUCCESS",
     "GOOGLE_GEOCODE_ZERO_RESULTS",
@@ -81,6 +128,13 @@ class GoogleDiagnosticFormatter(logging.Formatter):
         correlation_id = getattr(record, "correlation_id", None)
         http_status = getattr(record, "http_status", None)
         result_count = getattr(record, "result_count", None)
+        component_presence = getattr(record, "required_component_presence", None)
+        component_presence = component_presence if isinstance(component_presence, dict) else {}
+        eligibility_reasons = getattr(record, "eligibility_reasons", ())
+        eligibility_reasons = eligibility_reasons if isinstance(eligibility_reasons, tuple) else ()
+        google_location_type = getattr(record, "google_location_type", None)
+        result_type_class = getattr(record, "selected_result_type_class", None)
+        provider_neutral_quality = getattr(record, "provider_neutral_quality", None)
         return json.dumps({
             "event": GOOGLE_DIAGNOSTIC_EVENT,
             "environment": self.environment,
@@ -104,6 +158,28 @@ class GoogleDiagnosticFormatter(logging.Formatter):
             "normalized_result_eligible": (
                 getattr(record, "normalized_result_eligible", None) is True
             ),
+            "google_location_type": (
+                google_location_type
+                if google_location_type in GOOGLE_LOCATION_TYPES
+                else None
+            ),
+            "partial_match": getattr(record, "partial_match", None) is True,
+            "selected_result_type_class": (
+                result_type_class
+                if result_type_class in GOOGLE_RESULT_TYPE_CLASSES
+                else None
+            ),
+            "required_component_presence": {
+                key: component_presence.get(key) is True for key in REQUIRED_COMPONENTS
+            },
+            "provider_neutral_quality": (
+                provider_neutral_quality
+                if provider_neutral_quality in PROVIDER_NEUTRAL_QUALITIES
+                else None
+            ),
+            "eligibility_reasons": [
+                reason for reason in eligibility_reasons if reason in ELIGIBILITY_REASONS
+            ],
             "correlation_id": (
                 correlation_id
                 if type(correlation_id) is str
@@ -137,6 +213,12 @@ def log_google_geocode_diagnostic(
     result_count=None,
     coordinates_present=False,
     normalized_result_eligible=False,
+    google_location_type=None,
+    partial_match=False,
+    selected_result_type_class=None,
+    required_component_presence=None,
+    provider_neutral_quality=None,
+    eligibility_reasons=(),
 ):
     """Emit only allowlisted provider diagnostics; never accept payload or address data."""
     google_diagnostic_logger.info(
@@ -150,6 +232,12 @@ def log_google_geocode_diagnostic(
             "result_count": result_count,
             "coordinates_present": coordinates_present,
             "normalized_result_eligible": normalized_result_eligible,
+            "google_location_type": google_location_type,
+            "partial_match": partial_match,
+            "selected_result_type_class": selected_result_type_class,
+            "required_component_presence": required_component_presence,
+            "provider_neutral_quality": provider_neutral_quality,
+            "eligibility_reasons": eligibility_reasons,
         },
     )
 

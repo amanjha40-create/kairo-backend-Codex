@@ -19,7 +19,7 @@ from app.services import permanent_address_geocoder as module
 from tests.test_permanent_address_geocoder import ADDRESS
 
 
-def google_result(*, partial=False, location_type="ROOFTOP"):
+def google_result(*, partial=False, location_type="ROOFTOP", result_types=None):
     return {
         "formatted_address": "Synthetic Road, Jaipur, Rajasthan 302020, India",
         "partial_match": partial,
@@ -38,8 +38,17 @@ def google_result(*, partial=False, location_type="ROOFTOP"):
             "location": {"lat": 26.8505, "lng": 75.7628},
             "location_type": location_type,
         },
-        "types": ["street_address"],
+        "types": result_types or ["street_address"],
     }
+
+
+def without_component(result, component_type):
+    result["address_components"] = [
+        component
+        for component in result["address_components"]
+        if component_type not in component["types"]
+    ]
+    return result
 
 
 class Response:
@@ -140,6 +149,184 @@ async def test_google_forward_geocode_normalizes_without_raw_payload(diagnostic_
     assert diagnostic["result_count"] == 1
     assert diagnostic["coordinates_present"] is True
     assert diagnostic["normalized_result_eligible"] is True
+
+
+@pytest.mark.parametrize("result_type", ["premise", "subpremise"])
+@pytest.mark.asyncio
+async def test_google_rooftop_precise_result_types_are_eligible(
+    result_type, diagnostic_stream
+):
+    service, _ = geocoder(
+        Response(
+            payload={
+                "status": "OK",
+                "results": [google_result(result_types=[result_type])],
+            }
+        )
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is not None
+    assert metadata["quality"] == "precise_address"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["selected_result_type_class"] == result_type
+    assert diagnostic["provider_neutral_quality"] == "precise_address"
+
+
+@pytest.mark.asyncio
+async def test_google_range_interpolated_preserves_approximate_policy(diagnostic_stream):
+    service, _ = geocoder(
+        Response(
+            payload={
+                "status": "OK",
+                "results": [google_result(location_type="RANGE_INTERPOLATED")],
+            }
+        )
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is not None
+    assert metadata["quality"] == "approximate_address"
+    assert metadata["classification"] == "GPS_TARGET_ELIGIBLE_WITH_CAUTION"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["google_location_type"] == "RANGE_INTERPOLATED"
+    assert diagnostic["provider_neutral_quality"] == "approximate_address"
+
+
+@pytest.mark.parametrize("location_type", ["GEOMETRIC_CENTER", "APPROXIMATE"])
+@pytest.mark.asyncio
+async def test_google_broad_location_types_remain_ineligible(
+    location_type, diagnostic_stream
+):
+    service, _ = geocoder(
+        Response(
+            payload={
+                "status": "OK",
+                "results": [google_result(location_type=location_type)],
+            }
+        )
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["google_location_type"] == location_type
+    assert "broad_or_unsupported_place_type" in diagnostic["eligibility_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_google_partial_match_remains_ineligible(diagnostic_stream):
+    service, _ = geocoder(
+        Response(payload={"status": "OK", "results": [google_result(partial=True)]})
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["partial_match"] is True
+    assert "broad_or_unsupported_place_type" in diagnostic["eligibility_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("component_type", "presence_key", "reason"),
+    [
+        ("postal_code", "postal_code", "pin_mismatch_or_missing"),
+        ("locality", "locality", "locality_mismatch"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_google_missing_required_components_remain_ineligible(
+    component_type, presence_key, reason, diagnostic_stream
+):
+    result = without_component(google_result(), component_type)
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["required_component_presence"][presence_key] is False
+    assert reason in diagnostic["eligibility_reasons"]
+
+
+@pytest.mark.parametrize("result_type", ["locality", "postal_code"])
+@pytest.mark.asyncio
+async def test_google_non_address_result_types_remain_ineligible(
+    result_type, diagnostic_stream
+):
+    service, _ = geocoder(
+        Response(
+            payload={
+                "status": "OK",
+                "results": [
+                    google_result(
+                        location_type="ROOFTOP",
+                        result_types=[result_type],
+                    )
+                ],
+            }
+        )
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["selected_result_type_class"] == result_type
+    assert "broad_or_unsupported_place_type" in diagnostic["eligibility_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_google_multiple_results_selects_only_precise_candidate(diagnostic_stream):
+    broad = google_result(location_type="APPROXIMATE", result_types=["locality"])
+    precise = google_result()
+    service, _ = geocoder(
+        Response(payload={"status": "OK", "results": [broad, precise]})
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is not None
+    assert metadata["selected_index"] == 0
+    assert metadata["quality"] == "precise_address"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["selected_result_type_class"] == "street_address"
+    assert diagnostic["result_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_google_route_geometric_center_without_postal_code_is_ineligible(
+    diagnostic_stream,
+):
+    result = without_component(
+        google_result(
+            location_type="GEOMETRIC_CENTER",
+            result_types=["route"],
+        ),
+        "postal_code",
+    )
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is None
+    assert metadata["reasons"] == ("no_eligible_target",)
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["coordinates_present"] is True
+    assert diagnostic["required_component_presence"]["postal_code"] is False
+    assert set(diagnostic["eligibility_reasons"]) == {
+        "no_eligible_target",
+        "pin_mismatch_or_missing",
+        "broad_or_unsupported_place_type",
+    }
+
+
+def test_google_quality_mapping_matches_aws_provider_neutral_semantics():
+    google_item = module.normalize_google_result(google_result())
+    aws_equivalent = {
+        **google_item,
+        "PlaceType": "PointAddress",
+        "EstimatedPointAddress": False,
+    }
+    query = module.query_components(ADDRESS)
+    google_decision = module.evaluate_targets([google_item], query)
+    aws_decision = module.evaluate_targets([aws_equivalent], query)
+    assert google_item["PlaceType"] == "PointAddress"
+    assert google_decision.classification == aws_decision.classification
+    assert google_decision.quality == aws_decision.quality == "precise_address"
+    assert google_decision.eligible is aws_decision.eligible is True
 
 
 @pytest.mark.asyncio
