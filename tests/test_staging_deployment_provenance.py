@@ -68,6 +68,7 @@ def test_task_definition_provenance_replaces_stale_values() -> None:
         source_sha=source_sha,
         build_id=source_sha,
         deployed_at="2026-08-23T10:00:00+00:00",
+        runtime_kind="api",
     )
 
     assert "revision" not in payload
@@ -79,6 +80,9 @@ def test_task_definition_provenance_replaces_stale_values() -> None:
     assert environment["APP_BUILD_ID"] == source_sha
     assert environment["APP_VERSION"] == f"git-{source_sha[:12]}"
     assert environment["APP_ENV"] == "staging"
+    assert environment["DATABASE_POOL_SIZE"] == "4"
+    assert environment["DATABASE_MAX_OVERFLOW"] == "2"
+    assert environment["DATABASE_POOL_TIMEOUT"] == "10"
 
 
 def test_staging_deploy_refuses_non_staging_targets() -> None:

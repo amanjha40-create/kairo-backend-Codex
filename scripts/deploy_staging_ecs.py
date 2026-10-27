@@ -11,6 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Sequence
 
+try:
+    from scripts.database_pool_config import database_pool_profile
+except ModuleNotFoundError:  # Direct invocation adds scripts/, not the repository root.
+    from database_pool_config import database_pool_profile
+
 TASK_DEFINITION_FIELDS = (
     "family",
     "taskRoleArn",
@@ -34,7 +39,8 @@ RUNTIME_HEALTHCHECK_COMMAND = [
     "CMD",
     "python",
     "-c",
-    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=5)",
+    "import urllib.request; "
+    "urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=5)",
 ]
 
 
@@ -70,6 +76,7 @@ def build_task_definition_payload(
     source_sha: str,
     build_id: str,
     deployed_at: str,
+    runtime_kind: str,
 ) -> dict[str, Any]:
     payload = {
         field: task_definition[field]
@@ -102,6 +109,8 @@ def build_task_definition_payload(
             "APP_DEPLOYED_AT": deployed_at,
         }
     )
+    pool_profile = database_pool_profile(runtime_kind)
+    environment.update(pool_profile.environment())
     container["environment"] = [
         {"name": name, "value": value} for name, value in sorted(environment.items())
     ]
@@ -180,6 +189,7 @@ def deploy(args: argparse.Namespace) -> dict[str, str]:
         source_sha=source_sha,
         build_id=build_id,
         deployed_at=deployed_at,
+        runtime_kind=args.runtime_kind,
     )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as payload_file:
         json.dump(payload, payload_file)
@@ -235,6 +245,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--service", default="kairo-staging-backend")
     parser.add_argument("--container", default="kairo-staging-backend")
     parser.add_argument("--repository", default="kairo-backend")
+    parser.add_argument("--runtime-kind", choices=("api", "worker"), default="api")
     return parser.parse_args()
 
 
