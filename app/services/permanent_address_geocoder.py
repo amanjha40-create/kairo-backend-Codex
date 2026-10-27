@@ -4,7 +4,8 @@ import asyncio
 import json
 import math
 import os
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from uuid import uuid4
 
 import boto3
 import httpx
@@ -13,7 +14,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.exceptions import ServiceUnavailableError
 from app.integrations.digilocker.crypto import parse_keyring
-from app.logging.places import places_call
+from app.logging.places import log_google_geocode_diagnostic, places_call
 from app.services.permanent_address_onsite import (
     MAX_PRECISE_RESULTS,
     PRECISE_PLACE_TYPES,
@@ -28,6 +29,34 @@ from app.services.permanent_address_quality import (
 AMAZON_PROVIDER = "amazon_location"
 GOOGLE_PROVIDER = "google"
 GOOGLE_GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+
+@dataclass(frozen=True)
+class GoogleProviderResult:
+    items: list[dict]
+    correlation_id: str
+    http_status: int
+    google_status: str
+    result_count: int
+    coordinates_present: bool
+
+
+class GoogleDiagnosticFailure(Exception):
+    def __init__(
+        self,
+        reason,
+        *,
+        http_status=None,
+        google_status=None,
+        result_count=None,
+        coordinates_present=False,
+    ):
+        super().__init__(reason)
+        self.reason = reason
+        self.http_status = http_status
+        self.google_status = google_status
+        self.result_count = result_count
+        self.coordinates_present = coordinates_present
 
 
 class TargetCipher:
@@ -259,6 +288,17 @@ def normalize_google_result(result):
     }
 
 
+def _google_coordinates_present(result):
+    location = (result.get("geometry") or {}).get("location") or {}
+    latitude, longitude = location.get("lat"), location.get("lng")
+    return all(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        for value in (latitude, longitude)
+    ) and (-90 <= latitude <= 90 and -180 <= longitude <= 180)
+
+
 class GoogleAddressGeocoder:
     provider_name = GOOGLE_PROVIDER
 
@@ -286,8 +326,9 @@ class GoogleAddressGeocoder:
     async def _request(self, params):
         request_params = {**params, "key": self._secret(), "language": "en"}
         timeout = httpx.Timeout(connect=5, read=15, write=5, pool=5)
+        operation = "geocode" if "address" in params else "reverse_geocode"
+        correlation_id = uuid4().hex
         try:
-            operation = "geocode" if "address" in params else "reverse_geocode"
             with places_call(operation, self.provider_name):
                 async with self._client_factory(
                     timeout=timeout,
@@ -298,30 +339,154 @@ class GoogleAddressGeocoder:
                         params=request_params,
                         headers={"Accept": "application/json"},
                     )
-                    response.raise_for_status()
-                    payload = response.json()
+                    http_status = response.status_code
+                    if http_status in {401, 403}:
+                        raise GoogleDiagnosticFailure(
+                            "GOOGLE_GEOCODE_AUTH_FAILURE", http_status=http_status
+                        )
+                    if http_status == 429:
+                        raise GoogleDiagnosticFailure(
+                            "GOOGLE_GEOCODE_QUOTA_OR_RATE_LIMIT", http_status=http_status
+                        )
+                    if 400 <= http_status <= 499:
+                        raise GoogleDiagnosticFailure(
+                            "GOOGLE_GEOCODE_PROVIDER_4XX", http_status=http_status
+                        )
+                    if 500 <= http_status <= 599:
+                        raise GoogleDiagnosticFailure(
+                            "GOOGLE_GEOCODE_PROVIDER_5XX", http_status=http_status
+                        )
+                    try:
+                        payload = response.json()
+                    except Exception:
+                        raise GoogleDiagnosticFailure(
+                            "GOOGLE_GEOCODE_MALFORMED_RESPONSE", http_status=http_status
+                        ) from None
                 if not isinstance(payload, dict):
-                    raise ValueError("Malformed provider response")
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_MALFORMED_RESPONSE", http_status=http_status
+                    )
                 status = payload.get("status")
                 if status == "ZERO_RESULTS":
-                    return []
+                    result = GoogleProviderResult(
+                        [], correlation_id, http_status, status, 0, False
+                    )
+                    log_google_geocode_diagnostic(
+                        operation=operation,
+                        reason="GOOGLE_GEOCODE_ZERO_RESULTS",
+                        correlation_id=correlation_id,
+                        http_status=http_status,
+                        google_status=status,
+                        result_count=0,
+                    )
+                    return result
+                if status == "REQUEST_DENIED":
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_AUTH_FAILURE",
+                        http_status=http_status,
+                        google_status=status,
+                    )
+                if status == "OVER_QUERY_LIMIT":
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_QUOTA_OR_RATE_LIMIT",
+                        http_status=http_status,
+                        google_status=status,
+                    )
+                if status == "UNKNOWN_ERROR":
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_PROVIDER_5XX",
+                        http_status=http_status,
+                        google_status=status,
+                    )
                 results = payload.get("results")
                 if status != "OK" or not isinstance(results, list):
-                    raise ValueError("Provider request was not successful")
+                    reason = (
+                        "GOOGLE_GEOCODE_PROVIDER_4XX"
+                        if status == "INVALID_REQUEST"
+                        else "GOOGLE_GEOCODE_MALFORMED_RESPONSE"
+                    )
+                    raise GoogleDiagnosticFailure(
+                        reason,
+                        http_status=http_status,
+                        google_status=status,
+                    )
                 if not all(isinstance(result, dict) for result in results):
-                    raise ValueError("Malformed provider results")
-                return [normalize_google_result(result) for result in results]
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_MALFORMED_RESPONSE",
+                        http_status=http_status,
+                        google_status=status,
+                        result_count=len(results),
+                    )
+                coordinates_present = any(
+                    _google_coordinates_present(result) for result in results
+                )
+                if results and not coordinates_present:
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_MISSING_COORDINATES",
+                        http_status=http_status,
+                        google_status=status,
+                        result_count=len(results),
+                    )
+                try:
+                    items = [normalize_google_result(result) for result in results]
+                except Exception:
+                    raise GoogleDiagnosticFailure(
+                        "GOOGLE_GEOCODE_NORMALIZATION_FAILURE",
+                        http_status=http_status,
+                        google_status=status,
+                        result_count=len(results),
+                        coordinates_present=coordinates_present,
+                    ) from None
+                return GoogleProviderResult(
+                    items,
+                    correlation_id,
+                    http_status,
+                    status,
+                    len(results),
+                    coordinates_present,
+                )
+        except GoogleDiagnosticFailure as exc:
+            log_google_geocode_diagnostic(
+                operation=operation,
+                reason=exc.reason,
+                correlation_id=correlation_id,
+                http_status=exc.http_status,
+                google_status=exc.google_status,
+                result_count=exc.result_count,
+                coordinates_present=exc.coordinates_present,
+            )
+            raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
+        except httpx.TimeoutException:
+            log_google_geocode_diagnostic(
+                operation=operation,
+                reason="GOOGLE_GEOCODE_TIMEOUT",
+                correlation_id=correlation_id,
+            )
+            raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
+        except httpx.RequestError:
+            log_google_geocode_diagnostic(
+                operation=operation,
+                reason="GOOGLE_GEOCODE_NETWORK_FAILURE",
+                correlation_id=correlation_id,
+            )
+            raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
         except Exception:
+            log_google_geocode_diagnostic(
+                operation=operation,
+                reason="GOOGLE_GEOCODE_INTERNAL_FAILURE",
+                correlation_id=correlation_id,
+            )
             raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
 
     async def geocode(self, address):
         query = query_components(address)
-        items = await self._request(
+        provider_result = await self._request(
             {
                 "address": query_text(address),
                 "components": "country:IN",
             }
         )
+        items = provider_result.items
         decision = evaluate_targets(
             items,
             query,
@@ -330,7 +495,27 @@ class GoogleAddressGeocoder:
         metadata = asdict(decision)
         metadata.update(provider=self.provider_name, policy_version=POLICY_VERSION)
         if not decision.eligible:
+            if provider_result.google_status != "ZERO_RESULTS":
+                log_google_geocode_diagnostic(
+                    operation="geocode",
+                    reason="GOOGLE_GEOCODE_POLICY_INELIGIBLE",
+                    correlation_id=provider_result.correlation_id,
+                    http_status=provider_result.http_status,
+                    google_status=provider_result.google_status,
+                    result_count=provider_result.result_count,
+                    coordinates_present=provider_result.coordinates_present,
+                )
             return metadata, None
+        log_google_geocode_diagnostic(
+            operation="geocode",
+            reason="GOOGLE_GEOCODE_SUCCESS",
+            correlation_id=provider_result.correlation_id,
+            http_status=provider_result.http_status,
+            google_status=provider_result.google_status,
+            result_count=provider_result.result_count,
+            coordinates_present=provider_result.coordinates_present,
+            normalized_result_eligible=True,
+        )
         chosen = items[decision.selected_index]
         private = {
             "position": chosen["Position"],
@@ -351,13 +536,13 @@ class GoogleAddressGeocoder:
     async def confirm_area(self, address, representative):
         try:
             latitude, longitude = representative
-            items = await self._request(
+            provider_result = await self._request(
                 {
                     "latlng": f"{latitude},{longitude}",
                     "result_type": "street_address",
                 }
             )
-            return precise_area_decision(address, items)
+            return precise_area_decision(address, provider_result.items)
         except Exception:
             raise ServiceUnavailableError("Address area confirmation is unavailable") from None
 

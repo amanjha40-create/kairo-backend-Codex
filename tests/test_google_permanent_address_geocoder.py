@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 from unittest.mock import Mock
 
 import httpx
@@ -8,7 +9,12 @@ from pydantic import SecretStr, ValidationError
 
 from app.config import Settings
 from app.exceptions import ServiceUnavailableError
-from app.logging.places import configure_places_logging, logger
+from app.logging.places import (
+    GoogleDiagnosticFormatter,
+    configure_places_logging,
+    google_diagnostic_logger,
+    logger,
+)
 from app.services import permanent_address_geocoder as module
 from tests.test_permanent_address_geocoder import ADDRESS
 
@@ -88,8 +94,31 @@ def geocoder(response):
     ), observed
 
 
+@pytest.fixture
+def diagnostic_stream():
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(GoogleDiagnosticFormatter("test"))
+    old_handlers, old_level = google_diagnostic_logger.handlers[:], google_diagnostic_logger.level
+    google_diagnostic_logger.handlers[:] = [handler]
+    google_diagnostic_logger.setLevel(logging.INFO)
+    try:
+        yield stream
+    finally:
+        google_diagnostic_logger.handlers[:], google_diagnostic_logger.level = (
+            old_handlers,
+            old_level,
+        )
+
+
+def diagnostic_record(stream):
+    records = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert len(records) == 1
+    return records[0]
+
+
 @pytest.mark.asyncio
-async def test_google_forward_geocode_normalizes_without_raw_payload():
+async def test_google_forward_geocode_normalizes_without_raw_payload(diagnostic_stream):
     service, observed = geocoder(Response(payload={"status": "OK", "results": [google_result()]}))
     metadata, target = await service.geocode(ADDRESS)
     assert metadata["provider"] == "google"
@@ -104,6 +133,13 @@ async def test_google_forward_geocode_normalizes_without_raw_payload():
     assert params["components"] == "country:IN"
     assert params["key"] == "synthetic-private-google-key"
     assert observed["client_kwargs"]["follow_redirects"] is False
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_SUCCESS"
+    assert diagnostic["http_status"] == 200
+    assert diagnostic["google_status"] == "OK"
+    assert diagnostic["result_count"] == 1
+    assert diagnostic["coordinates_present"] is True
+    assert diagnostic["normalized_result_eligible"] is True
 
 
 @pytest.mark.asyncio
@@ -117,21 +153,38 @@ async def test_google_reverse_geocode_uses_existing_area_policy():
 
 
 @pytest.mark.asyncio
-async def test_zero_results_fail_closed_without_target():
+async def test_zero_results_fail_closed_without_target(diagnostic_stream):
     service, _ = geocoder(Response(payload={"status": "ZERO_RESULTS", "results": []}))
     metadata, target = await service.geocode(ADDRESS)
     assert target is None
     assert metadata["provider"] == "google"
     assert metadata["reasons"] == ("no_eligible_target",)
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_ZERO_RESULTS"
+    assert diagnostic["result_count"] == 0
+    assert diagnostic["coordinates_present"] is False
 
 
-@pytest.mark.parametrize("status_code", [400, 401, 403, 429, 500, 503])
+@pytest.mark.parametrize(
+    ("status_code", "reason"),
+    [
+        (400, "GOOGLE_GEOCODE_PROVIDER_4XX"),
+        (401, "GOOGLE_GEOCODE_AUTH_FAILURE"),
+        (403, "GOOGLE_GEOCODE_AUTH_FAILURE"),
+        (429, "GOOGLE_GEOCODE_QUOTA_OR_RATE_LIMIT"),
+        (500, "GOOGLE_GEOCODE_PROVIDER_5XX"),
+        (503, "GOOGLE_GEOCODE_PROVIDER_5XX"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_google_http_failures_are_sanitized(status_code):
+async def test_google_http_failures_are_sanitized(status_code, reason, diagnostic_stream):
     service, _ = geocoder(Response(status_code=status_code, payload={"private": "value"}))
     with pytest.raises(ServiceUnavailableError) as error:
         await service.geocode(ADDRESS)
     assert str(error.value) == "Address lookup is temporarily unavailable"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == reason
+    assert diagnostic["http_status"] == status_code
 
 
 @pytest.mark.parametrize(
@@ -155,11 +208,80 @@ async def test_google_transport_and_payload_failures_are_sanitized(response):
     assert str(error.value) == "Address lookup is temporarily unavailable"
 
 
+@pytest.mark.parametrize(
+    ("response", "reason"),
+    [
+        (httpx.ReadTimeout("synthetic timeout"), "GOOGLE_GEOCODE_TIMEOUT"),
+        (httpx.ConnectError("synthetic network error"), "GOOGLE_GEOCODE_NETWORK_FAILURE"),
+        (
+            Response(payload=ValueError("synthetic malformed json")),
+            "GOOGLE_GEOCODE_MALFORMED_RESPONSE",
+        ),
+        (Response(payload=[]), "GOOGLE_GEOCODE_MALFORMED_RESPONSE"),
+        (
+            Response(payload={"status": "OK", "results": {}}),
+            "GOOGLE_GEOCODE_MALFORMED_RESPONSE",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_google_transport_and_payload_diagnostic_mapping(
+    response, reason, diagnostic_stream
+):
+    service, _ = geocoder(response)
+    with pytest.raises(ServiceUnavailableError):
+        await service.geocode(ADDRESS)
+    assert diagnostic_record(diagnostic_stream)["reason"] == reason
+
+
+@pytest.mark.asyncio
+async def test_google_missing_coordinates_are_classified(diagnostic_stream):
+    result = google_result()
+    result["geometry"]["location"] = {}
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    with pytest.raises(ServiceUnavailableError):
+        await service.geocode(ADDRESS)
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_MISSING_COORDINATES"
+    assert diagnostic["coordinates_present"] is False
+
+
+@pytest.mark.asyncio
+async def test_google_normalization_failure_is_classified(monkeypatch, diagnostic_stream):
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [google_result()]}))
+    monkeypatch.setattr(
+        module,
+        "normalize_google_result",
+        Mock(side_effect=ValueError("synthetic normalization failure")),
+    )
+    with pytest.raises(ServiceUnavailableError):
+        await service.geocode(ADDRESS)
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_NORMALIZATION_FAILURE"
+    assert diagnostic["coordinates_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_google_policy_ineligible_result_is_classified(diagnostic_stream):
+    service, _ = geocoder(
+        Response(payload={"status": "OK", "results": [google_result(partial=True)]})
+    )
+    metadata, target = await service.geocode(ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_POLICY_INELIGIBLE"
+    assert diagnostic["coordinates_present"] is True
+    assert diagnostic["normalized_result_eligible"] is False
+
+
 @pytest.mark.asyncio
 async def test_google_secret_address_and_coordinates_are_not_logged():
     service, _ = geocoder(Response(status_code=403, payload={"status": "REQUEST_DENIED"}))
     stream = io.StringIO()
     old_handlers, old_level = logger.handlers[:], logger.level
+    old_diagnostic_handlers = google_diagnostic_logger.handlers[:]
+    old_diagnostic_level = google_diagnostic_logger.level
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("app.logging.places.sys.stdout", stream)
     configure_places_logging("production")
@@ -168,9 +290,14 @@ async def test_google_secret_address_and_coordinates_are_not_logged():
             await service.geocode(ADDRESS)
     finally:
         logger.handlers[:], logger.level = old_handlers, old_level
+        google_diagnostic_logger.handlers[:], google_diagnostic_logger.level = (
+            old_diagnostic_handlers,
+            old_diagnostic_level,
+        )
         monkeypatch.undo()
     records = [json.loads(line) for line in stream.getvalue().splitlines()]
-    assert [row["outcome"] for row in records] == ["started", "failed"]
+    places_records = [row for row in records if row["event"] == "permanent_address.places_call"]
+    assert [row["outcome"] for row in places_records] == ["started", "failed"]
     assert all(row["provider"] == "google" for row in records)
     output = stream.getvalue()
     assert "synthetic-private-google-key" not in output
