@@ -7,13 +7,14 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-POLICY_VERSION = "components-v1-composite-street"
+POLICY_VERSION = "components-v1-composite-street-designator"
 STREET_UNAVAILABLE_QUALITY = "precise_address_street_unavailable"
 STREET_UNAVAILABLE_RADIUS_M = 75
 # Only a full component match may substitute for an unrecognized textual variant.
 # This is not a replacement global score cutoff; explicit contradictions veto it.
 HIGH_COMPONENT_SCORE = 1.0
 _WORDS = {"rd": "road", "st": "street", "ave": "avenue", "blvd": "boulevard"}
+_ROAD_DESIGNATORS = frozenset(_WORDS.values())
 _CITY_ALIASES = {
     "bangalore": "bengaluru",
     "bombay": "mumbai",
@@ -71,6 +72,14 @@ def street_normalize(value: object) -> str:
     return " ".join(_WORDS.get(w, w) for w in normalize(value).split())
 
 
+def _contains_contiguous(claimed: list[str], provider: list[str]) -> bool:
+    width = len(provider)
+    return any(
+        claimed[index : index + width] == provider
+        for index in range(len(claimed) - width + 1)
+    )
+
+
 def street_reconciles(claimed: object, provider: object) -> bool:
     """Match a meaningful provider route on normalized token boundaries."""
     claimed_street = street_normalize(claimed)
@@ -84,10 +93,20 @@ def street_reconciles(claimed: object, provider: object) -> bool:
     if len(provider_tokens) < 2 or sum(map(len, provider_tokens)) < 6:
         return False
     claimed_tokens = claimed_street.split()
-    width = len(provider_tokens)
-    return any(
-        claimed_tokens[index : index + width] == provider_tokens
-        for index in range(len(claimed_tokens) - width + 1)
+    if _contains_contiguous(claimed_tokens, provider_tokens):
+        return True
+
+    # A provider may append one canonical terminal designator that the claimed
+    # composite line omits. Every meaningful route-core token must still match.
+    route_core = provider_tokens[:-1]
+    terminal = provider_tokens[-1]
+    return (
+        terminal in _ROAD_DESIGNATORS
+        and terminal not in claimed_tokens
+        and len(route_core) >= 2
+        and not any(token in _ROAD_DESIGNATORS for token in route_core)
+        and sum(map(len, route_core)) >= 6
+        and _contains_contiguous(claimed_tokens, route_core)
     )
 
 

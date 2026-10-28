@@ -4,7 +4,11 @@ from dataclasses import asdict
 
 import pytest
 
-from app.services.permanent_address_quality import STREET_UNAVAILABLE_QUALITY, evaluate_targets
+from app.services.permanent_address_quality import (
+    STREET_UNAVAILABLE_QUALITY,
+    evaluate_targets,
+    street_reconciles,
+)
 
 QUERY = {
     "Country": "IND",
@@ -38,6 +42,34 @@ ITEM = {
         },
     },
 }
+
+
+@pytest.mark.parametrize(
+    ("claimed", "provider"),
+    [
+        ("Building 8, Alpha Beta, Enclave", "Alpha Beta Road"),
+        ("Building 8, Alpha Beta Road, Enclave", "Alpha Beta Rd"),
+    ],
+)
+def test_street_reconciliation_accepts_exact_core_with_terminal_designator(claimed, provider):
+    assert street_reconciles(claimed, provider)
+
+
+@pytest.mark.parametrize(
+    ("claimed", "provider"),
+    [
+        ("Building 8, Alpha, Enclave", "Alpha Beta Road"),
+        ("Building 8, Enclave", "Alpha Beta Road"),
+        ("Building 8, Alpha Beta, Enclave", "Alpha Beta Extension"),
+        ("Building 8, Alpha Beta, Enclave", "Alpha Road Beta"),
+        ("Building 8, Beta Alpha, Enclave", "Alpha Beta Road"),
+        ("Building 8, Alpha, Enclave", "Alpha Road"),
+        ("Building 8, Ab Cd, Enclave", "Ab Cd Road"),
+        ("Road Building 8, Alpha Beta, Enclave", "Alpha Beta Road"),
+    ],
+)
+def test_street_reconciliation_rejects_unsafe_designator_omissions(claimed, provider):
+    assert not street_reconciles(claimed, provider)
 
 
 @pytest.mark.parametrize("overall", [0.0, 0.89, 0.95, 1.0, None])

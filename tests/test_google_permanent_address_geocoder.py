@@ -270,6 +270,29 @@ async def test_google_complete_partial_composite_street_uses_interpolated_cautio
     assert diagnostic["normalized_result_eligible"] is True
 
 
+@pytest.mark.asyncio
+async def test_google_partial_route_allows_only_missing_terminal_designator(
+    diagnostic_stream,
+):
+    result = with_component(
+        partial_composite_result(), "route", "Synthetic Central Road"
+    )
+    address = {
+        **COMPOSITE_ADDRESS,
+        "address_line_1": "Flat 8, Synthetic Central, Example Enclave",
+    }
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(address)
+    assert target is not None
+    assert metadata["classification"] == "GPS_TARGET_ELIGIBLE_WITH_CAUTION"
+    assert metadata["quality"] == "approximate_address"
+    assert metadata["radius_m"] == 150
+    assert metadata["street_status"] == "matched"
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["partial_match"] is True
+    assert diagnostic["normalized_result_eligible"] is True
+
+
 @pytest.mark.parametrize(
     ("component_type", "long_name", "short_name", "reason"),
     [
