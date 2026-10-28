@@ -7,7 +7,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-POLICY_VERSION = "components-v1-street-unavailable"
+POLICY_VERSION = "components-v1-composite-street"
 STREET_UNAVAILABLE_QUALITY = "precise_address_street_unavailable"
 STREET_UNAVAILABLE_RADIUS_M = 75
 # Only a full component match may substitute for an unrecognized textual variant.
@@ -69,6 +69,26 @@ def normalize(value: object) -> str:
 
 def street_normalize(value: object) -> str:
     return " ".join(_WORDS.get(w, w) for w in normalize(value).split())
+
+
+def street_reconciles(claimed: object, provider: object) -> bool:
+    """Match a meaningful provider route on normalized token boundaries."""
+    claimed_street = street_normalize(claimed)
+    provider_street = street_normalize(provider)
+    if not claimed_street or not provider_street:
+        return False
+    if claimed_street == provider_street:
+        return True
+
+    provider_tokens = provider_street.split()
+    if len(provider_tokens) < 2 or sum(map(len, provider_tokens)) < 6:
+        return False
+    claimed_tokens = claimed_street.split()
+    width = len(provider_tokens)
+    return any(
+        claimed_tokens[index : index + width] == provider_tokens
+        for index in range(len(claimed_tokens) - width + 1)
+    )
 
 
 def _region(value: object) -> str:
@@ -166,11 +186,11 @@ def _candidate(item: dict, query: dict) -> dict:
         isinstance(raw_street, str) and not raw_street.strip()
     )
     returned_street = street_normalize(raw_street)
-    checks["street"] = bool(
-        expected_street and returned_street and expected_street == returned_street
-    )
+    checks["street"] = street_reconciles(query.get("Street"), raw_street)
     if not checks["street"]:
         reasons.append("street_missing_or_mismatch")
+    elif expected_street != returned_street:
+        warnings.append("composite_street_reconciled")
     # AWS's current Geocode MatchScores.Address schema has no Street member.
     # Use the returned Street text; do not treat Overall or Title as a street score.
 

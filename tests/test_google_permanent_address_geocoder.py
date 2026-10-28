@@ -51,6 +51,33 @@ def without_component(result, component_type):
     return result
 
 
+def with_component(result, component_type, long_name, short_name=None):
+    without_component(result, component_type)
+    result["address_components"].append(
+        {
+            "long_name": long_name,
+            "short_name": short_name or long_name,
+            "types": [component_type],
+        }
+    )
+    return result
+
+
+def partial_composite_result(*, location_type="RANGE_INTERPOLATED", result_types=None):
+    result = google_result(
+        partial=True,
+        location_type=location_type,
+        result_types=result_types or ["street_address"],
+    )
+    return with_component(result, "street_number", "8")
+
+
+COMPOSITE_ADDRESS = {
+    **ADDRESS,
+    "address_line_1": "Flat 8, Synthetic Road, Example Enclave",
+}
+
+
 class Response:
     def __init__(self, status_code=200, payload=None):
         self.status_code = status_code
@@ -225,6 +252,114 @@ async def test_google_partial_match_remains_ineligible(diagnostic_stream):
     assert "broad_or_unsupported_place_type" in diagnostic["eligibility_reasons"]
 
 
+@pytest.mark.asyncio
+async def test_google_complete_partial_composite_street_uses_interpolated_caution_path(
+    diagnostic_stream,
+):
+    result = partial_composite_result()
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(COMPOSITE_ADDRESS)
+    assert target is not None
+    assert metadata["quality"] == "approximate_address"
+    assert metadata["classification"] == "GPS_TARGET_ELIGIBLE_WITH_CAUTION"
+    assert metadata["street_status"] == "matched"
+    assert "composite_street_reconciled" in metadata["warnings"]
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["partial_match"] is True
+    assert diagnostic["provider_neutral_quality"] == "approximate_address"
+    assert diagnostic["normalized_result_eligible"] is True
+
+
+@pytest.mark.parametrize(
+    ("component_type", "long_name", "short_name", "reason"),
+    [
+        ("postal_code", "400001", "400001", "pin_mismatch_or_missing"),
+        ("administrative_area_level_1", "Karnataka", "KA", "state_mismatch"),
+        ("locality", "Mumbai", "Mumbai", "locality_mismatch"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_google_partial_composite_street_never_overrides_component_conflicts(
+    component_type, long_name, short_name, reason, diagnostic_stream
+):
+    result = with_component(
+        partial_composite_result(), component_type, long_name, short_name
+    )
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(COMPOSITE_ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    assert reason in diagnostic_record(diagnostic_stream)["eligibility_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("claimed_line", "provider_route"),
+    [
+        ("Flat 8, Different Road, Example Enclave", "Synthetic Road"),
+        ("Flat 8, Rd, Example Enclave", "Rd"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_google_partial_composite_street_rejects_unrelated_or_ambiguous_route(
+    claimed_line, provider_route, diagnostic_stream
+):
+    result = with_component(partial_composite_result(), "route", provider_route)
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(
+        {**COMPOSITE_ADDRESS, "address_line_1": claimed_line}
+    )
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    assert "street_missing_or_mismatch" in diagnostic_record(diagnostic_stream)[
+        "eligibility_reasons"
+    ]
+
+
+@pytest.mark.parametrize("location_type", ["GEOMETRIC_CENTER", "APPROXIMATE"])
+@pytest.mark.asyncio
+async def test_google_partial_composite_street_rejects_broad_location_types(
+    location_type, diagnostic_stream
+):
+    result = partial_composite_result(location_type=location_type)
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(COMPOSITE_ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    assert "broad_or_unsupported_place_type" in diagnostic_record(diagnostic_stream)[
+        "eligibility_reasons"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_google_partial_route_only_result_remains_ineligible(diagnostic_stream):
+    result = partial_composite_result(result_types=["route"])
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode(COMPOSITE_ADDRESS)
+    assert target is None
+    assert metadata["classification"] == "ADDRESS_NEEDS_REVIEW"
+    assert "broad_or_unsupported_place_type" in diagnostic_record(diagnostic_stream)[
+        "eligibility_reasons"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_google_competing_partial_composite_candidates_remain_ineligible(
+    diagnostic_stream,
+):
+    service, _ = geocoder(
+        Response(
+            payload={
+                "status": "OK",
+                "results": [partial_composite_result(), partial_composite_result()],
+            }
+        )
+    )
+    metadata, target = await service.geocode(COMPOSITE_ADDRESS)
+    assert target is None
+    assert metadata["reasons"] == ("competing_candidates",)
+    assert diagnostic_record(diagnostic_stream)["normalized_result_eligible"] is False
+
+
 @pytest.mark.parametrize(
     ("component_type", "presence_key", "reason"),
     [
@@ -327,6 +462,24 @@ def test_google_quality_mapping_matches_aws_provider_neutral_semantics():
     assert google_decision.classification == aws_decision.classification
     assert google_decision.quality == aws_decision.quality == "precise_address"
     assert google_decision.eligible is aws_decision.eligible is True
+
+
+def test_google_partial_composite_matches_aws_interpolated_policy_semantics():
+    google_item = module.normalize_google_result(partial_composite_result())
+    aws_equivalent = {
+        **google_item,
+        "PlaceType": "InterpolatedAddress",
+        "EstimatedPointAddress": False,
+    }
+    query = module.query_components(COMPOSITE_ADDRESS)
+    google_decision = module.evaluate_targets([google_item], query)
+    aws_decision = module.evaluate_targets([aws_equivalent], query)
+    assert google_item["PlaceType"] == "InterpolatedAddress"
+    assert google_item["EstimatedPointAddress"] is False
+    assert google_decision == aws_decision
+    assert google_decision.classification == "GPS_TARGET_ELIGIBLE_WITH_CAUTION"
+    assert google_decision.quality == "approximate_address"
+    assert google_decision.radius_m == 150
 
 
 @pytest.mark.asyncio

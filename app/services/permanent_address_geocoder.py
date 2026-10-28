@@ -254,7 +254,11 @@ def _google_text(result, *component_types, short=False):
 def _google_place_type(result):
     location_type = (result.get("geometry") or {}).get("location_type")
     if result.get("partial_match") is True:
-        return "Other"
+        return (
+            "InterpolatedAddress"
+            if _google_partial_interpolated_compatible(result)
+            else "Other"
+        )
     result_type = _google_result_type_class(result)
     if location_type == "ROOFTOP" and result_type in {
         "street_address",
@@ -305,6 +309,17 @@ def _google_required_component_presence(result):
         "street": "route" in component_types,
         "address_number": "street_number" in component_types,
     }
+
+
+def _google_partial_interpolated_compatible(result):
+    """Qualify only complete address-bearing partial interpolation results."""
+    return (
+        result.get("partial_match") is True
+        and (result.get("geometry") or {}).get("location_type") == "RANGE_INTERPOLATED"
+        and _google_result_type_class(result) in {"street_address", "premise", "subpremise"}
+        and all(_google_required_component_presence(result).values())
+        and _google_coordinates_present(result)
+    )
 
 
 def _google_result_diagnostic(result):
@@ -374,9 +389,11 @@ def normalize_google_result(result):
         "Street": _google_text(result, "route"),
         "AddressNumber": _google_text(result, "street_number"),
     }
+    partial_interpolated = _google_partial_interpolated_compatible(result)
     return {
         "PlaceType": _google_place_type(result),
-        "EstimatedPointAddress": result.get("partial_match") is True,
+        "EstimatedPointAddress": result.get("partial_match") is True
+        and not partial_interpolated,
         "Position": [longitude, latitude],
         "Address": address,
     }
