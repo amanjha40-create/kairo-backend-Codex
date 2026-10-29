@@ -51,6 +51,7 @@ class AddressCandidate(BaseModel):
     display_type: Literal["Driving Licence address"]
     source: Literal["digilocker_driving_licence"]
     review_state: Literal["ready"]
+    requires_replacement_confirmation: bool
     address: PermanentAddressInput
 
 

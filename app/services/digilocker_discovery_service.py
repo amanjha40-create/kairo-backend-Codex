@@ -21,13 +21,19 @@ from app.infrastructure.s3.client import get_s3_client
 from app.integrations.digilocker.crypto import parse_keyring
 from app.integrations.digilocker.education import (
     ParsedEducation,
-    parse_driving_licence_address,
+    parse_driving_licence_address_result,
     parse_education_xml,
 )
 from app.integrations.digilocker.identity import match_document
 from app.integrations.digilocker.provider import ProviderError
 from app.integrations.digilocker.registry import DOCUMENT_ROUTES, DocumentRoute
-from app.models import DigiLockerIdentityVerification, Education, EducationDocument, User
+from app.models import (
+    DigiLockerIdentityVerification,
+    Education,
+    EducationDocument,
+    PermanentAddressVersion,
+    User,
+)
 from app.resumes.normalization import normalize_text
 from app.services.canonical_trust import identity_current
 from app.services.digilocker_document_service import DigiLockerDocumentService
@@ -237,6 +243,17 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             ).all()
         )
         evidence_by_fingerprint = self._evidence_fingerprints(education_documents)
+        has_permanent_address = (
+            await self.session.scalar(
+                select(PermanentAddressVersion.id)
+                .where(
+                    PermanentAddressVersion.user_id == user_id,
+                    PermanentAddressVersion.invalidated_at.is_(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
 
         discovered: list[DiscoveredItem] = []
         parse_failures = 0
@@ -315,8 +332,17 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             )
             identity_internal[item.candidate_id] = item
             if item.item["doctype"] == "DRVLC" and item.document is not None:
-                address = parse_driving_licence_address(item.document.content)
-                if address is not None:
+                parsed_address = parse_driving_licence_address_result(item.document.content)
+                logger.info(
+                    "digilocker_drvlc_address_parsed",
+                    extra={
+                        "reason": parsed_address.reason,
+                        "address_node_count": parsed_address.address_node_count,
+                        "selected_type": parsed_address.selected_type,
+                        "missing_fields": parsed_address.missing_fields,
+                    },
+                )
+                if parsed_address.address is not None:
                     candidate_id = self._candidate_id(connection, item.item, "address")
                     address_public.append(
                         {
@@ -325,7 +351,8 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                             "display_type": "Driving Licence address",
                             "source": "digilocker_driving_licence",
                             "review_state": "ready",
-                            "address": asdict(address),
+                            "requires_replacement_confirmation": has_permanent_address,
+                            "address": asdict(parsed_address.address),
                         }
                     )
                     address_internal[candidate_id] = item

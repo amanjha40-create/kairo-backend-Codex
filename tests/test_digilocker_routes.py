@@ -190,6 +190,17 @@ def test_openapi_exposes_connection_and_document_routes():
     assert {"verification_status", "verification_source", "verified_at"} <= set(
         identity_fields
     )
+    address_fields = schema["components"]["schemas"]["AddressCandidate"]["properties"]
+    assert set(address_fields) == {
+        "candidate_id",
+        "doctype",
+        "display_type",
+        "source",
+        "review_state",
+        "requires_replacement_confirmation",
+        "address",
+    }
+    assert address_fields["address"]["$ref"].endswith("/PermanentAddressInput-Output")
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:
         assert schema["paths"][BASE + path][method]["security"]
 

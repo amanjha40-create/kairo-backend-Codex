@@ -23,7 +23,13 @@ from app.integrations.digilocker.education import (
 )
 from app.integrations.digilocker.registry import DOCUMENT_ROUTES, SUPPORTED_DOCTYPES
 from app.main import app
-from app.models import DigiLockerIdentityVerification, Education, EducationDocument, User
+from app.models import (
+    DigiLockerIdentityVerification,
+    Education,
+    EducationDocument,
+    PermanentAddressVersion,
+    User,
+)
 from app.services.digilocker_discovery_service import DigiLockerDiscoveryService
 
 
@@ -68,7 +74,8 @@ def issued(doctype: str, *, mime=None, suffix="ONE") -> dict:
 
 def identity_xml(doctype: str, *, address=True) -> bytes:
     extra = (
-        ' address="Synthetic Road" district="Mumbai" state="Maharashtra" pincode="400001"'
+        ' address="Synthetic Road" district="Mumbai" state="Maharashtra" '
+        'pincode="400001" country="IN"'
         if address and doctype == "DRVLC"
         else ""
     )
@@ -312,7 +319,7 @@ async def test_malformed_xml_and_one_failure_are_isolated(harness):
 
 
 @pytest.mark.parametrize("address", [True, False])
-async def test_driving_licence_address_candidate_is_optional(harness, address):
+async def test_driving_licence_address_candidate_is_optional(harness, address, caplog):
     await prepare_user(harness)
     row = issued("DRVLC")
     docs = FakeDocuments([row], {row["uri"]: identity_xml("DRVLC", address=address)})
@@ -326,7 +333,56 @@ async def test_driving_licence_address_candidate_is_optional(harness, address):
     if address:
         candidate = result["address_candidates"][0]
         assert candidate["source"] == "digilocker_driving_licence"
+        assert candidate["requires_replacement_confirmation"] is False
         assert "google_place_id" not in candidate["address"]
+    assert "Synthetic Road" not in repr([record.__dict__ for record in caplog.records])
+
+
+async def test_address_candidate_reports_existing_address_without_replacing_it(harness):
+    await prepare_user(harness)
+    async with async_session_factory() as setup:
+        setup.add(
+            PermanentAddressVersion(
+                user_id=harness.ids[0],
+                version=1,
+                claimed_address={
+                    "address_line_1": "Existing Synthetic Address",
+                    "city": "Existing City",
+                    "state": "Existing State",
+                    "postal_code": "400001",
+                    "country": "IN",
+                },
+                address_hash="a" * 64,
+                geocode_status="READY",
+                target_source="provider_geocode",
+                target_status="active",
+                document_status="REQUIRED",
+                cycle=1,
+            )
+        )
+        await setup.commit()
+    row = issued("DRVLC")
+    session, discovery = await service(
+        harness,
+        FakeDocuments([row], {row["uri"]: identity_xml("DRVLC")}),
+    )
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+
+    candidate = result["address_candidates"][0]
+    assert candidate["requires_replacement_confirmation"] is True
+    async with async_session_factory() as check:
+        current = await check.scalar(
+            select(PermanentAddressVersion).where(
+                PermanentAddressVersion.user_id == harness.ids[0],
+                PermanentAddressVersion.invalidated_at.is_(None),
+            )
+        )
+        assert current is not None
+        assert current.version == 1
+        assert current.claimed_address["address_line_1"] == "Existing Synthetic Address"
 
 
 def test_parser_extracts_safe_education_and_address_contracts():
@@ -431,12 +487,13 @@ async def test_degree_certificate_marksheet_and_transcript_group_once(harness):
 
 async def test_repeated_discovery_is_stable_and_mutates_nothing(harness):
     await prepare_user(harness)
-    rows = [issued("PANCR"), issued("DGCER")]
+    rows = [issued("PANCR"), issued("DRVLC"), issued("DGCER")]
     docs = FakeDocuments(
         rows,
         {
             rows[0]["uri"]: identity_xml("PANCR"),
-            rows[1]["uri"]: education_xml("DGCER"),
+            rows[1]["uri"]: identity_xml("DRVLC"),
+            rows[2]["uri"]: education_xml("DGCER"),
         },
     )
     session, discovery = await service(harness, docs)
@@ -447,12 +504,21 @@ async def test_repeated_discovery_is_stable_and_mutates_nothing(harness):
         await session.close()
     assert first["identity"][0]["candidate_id"] == second["identity"][0]["candidate_id"]
     assert first["education"][0]["candidate_id"] == second["education"][0]["candidate_id"]
+    assert first["address_candidates"] == second["address_candidates"]
     async with async_session_factory() as check:
         assert (
             await check.scalar(
                 select(func.count())
                 .select_from(Education)
                 .where(Education.user_id == harness.ids[0])
+            )
+            == 0
+        )
+        assert (
+            await check.scalar(
+                select(func.count())
+                .select_from(PermanentAddressVersion)
+                .where(PermanentAddressVersion.user_id == harness.ids[0])
             )
             == 0
         )
