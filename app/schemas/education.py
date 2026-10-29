@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -63,6 +63,36 @@ class EducationUpdateRequest(BaseModel):
         return self
 
 
+class EducationEvidenceResponse(BaseModel):
+    evidence_id: uuid.UUID
+    document_type: str
+    display_name: str
+    source: Literal["digilocker"]
+    verification_status: str
+    verified_at: datetime | None = None
+    preview_available: bool
+    preview_type: Literal["pdf", "image", "structured"]
+    content_type: str | None = None
+
+
+class EducationEvidenceStructuredPreview(BaseModel):
+    document_type: str
+    issuer: str | None = None
+    qualification: str | None = None
+    completion_year: int | None = None
+    verification_source: Literal["digilocker"]
+    verified_at: datetime | None = None
+
+
+class EducationEvidencePreviewResponse(BaseModel):
+    evidence_id: uuid.UUID
+    preview_type: Literal["pdf", "image", "structured"]
+    content_type: str | None = None
+    preview_url: str | None = None
+    expires_in_seconds: int | None = None
+    structured: EducationEvidenceStructuredPreview | None = None
+
+
 class EducationResponse(BaseModel):
     institution_catalogue_id: str | None = None
     institution_catalogue_version: str | None = None
@@ -87,6 +117,7 @@ class EducationResponse(BaseModel):
     verified_at: datetime | None = None
     reviewed_by_user_id: uuid.UUID | None = None
     reviewer_note: str | None = None
+    evidence: list[EducationEvidenceResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -127,7 +158,6 @@ class EducationDocumentResponse(BaseModel):
     verified_at: datetime | None = None
     verified_by_user_id: uuid.UUID | None = None
     reviewer_note: str | None = None
-    extracted_payload: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 

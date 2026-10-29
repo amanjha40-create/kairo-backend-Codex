@@ -515,6 +515,25 @@ async def add_class_x_education(user_id, *, duplicate=False):
         return [row.id for row in rows]
 
 
+async def add_manual_class_x_education(
+    user_id, *, degree="High School", institution="Synthetic Secondary School", year=None
+):
+    async with async_session_factory() as session:
+        row = Education(
+            user_id=user_id,
+            institution_name=institution,
+            degree=degree,
+            education_level="high_school",
+            end_date=date(year, 12, 31) if year else None,
+            end_date_precision="year" if year else None,
+            is_currently_studying=False,
+            verification_status="draft",
+        )
+        session.add(row)
+        await session.commit()
+        return row.id
+
+
 @pytest.mark.parametrize(
     "existing,duplicate,expected_match,expected_review",
     [
@@ -586,6 +605,83 @@ async def test_spcer_variant_repeated_import_is_idempotent(harness):
             )
             == 1
         )
+    assert len(storage.objects) == 1
+
+
+async def test_manual_class_x_alias_links_without_duplicate_or_optional_year(harness):
+    await prepare_user(harness)
+    education_id = await add_manual_class_x_education(harness.ids[0])
+    row = issued("SPCER")
+    storage = FakeStorage()
+    session, discovery = await service(
+        harness,
+        FakeDocuments([row], {row["uri"]: spcer_sscer_variant_xml()}),
+        storage=storage,
+    )
+    try:
+        available = await discovery.available_records(harness.ids[0])
+        assert available["education"][0]["possible_existing_record_match"] == "CLEAR_MATCH"
+        selected = available["education"][0]["candidate_id"]
+        result = await discovery.import_records(
+            harness.ids[0], [selected], consent=False, consent_version="v1"
+        )
+    finally:
+        await session.close()
+    assert result["outcomes"][0]["status"] == "linked"
+    assert result["outcomes"][0]["record_id"] == education_id
+    async with async_session_factory() as check:
+        assert (
+            await check.scalar(
+                select(func.count())
+                .select_from(Education)
+                .where(Education.user_id == harness.ids[0], Education.deleted_at.is_(None))
+            )
+            == 1
+        )
+
+
+async def test_class_x_conflicting_year_or_board_requires_review(harness):
+    await prepare_user(harness)
+    await add_manual_class_x_education(
+        harness.ids[0], institution="CBSE", year=2019, degree="Class X"
+    )
+    row = issued("SPCER")
+    documents = FakeDocuments([row], {row["uri"]: spcer_sscer_variant_xml()})
+    session, discovery = await service(harness, documents)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+    group = result["education"][0]
+    assert group["possible_existing_record_match"] == "CONFLICT"
+    assert group["review_state"] == "needs_review"
+
+
+async def test_import_prefers_pdf_and_retains_safe_structured_metadata(harness):
+    await prepare_user(harness)
+    row = issued("SPCER")
+    storage = FakeStorage()
+    documents = FakeDocuments([row], {row["uri"]: spcer_sscer_variant_xml()})
+    session, discovery = await service(harness, documents, storage=storage)
+    try:
+        available = await discovery.available_records(harness.ids[0])
+        selected = available["education"][0]["candidate_id"]
+        await discovery.import_records(
+            harness.ids[0], [selected], consent=False, consent_version="v1"
+        )
+        evidence = await session.scalar(
+            select(EducationDocument).where(
+                EducationDocument.uploaded_by_user_id == harness.ids[0]
+            )
+        )
+    finally:
+        await session.close()
+    assert documents.retrieve_calls == [(row["uri"], True), (row["uri"], True), (row["uri"], False)]
+    assert evidence.content_type == "application/pdf"
+    assert evidence.extracted_payload["digilocker"]["safe_preview"] == {
+        "qualification": "Class X",
+        "completion_year": 2020,
+    }
     assert len(storage.objects) == 1
 
 

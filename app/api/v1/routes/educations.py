@@ -17,6 +17,7 @@ from app.schemas.education import (
     EducationDocumentResponse,
     EducationDocumentUploadIntentRequest,
     EducationDocumentUploadIntentResponse,
+    EducationEvidencePreviewResponse,
     EducationResponse,
     EducationUpdateRequest,
 )
@@ -167,6 +168,19 @@ async def list_education_documents(
         total=total,
         params=page,
     )
+
+
+@router.get(
+    "/{education_id}/evidence/{evidence_id}/preview",
+    response_model=EducationEvidencePreviewResponse,
+)
+async def get_education_evidence_preview(
+    education_id: UUID,
+    evidence_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[EducationService, Depends(get_education_service)],
+) -> EducationEvidencePreviewResponse:
+    return await svc.get_evidence_preview(current.id, education_id, evidence_id)
 
 
 @router.post(

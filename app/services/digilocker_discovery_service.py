@@ -15,6 +15,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.education.entity_resolution import resolve_education_entity
 from app.exceptions import AppException, ServiceUnavailableError, ValidationAppError
 from app.infrastructure.s3.client import get_s3_client
 from app.integrations.digilocker.crypto import parse_keyring
@@ -159,28 +160,14 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
     ) -> tuple[str, UUID | None]:
         if parsed is None or parsed.parser_status != "parsed":
             return "NO_MATCH", None
-        institution = normalize_text(parsed.institution_name)
-        qualification = normalize_text(parsed.qualification)
-        if not institution or not qualification:
-            return "NO_MATCH", None
-        matches = []
-        for existing in educations:
-            if normalize_text(existing.institution_name) != institution:
-                continue
-            if normalize_text(existing.degree or existing.field_of_study) != qualification:
-                continue
-            if (
-                parsed.completion_year
-                and existing.end_date
-                and parsed.completion_year != existing.end_date.year
-            ):
-                continue
-            matches.append(existing)
-        if len(matches) == 1:
-            return "CLEAR_MATCH", matches[0].id
-        if len(matches) > 1:
-            return "AMBIGUOUS", None
-        return "NO_MATCH", None
+        resolution = resolve_education_entity(
+            institution_name=parsed.institution_name,
+            qualification=parsed.qualification,
+            education_level=parsed.education_level,
+            completion_year_value=parsed.completion_year,
+            educations=educations,
+        )
+        return resolution.state, resolution.education_id
 
     @staticmethod
     def _education_group_key(item: DiscoveredItem) -> str:
@@ -355,7 +342,11 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             all_added = all(item.existing_evidence_id is not None for item in items)
             if all_added:
                 resolution, review = "ALREADY_ADDED", "already_added"
-            elif resolution == "AMBIGUOUS" or not parsed or parsed.parser_status != "parsed":
+            elif (
+                resolution in {"AMBIGUOUS", "CONFLICT"}
+                or not parsed
+                or parsed.parser_status != "parsed"
+            ):
                 review = (
                     "parse_failed"
                     if any(i.parser_status == "parse_failed" for i in items)
@@ -479,7 +470,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
         if group.review_state == "already_added":
             return self._outcome(group.candidate_id, "education", "already_added", group)
         if target_education_id is None and (
-            group.review_state != "ready" or group.resolution == "AMBIGUOUS"
+            group.review_state != "ready" or group.resolution in {"AMBIGUOUS", "CONFLICT"}
         ):
             return self._outcome(group.candidate_id, "education", "needs_review", group)
 
@@ -525,14 +516,16 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             for item in group.items:
                 if item.existing_evidence_id is not None:
                     continue
-                document = item.document
-                if document is None:
-                    if not item.pdf_available:
-                        continue
+                document = None
+                if item.pdf_available:
                     try:
                         document = await self.documents.retrieve(token, item.item["uri"], xml=False)
                     except ProviderError:
-                        continue
+                        document = None
+                if document is None:
+                    document = item.document
+                if document is None:
+                    continue
                 fingerprint = reference_fingerprint(item.item["doctype"], item.item["uri"])
                 document_id = uuid4()
                 extension = "xml" if document.mime in {"application/xml", "text/xml"} else "pdf"
@@ -570,6 +563,18 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                                 "reference_fingerprint": fingerprint,
                                 "retrieved_at": accepted_at.isoformat(),
                                 "parser_status": item.parser_status,
+                                "safe_preview": {
+                                    "qualification": (
+                                        item.parsed_education.qualification
+                                        if item.parsed_education
+                                        else None
+                                    ),
+                                    "completion_year": (
+                                        item.parsed_education.completion_year
+                                        if item.parsed_education
+                                        else None
+                                    ),
+                                },
                             }
                         },
                     )

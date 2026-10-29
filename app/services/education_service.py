@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalogues.education_identity import education_identity
@@ -26,13 +28,48 @@ from app.schemas.education import (
     EducationDocumentDownloadUrlResponse,
     EducationDocumentUploadIntentRequest,
     EducationDocumentUploadIntentResponse,
+    EducationEvidencePreviewResponse,
+    EducationEvidenceResponse,
+    EducationEvidenceStructuredPreview,
     EducationResponse,
     EducationUpdateRequest,
 )
 from app.services.digilocker_verification_projection import education_verification_projections
+from app.services.document_pack_storage import DocumentPackStorage
 from app.verification_requests.enums import VerificationRequestStatus
 
 logger = logging.getLogger(__name__)
+
+_EVIDENCE_LABELS = {
+    "degree_certificate": "Degree certificate",
+    "passing_certificate": "Passing certificate",
+    "provisional_certificate": "Provisional certificate",
+    "transcript": "Transcript",
+    "marksheet": "Marksheet",
+    "migration_certificate": "Migration certificate",
+    "admission_letter": "Admission letter",
+    "enrollment_proof": "Enrollment proof",
+    "other": "Education document",
+}
+
+
+def _digilocker_metadata(document: EducationDocument) -> dict | None:
+    payload = document.extracted_payload
+    metadata = payload.get("digilocker") if isinstance(payload, dict) else None
+    if isinstance(metadata, dict) and metadata.get("source") == "digilocker":
+        return metadata
+    return None
+
+
+def _preview_type(document: EducationDocument) -> str | None:
+    mime = document.content_type.split(";", 1)[0].lower()
+    if mime == "application/pdf":
+        return "pdf"
+    if mime in {"image/jpeg", "image/png", "image/webp"}:
+        return "image"
+    if mime in {"application/xml", "text/xml"} and _digilocker_metadata(document):
+        return "structured"
+    return None
 
 
 class EducationService:
@@ -89,12 +126,48 @@ class EducationService:
 
     async def responses(self, educations: list[Education]) -> list[EducationResponse]:
         projections = await education_verification_projections(self._session, educations)
+        education_ids = [education.id for education in educations]
+        evidence_by_education: dict[UUID, list[EducationEvidenceResponse]] = defaultdict(list)
+        if education_ids:
+            documents = list(
+                (
+                    await self._session.scalars(
+                        select(EducationDocument).where(
+                            EducationDocument.education_id.in_(education_ids),
+                            EducationDocument.deleted_at.is_(None),
+                        )
+                    )
+                ).all()
+            )
+            for document in documents:
+                metadata = _digilocker_metadata(document)
+                preview_type = _preview_type(document)
+                if metadata is None or preview_type is None:
+                    continue
+                evidence_by_education[document.education_id].append(
+                    EducationEvidenceResponse(
+                        evidence_id=document.id,
+                        document_type=document.document_type,
+                        display_name=_EVIDENCE_LABELS.get(
+                            document.document_type, "Education document"
+                        ),
+                        source="digilocker",
+                        verification_status=document.verification_status,
+                        verified_at=document.verified_at,
+                        preview_available=True,
+                        preview_type=preview_type,
+                        content_type=(
+                            document.content_type if preview_type in {"pdf", "image"} else None
+                        ),
+                    )
+                )
         return [
             EducationResponse.model_validate(education).model_copy(
                 update={
                     "verification_status": projections[education.id].status,
                     "verification_source": projections[education.id].source,
                     "verified_at": projections[education.id].verified_at,
+                    "evidence": evidence_by_education[education.id],
                 }
             )
             for education in educations
@@ -238,7 +311,10 @@ class EducationService:
 
         document_id = uuid.uuid4()
         prefix = self._settings.s3_document_key_prefix.rstrip("/")
-        object_key = f"{prefix}/education-documents/{education_id}/{document_id}/{payload.original_filename}"
+        object_key = (
+            f"{prefix}/education-documents/{education_id}/{document_id}/"
+            f"{payload.original_filename}"
+        )
 
         doc = EducationDocument(
             id=document_id,
@@ -289,7 +365,12 @@ class EducationService:
             raise NotFoundError("Education document not found")
         await self._session.refresh(doc)
         if doc.checksum_sha256 != checksum_sha256:
-            await invalidate_document_reviews(self._session, "education_document_id", doc.id, user_id)
+            await invalidate_document_reviews(
+                self._session,
+                "education_document_id",
+                doc.id,
+                user_id,
+            )
         doc.checksum_sha256 = checksum_sha256
         await self._session.commit()
         await self._session.refresh(doc)
@@ -323,6 +404,61 @@ class EducationService:
         )
         return EducationDocumentDownloadUrlResponse(
             document_id=doc.id, download_url=url, expires_in_seconds=ttl,
+        )
+
+    async def get_evidence_preview(
+        self, user_id: UUID, education_id: UUID, evidence_id: UUID,
+    ) -> EducationEvidencePreviewResponse:
+        education = await self.get_owned(user_id, education_id)
+        document = await self._documents.get_for_education(evidence_id, education_id)
+        if document is None or _digilocker_metadata(document) is None:
+            raise NotFoundError("Education evidence not found")
+        preview_type = _preview_type(document)
+        if preview_type is None:
+            raise NotFoundError("Education evidence preview is unavailable")
+
+        if preview_type in {"pdf", "image"}:
+            binding = await DocumentPackStorage(self._settings).inspect(document.object_key)
+            if binding.size != document.byte_size or binding.content_type != document.content_type:
+                raise NotFoundError("Education evidence preview is unavailable")
+            ttl = 300
+            url = await generate_presigned_get_url(
+                bucket=self._settings.s3_documents_bucket,
+                object_key=document.object_key,
+                ttl_seconds=ttl,
+                settings=self._settings,
+            )
+            return EducationEvidencePreviewResponse(
+                evidence_id=document.id,
+                preview_type=preview_type,
+                content_type=document.content_type,
+                preview_url=url,
+                expires_in_seconds=ttl,
+            )
+
+        metadata = _digilocker_metadata(document) or {}
+        safe_preview = metadata.get("safe_preview")
+        safe_preview = safe_preview if isinstance(safe_preview, dict) else {}
+        year = safe_preview.get("completion_year")
+        if not isinstance(year, int):
+            year = education.end_date.year if education.end_date else None
+        qualification = safe_preview.get("qualification")
+        if not isinstance(qualification, str) or not qualification.strip():
+            qualification = education.degree
+        issuer = metadata.get("issuer_name")
+        if not isinstance(issuer, str) or not issuer.strip():
+            issuer = None
+        return EducationEvidencePreviewResponse(
+            evidence_id=document.id,
+            preview_type="structured",
+            structured=EducationEvidenceStructuredPreview(
+                document_type=document.document_type,
+                issuer=issuer,
+                qualification=qualification,
+                completion_year=year,
+                verification_source="digilocker",
+                verified_at=document.verified_at,
+            ),
         )
 
     async def delete_document(

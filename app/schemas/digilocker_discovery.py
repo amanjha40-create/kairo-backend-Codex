@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from app.schemas.permanent_address import PermanentAddressInput
 
-MatchState = Literal["CLEAR_MATCH", "NO_MATCH", "AMBIGUOUS", "ALREADY_ADDED"]
+MatchState = Literal["CLEAR_MATCH", "NO_MATCH", "AMBIGUOUS", "CONFLICT", "ALREADY_ADDED"]
 ReviewState = Literal["ready", "already_added", "needs_review", "parse_failed"]
 
 
