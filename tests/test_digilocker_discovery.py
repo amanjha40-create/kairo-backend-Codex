@@ -95,6 +95,25 @@ def education_xml(
     ).encode()
 
 
+def spcer_sscer_variant_xml(
+    *,
+    namespaced: bool = False,
+    include_institution: bool = True,
+    include_year: bool = True,
+) -> bytes:
+    namespace = ' xmlns="urn:synthetic:digilocker:certificate"' if namespaced else ""
+    institution = ' boardName="Synthetic Board"' if include_institution else ""
+    year = ' passingYear="2020"' if include_year else ""
+    return (
+        f'<Certificate{namespace} type="SSCER">'
+        '<CertificateData certificateNumber="SYNTHETIC"/>'
+        '<IssuedTo><Person name="Test Candidate"/></IssuedTo>'
+        f'<Examination{institution}{year} result="PASS"/>'
+        '<Issuer><Board/></Issuer>'
+        '</Certificate>'
+    ).encode()
+
+
 class FakeDocuments:
     def __init__(self, rows, payloads=None, failures=None):
         self.rows = rows
@@ -327,6 +346,57 @@ def test_parser_extracts_safe_education_and_address_contracts():
     assert address is not None and address.country == "IN"
 
 
+@pytest.mark.parametrize("namespaced", [False, True])
+def test_spcer_accepts_signed_sscer_schema_variant(namespaced):
+    parsed = parse_education_xml(
+        spcer_sscer_variant_xml(namespaced=namespaced),
+        doctype="SPCER",
+        route=DOCUMENT_ROUTES["SPCER"],
+        issuer_name="Synthetic Board",
+    )
+    assert parsed.parser_status == "parsed"
+    assert parsed.education_level == "high_school"
+    assert parsed.qualification == "Class X"
+    assert parsed.institution_name == "Synthetic Board"
+    assert parsed.completion_year == 2020
+
+
+def test_spcer_variant_allows_optional_year_but_requires_institution():
+    optional_year = parse_education_xml(
+        spcer_sscer_variant_xml(include_year=False),
+        doctype="SPCER",
+        route=DOCUMENT_ROUTES["SPCER"],
+        issuer_name="Synthetic Board",
+    )
+    assert optional_year.parser_status == "parsed"
+    assert optional_year.completion_year is None
+
+    missing_institution = parse_education_xml(
+        spcer_sscer_variant_xml(include_institution=False),
+        doctype="SPCER",
+        route=DOCUMENT_ROUTES["SPCER"],
+        issuer_name=None,
+    )
+    assert missing_institution.parser_status == "needs_review"
+    assert missing_institution.institution_name is None
+
+
+def test_spcer_alias_is_one_way_and_malformed_xml_remains_failed():
+    wrong_route = parse_education_xml(
+        education_xml("SPCER"),
+        doctype="SSCER",
+        route=DOCUMENT_ROUTES["SSCER"],
+        issuer_name="Synthetic Board",
+    )
+    malformed = parse_education_xml(
+        b"<Certificate",
+        doctype="SPCER",
+        route=DOCUMENT_ROUTES["SPCER"],
+        issuer_name="Synthetic Board",
+    )
+    assert wrong_route.parser_status == malformed.parser_status == "parse_failed"
+
+
 async def test_class_x_and_xii_supporting_documents_group_once(harness):
     await prepare_user(harness)
     rows = [issued(value) for value in ("SSCER", "SPCER", "SSMGR", "HSCER", "HPCER", "HSMGR")]
@@ -423,6 +493,98 @@ async def add_education(user_id, *, duplicate=False):
             rows.append(row)
         await session.commit()
         return [row.id for row in rows]
+
+
+async def add_class_x_education(user_id, *, duplicate=False):
+    async with async_session_factory() as session:
+        rows = []
+        for _ in range(2 if duplicate else 1):
+            row = Education(
+                user_id=user_id,
+                institution_name="Synthetic Board",
+                degree="Class X",
+                education_level="high_school",
+                end_date=date(2020, 12, 31),
+                end_date_precision="year",
+                is_currently_studying=False,
+                verification_status="draft",
+            )
+            session.add(row)
+            rows.append(row)
+        await session.commit()
+        return [row.id for row in rows]
+
+
+@pytest.mark.parametrize(
+    "existing,duplicate,expected_match,expected_review",
+    [
+        (False, False, "NO_MATCH", "ready"),
+        (True, False, "CLEAR_MATCH", "ready"),
+        (True, True, "AMBIGUOUS", "needs_review"),
+    ],
+)
+async def test_spcer_sscer_variant_resolution(
+    harness, existing, duplicate, expected_match, expected_review
+):
+    await prepare_user(harness)
+    if existing:
+        await add_class_x_education(harness.ids[0], duplicate=duplicate)
+    row = issued("SPCER")
+    documents = FakeDocuments([row], {row["uri"]: spcer_sscer_variant_xml()})
+    session, discovery = await service(harness, documents)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+    group = result["education"][0]
+    assert group["possible_existing_record_match"] == expected_match
+    assert group["review_state"] == expected_review
+    assert group["import_status"] == (
+        "available" if expected_review == "ready" else "needs_review"
+    )
+
+
+async def test_spcer_variant_repeated_import_is_idempotent(harness):
+    await prepare_user(harness)
+    row = issued("SPCER")
+    storage = FakeStorage()
+    session, discovery = await service(
+        harness,
+        FakeDocuments([row], {row["uri"]: spcer_sscer_variant_xml()}),
+        storage=storage,
+    )
+    try:
+        available = await discovery.available_records(harness.ids[0])
+        selected = available["education"][0]["candidate_id"]
+        first = await discovery.import_records(
+            harness.ids[0], [selected], consent=False, consent_version="v1"
+        )
+        second = await discovery.import_records(
+            harness.ids[0], [selected], consent=False, consent_version="v1"
+        )
+    finally:
+        await session.close()
+    assert first["outcomes"][0]["status"] == "imported"
+    assert second["outcomes"][0]["status"] == "already_added"
+    async with async_session_factory() as check:
+        assert (
+            await check.scalar(
+                select(func.count())
+                .select_from(Education)
+                .where(Education.user_id == harness.ids[0])
+            )
+            == 1
+        )
+        assert (
+            await check.scalar(
+                select(func.count())
+                .select_from(EducationDocument)
+                .join(Education, Education.id == EducationDocument.education_id)
+                .where(Education.user_id == harness.ids[0])
+            )
+            == 1
+        )
+    assert len(storage.objects) == 1
 
 
 @pytest.mark.parametrize("existing,expected", [(False, "NO_MATCH"), (True, "CLEAR_MATCH")])

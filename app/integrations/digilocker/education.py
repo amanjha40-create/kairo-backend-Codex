@@ -15,6 +15,13 @@ from defusedxml.ElementTree import fromstring
 from app.integrations.digilocker.identity import MAX_XML_BYTES
 from app.integrations.digilocker.registry import DocumentRoute
 
+# Some boards list the Class X passing certificate as SPCER while the signed
+# certificate uses the generic SSCER schema type. Keep the alias one-way so an
+# unrelated document type can never be accepted for another route.
+_DOCTYPE_ROOT_ALIASES: dict[str, frozenset[str]] = {
+    "SPCER": frozenset({"SSCER"}),
+}
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ParsedEducation:
@@ -110,7 +117,12 @@ def parse_education_xml(
 ) -> ParsedEducation:
     try:
         root = _certificate(content)
-        if root.get("type") not in {None, "", doctype}:
+        if root.get("type") not in {
+            None,
+            "",
+            doctype,
+            *_DOCTYPE_ROOT_ALIASES.get(doctype, ()),
+        }:
             raise ValueError()
         values = _attributes(root)
         institution = _first(
