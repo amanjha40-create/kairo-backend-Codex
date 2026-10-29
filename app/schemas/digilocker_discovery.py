@@ -12,6 +12,14 @@ from app.schemas.permanent_address import PermanentAddressInput
 
 MatchState = Literal["CLEAR_MATCH", "NO_MATCH", "AMBIGUOUS", "CONFLICT", "ALREADY_ADDED"]
 ReviewState = Literal["ready", "already_added", "needs_review", "parse_failed"]
+AddressDiscoveryState = Literal[
+    "NO_ADDRESS_AVAILABLE",
+    "STRUCTURED_ADDRESS_CANDIDATE",
+    "ADDRESS_PREFILL_CANDIDATE",
+    "ADDRESS_AMBIGUOUS",
+    "ADDRESS_PARSE_FAILED",
+]
+DocumentAddressType = Literal["permanent", "present_or_current", "untyped"]
 
 
 class AvailableRecord(BaseModel):
@@ -51,8 +59,28 @@ class AddressCandidate(BaseModel):
     display_type: Literal["Driving Licence address"]
     source: Literal["digilocker_driving_licence"]
     review_state: Literal["ready"]
+    candidate_type: Literal["structured"]
+    address_state: Literal["STRUCTURED_ADDRESS_CANDIDATE"]
+    document_address_type: DocumentAddressType
+    requires_permanent_confirmation: Literal[True]
     requires_replacement_confirmation: bool
     address: PermanentAddressInput
+    structured_address: PermanentAddressInput
+
+
+class AddressPrefillCandidate(BaseModel):
+    candidate_id: str = Field(min_length=16, max_length=128)
+    doctype: Literal["DRVLC"]
+    display_type: Literal["Driving Licence address"]
+    source: Literal["digilocker_driving_licence"]
+    review_state: Literal["ready"]
+    candidate_type: Literal["prefill"]
+    address_state: Literal["ADDRESS_PREFILL_CANDIDATE"]
+    document_address_type: DocumentAddressType
+    requires_permanent_confirmation: Literal[True]
+    requires_replacement_confirmation: bool
+    prefill_text: str = Field(min_length=3, max_length=512, repr=False)
+    structured_address: None = None
 
 
 class DiscoveryCounts(BaseModel):
@@ -62,6 +90,7 @@ class DiscoveryCounts(BaseModel):
     identity: int
     education: int
     address_candidates: int
+    address_prefill_candidates: int = 0
     xml_available: int
     pdf_only: int
     parse_failures: int
@@ -72,6 +101,8 @@ class AvailableRecordsResponse(BaseModel):
     identity: list[AvailableRecord]
     education: list[EducationGroup]
     address_candidates: list[AddressCandidate]
+    address_prefill_candidates: list[AddressPrefillCandidate] = Field(default_factory=list)
+    address_discovery_state: AddressDiscoveryState = "NO_ADDRESS_AVAILABLE"
     counts: DiscoveryCounts
     discovered_at: datetime
 

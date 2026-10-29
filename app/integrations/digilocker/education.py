@@ -46,10 +46,11 @@ class ParsedAddress:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class AddressParseResult:
+    classification: str
     address: ParsedAddress | None
-    reason: str
+    prefill_text: str | None = None
     address_node_count: int = 0
-    selected_type: str | None = None
+    document_address_type: str | None = None
     missing_fields: tuple[str, ...] = ()
 
 
@@ -204,20 +205,21 @@ def _address_type(node: Element) -> str | None:
     return "other"
 
 
-def _select_address_node(nodes: list[Element]) -> tuple[Element | None, str, str | None]:
+def _select_address_node(nodes: list[Element]) -> tuple[Element | None, str | None, str]:
     if not nodes:
-        return None, "ADDRESS_NODE_NOT_FOUND", None
+        return None, None, "NO_ADDRESS_AVAILABLE"
     typed = [(node, _address_type(node)) for node in nodes]
     permanent = [node for node, address_type in typed if address_type == "permanent"]
     if len(permanent) == 1:
-        return permanent[0], "COMPLETE", "permanent"
+        return permanent[0], "permanent", "SELECTED"
     if len(permanent) > 1:
-        return None, "ADDRESS_AMBIGUOUS", None
-    if len(typed) == 1 and typed[0][1] is None:
-        return typed[0][0], "COMPLETE", "untyped"
+        return None, None, "ADDRESS_AMBIGUOUS"
     if len(typed) == 1:
-        return None, "ADDRESS_TYPE_UNSUPPORTED", typed[0][1]
-    return None, "ADDRESS_AMBIGUOUS", None
+        node, address_type = typed[0]
+        if address_type in {None, "present_or_current"}:
+            return node, address_type or "untyped", "SELECTED"
+        return None, address_type, "ADDRESS_PARSE_FAILED"
+    return None, None, "ADDRESS_AMBIGUOUS"
 
 
 def _parts(*values: str | None, limit: int) -> str | None:
@@ -231,6 +233,83 @@ def _parts(*values: str | None, limit: int) -> str | None:
             seen.add(normalized)
     combined = ", ".join(parts)
     return combined[:limit].rstrip(" ,") or None
+
+
+def _prefill_part(value: str | None) -> str:
+    cleaned = _clean(value)
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"\s*[,;|]+\s*", ", ", cleaned)
+    return re.sub(r"(?:,\s*){2,}", ", ", cleaned).strip(" ,;|")
+
+
+def _prefill_text(values: dict[str, str]) -> str | None:
+    fields = (
+        "house",
+        "houseNo",
+        "houseNumber",
+        "premise",
+        "building",
+        "line1",
+        "addressLine1",
+        "address",
+        "permanentAddress",
+        "line2",
+        "addressLine2",
+        "street",
+        "road",
+        "landmark",
+        "locality",
+        "vtc",
+        "village",
+        "town",
+        "subDistrict",
+        "district",
+        "state",
+        "stateName",
+        "pin",
+        "pincode",
+        "postalCode",
+        "country",
+        "countryCode",
+    )
+    primary = {
+        _key(name)
+        for name in (
+            "house",
+            "houseNo",
+            "houseNumber",
+            "premise",
+            "building",
+            "line1",
+            "addressLine1",
+            "address",
+            "permanentAddress",
+            "line2",
+            "addressLine2",
+            "street",
+            "road",
+            "landmark",
+            "locality",
+            "vtc",
+            "village",
+            "town",
+            "subDistrict",
+            "district",
+        )
+    }
+    if not any(_prefill_part(value) for key, value in values.items() if key in primary):
+        return None
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for field in fields:
+        part = _prefill_part(values.get(_key(field)))
+        normalized = _key(part)
+        if part and normalized and normalized not in seen:
+            ordered.append(part)
+            seen.add(normalized)
+    text = ", ".join(ordered)
+    return text[:512].rstrip(" ,") or None
 
 
 def parse_education_xml(
@@ -298,17 +377,25 @@ def parse_driving_licence_address_result(content: bytes) -> AddressParseResult:
     try:
         root = _certificate(content)
         if root.get("type") != "DRVLC":
-            return AddressParseResult(None, "DOCUMENT_TYPE_MISMATCH")
+            return AddressParseResult("ADDRESS_PARSE_FAILED", None)
         nodes = _person_address_nodes(root)
-        selected, reason, selected_type = _select_address_node(nodes)
+        selected, document_address_type, selection = _select_address_node(nodes)
         if selected is None:
             return AddressParseResult(
+                selection,
                 None,
-                reason,
                 address_node_count=len(nodes),
-                selected_type=selected_type,
+                document_address_type=document_address_type,
             )
         values = _attributes(selected)
+        prefill_text = _prefill_text(values)
+        if prefill_text is None:
+            return AddressParseResult(
+                "NO_ADDRESS_AVAILABLE",
+                None,
+                address_node_count=len(nodes),
+                document_address_type=document_address_type,
+            )
         line1 = _parts(
             _first(values, "house", "houseNo", "houseNumber", "premise", "building"),
             _first(values, "line1", "addressLine1", "address", "permanentAddress"),
@@ -339,27 +426,39 @@ def parse_driving_licence_address_result(content: bytes) -> AddressParseResult:
         )
         if missing:
             return AddressParseResult(
+                "ADDRESS_PREFILL_CANDIDATE",
                 None,
-                "REQUIRED_FIELD_MISSING",
+                prefill_text=prefill_text,
                 address_node_count=len(nodes),
-                selected_type=selected_type,
+                document_address_type=document_address_type,
                 missing_fields=missing,
             )
         if not re.fullmatch(r"[1-9][0-9]{5}", postal):
             return AddressParseResult(
+                "ADDRESS_PREFILL_CANDIDATE",
                 None,
-                "PIN_INVALID",
+                prefill_text=prefill_text,
                 address_node_count=len(nodes),
-                selected_type=selected_type,
+                document_address_type=document_address_type,
+                missing_fields=("postal_code",),
             )
         if _key(country) not in {"in", "ind", "india"}:
             return AddressParseResult(
+                "ADDRESS_PARSE_FAILED",
                 None,
-                "COUNTRY_UNSUPPORTED",
                 address_node_count=len(nodes),
-                selected_type=selected_type,
+                document_address_type=document_address_type,
+            )
+        if document_address_type == "present_or_current":
+            return AddressParseResult(
+                "ADDRESS_PREFILL_CANDIDATE",
+                None,
+                prefill_text=prefill_text,
+                address_node_count=len(nodes),
+                document_address_type=document_address_type,
             )
         return AddressParseResult(
+            "STRUCTURED_ADDRESS_CANDIDATE",
             ParsedAddress(
                 address_line_1=line1,
                 address_line_2=line2,
@@ -368,12 +467,12 @@ def parse_driving_licence_address_result(content: bytes) -> AddressParseResult:
                 state=state[:100],
                 postal_code=postal,
             ),
-            "COMPLETE",
+            prefill_text=prefill_text,
             address_node_count=len(nodes),
-            selected_type=selected_type,
+            document_address_type=document_address_type,
         )
     except (ValueError, TypeError, ParseError, DefusedXmlException, RecursionError):
-        return AddressParseResult(None, "MALFORMED_XML")
+        return AddressParseResult("ADDRESS_PARSE_FAILED", None)
 
 
 def parse_driving_licence_address(content: bytes) -> ParsedAddress | None:

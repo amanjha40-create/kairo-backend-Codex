@@ -30,6 +30,7 @@ from app.models import (
     PermanentAddressVersion,
     User,
 )
+from app.schemas.public_passport import PublicPassportResponse
 from app.services.digilocker_discovery_service import DigiLockerDiscoveryService
 
 
@@ -85,6 +86,15 @@ def identity_xml(doctype: str, *, address=True) -> bytes:
         f'<Certificate type="{doctype}" number="{number}" status="{status}">'
         f'<IssuedTo><Person name="Test Candidate" dob="01-01-1990"{extra}/></IssuedTo>'
         "</Certificate>"
+    ).encode()
+
+
+def drvlc_prefill_xml() -> bytes:
+    return (
+        '<Certificate type="DRVLC" number="SYNTHETIC" status="Active">'
+        '<IssuedTo><Person name="Test Candidate" dob="01-01-1990">'
+        '<Address type="present" line1="Private Synthetic Free Form" country="IN"/>'
+        "</Person></IssuedTo></Certificate>"
     ).encode()
 
 
@@ -330,12 +340,84 @@ async def test_driving_licence_address_candidate_is_optional(harness, address, c
         await session.close()
     assert len(result["identity"]) == 1
     assert len(result["address_candidates"]) == int(address)
+    assert result["address_prefill_candidates"] == []
+    assert result["address_discovery_state"] == (
+        "STRUCTURED_ADDRESS_CANDIDATE" if address else "NO_ADDRESS_AVAILABLE"
+    )
     if address:
         candidate = result["address_candidates"][0]
         assert candidate["source"] == "digilocker_driving_licence"
+        assert candidate["candidate_type"] == "structured"
+        assert candidate["address_state"] == "STRUCTURED_ADDRESS_CANDIDATE"
+        assert candidate["document_address_type"] == "untyped"
+        assert candidate["requires_permanent_confirmation"] is True
         assert candidate["requires_replacement_confirmation"] is False
+        assert candidate["address"] == candidate["structured_address"]
         assert "google_place_id" not in candidate["address"]
     assert "Synthetic Road" not in repr([record.__dict__ for record in caplog.records])
+
+
+async def test_present_free_form_address_uses_additive_prefill_contract(
+    harness, caplog, monkeypatch
+):
+    await prepare_user(harness)
+    row = issued("DRVLC")
+    docs = FakeDocuments([row], {row["uri"]: drvlc_prefill_xml()})
+    google_calls = []
+
+    def forbidden_geocoder(*args, **kwargs):
+        google_calls.append((args, kwargs))
+        raise AssertionError("Discovery must not construct a geocoder")
+
+    monkeypatch.setattr(
+        "app.services.permanent_address_geocoder.build_address_geocoder",
+        forbidden_geocoder,
+    )
+    session, discovery = await service(harness, docs)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+
+    assert result["address_candidates"] == []
+    assert result["address_discovery_state"] == "ADDRESS_PREFILL_CANDIDATE"
+    assert result["counts"]["address_candidates"] == 0
+    assert result["counts"]["address_prefill_candidates"] == 1
+    candidate = result["address_prefill_candidates"][0]
+    assert candidate == {
+        "candidate_id": candidate["candidate_id"],
+        "doctype": "DRVLC",
+        "display_type": "Driving Licence address",
+        "source": "digilocker_driving_licence",
+        "review_state": "ready",
+        "candidate_type": "prefill",
+        "address_state": "ADDRESS_PREFILL_CANDIDATE",
+        "document_address_type": "present_or_current",
+        "requires_permanent_confirmation": True,
+        "requires_replacement_confirmation": False,
+        "prefill_text": "Private Synthetic Free Form, IN",
+        "structured_address": None,
+    }
+    assert google_calls == []
+    assert "Private Synthetic Free Form" not in repr(
+        [record.__dict__ for record in caplog.records]
+    )
+
+    async with async_session_factory() as check:
+        assert (
+            await check.scalar(
+                select(func.count())
+                .select_from(PermanentAddressVersion)
+                .where(PermanentAddressVersion.user_id == harness.ids[0])
+            )
+            == 0
+        )
+
+
+def test_public_passport_contract_cannot_expose_ephemeral_address_prefill():
+    schema = repr(PublicPassportResponse.model_json_schema())
+    assert "prefill_text" not in schema
+    assert "AddressPrefillCandidate" not in schema
 
 
 async def test_address_candidate_reports_existing_address_without_replacing_it(harness):
@@ -383,6 +465,53 @@ async def test_address_candidate_reports_existing_address_without_replacing_it(h
         assert current is not None
         assert current.version == 1
         assert current.claimed_address["address_line_1"] == "Existing Synthetic Address"
+
+
+async def test_prefill_candidate_requires_confirmation_before_replacing_existing_address(harness):
+    await prepare_user(harness)
+    async with async_session_factory() as setup:
+        setup.add(
+            PermanentAddressVersion(
+                user_id=harness.ids[0],
+                version=1,
+                claimed_address={
+                    "address_line_1": "Existing Synthetic Address",
+                    "city": "Existing City",
+                    "state": "Existing State",
+                    "postal_code": "400001",
+                    "country": "IN",
+                },
+                address_hash="b" * 64,
+                geocode_status="READY",
+                target_source="provider_geocode",
+                target_status="active",
+                document_status="REQUIRED",
+                cycle=1,
+            )
+        )
+        await setup.commit()
+    row = issued("DRVLC")
+    session, discovery = await service(
+        harness,
+        FakeDocuments([row], {row["uri"]: drvlc_prefill_xml()}),
+    )
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+
+    candidate = result["address_prefill_candidates"][0]
+    assert candidate["requires_replacement_confirmation"] is True
+    assert candidate["requires_permanent_confirmation"] is True
+    async with async_session_factory() as check:
+        current = await check.scalar(
+            select(PermanentAddressVersion).where(
+                PermanentAddressVersion.user_id == harness.ids[0],
+                PermanentAddressVersion.invalidated_at.is_(None),
+            )
+        )
+        assert current is not None
+        assert current.version == 1
 
 
 def test_parser_extracts_safe_education_and_address_contracts():

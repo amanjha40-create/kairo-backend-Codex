@@ -197,10 +197,37 @@ def test_openapi_exposes_connection_and_document_routes():
         "display_type",
         "source",
         "review_state",
+        "candidate_type",
+        "address_state",
+        "document_address_type",
+        "requires_permanent_confirmation",
         "requires_replacement_confirmation",
         "address",
+        "structured_address",
     }
     assert address_fields["address"]["$ref"].endswith("/PermanentAddressInput-Output")
+    prefill_fields = schema["components"]["schemas"]["AddressPrefillCandidate"][
+        "properties"
+    ]
+    assert set(prefill_fields) == {
+        "candidate_id",
+        "doctype",
+        "display_type",
+        "source",
+        "review_state",
+        "candidate_type",
+        "address_state",
+        "document_address_type",
+        "requires_permanent_confirmation",
+        "requires_replacement_confirmation",
+        "prefill_text",
+        "structured_address",
+    }
+    response_fields = schema["components"]["schemas"]["AvailableRecordsResponse"][
+        "properties"
+    ]
+    assert {"address_prefill_candidates", "address_discovery_state"} <= set(response_fields)
+    assert "google_place_id" not in repr(prefill_fields)
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:
         assert schema["paths"][BASE + path][method]["security"]
 

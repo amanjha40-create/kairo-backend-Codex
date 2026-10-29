@@ -310,6 +310,8 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
 
         identity_public = []
         address_public = []
+        address_prefill_public = []
+        address_results = []
         identity_internal: dict[str, DiscoveredItem] = {}
         address_internal: dict[str, DiscoveredItem] = {}
         for item in discovered:
@@ -336,26 +338,64 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                 logger.info(
                     "digilocker_drvlc_address_parsed",
                     extra={
-                        "reason": parsed_address.reason,
+                        "classification": parsed_address.classification,
                         "address_node_count": parsed_address.address_node_count,
-                        "selected_type": parsed_address.selected_type,
+                        "document_address_type": parsed_address.document_address_type,
                         "missing_fields": parsed_address.missing_fields,
                     },
                 )
-                if parsed_address.address is not None:
-                    candidate_id = self._candidate_id(connection, item.item, "address")
-                    address_public.append(
-                        {
-                            "candidate_id": candidate_id,
-                            "doctype": "DRVLC",
-                            "display_type": "Driving Licence address",
-                            "source": "digilocker_driving_licence",
-                            "review_state": "ready",
-                            "requires_replacement_confirmation": has_permanent_address,
-                            "address": asdict(parsed_address.address),
-                        }
-                    )
-                    address_internal[candidate_id] = item
+                address_results.append((item, parsed_address))
+
+        address_discovery_state = "NO_ADDRESS_AVAILABLE"
+        meaningful_address_results = [
+            pair
+            for pair in address_results
+            if pair[1].classification != "NO_ADDRESS_AVAILABLE"
+        ]
+        if len(meaningful_address_results) > 1:
+            address_discovery_state = "ADDRESS_AMBIGUOUS"
+        elif meaningful_address_results:
+            item, parsed_address = meaningful_address_results[0]
+            address_discovery_state = parsed_address.classification
+            candidate_id = self._candidate_id(connection, item.item, "address")
+            common = {
+                "candidate_id": candidate_id,
+                "doctype": "DRVLC",
+                "display_type": "Driving Licence address",
+                "source": "digilocker_driving_licence",
+                "review_state": "ready",
+                "document_address_type": parsed_address.document_address_type,
+                "requires_permanent_confirmation": True,
+                "requires_replacement_confirmation": has_permanent_address,
+            }
+            if (
+                parsed_address.classification == "STRUCTURED_ADDRESS_CANDIDATE"
+                and parsed_address.address is not None
+            ):
+                structured_address = asdict(parsed_address.address)
+                address_public.append(
+                    {
+                        **common,
+                        "candidate_type": "structured",
+                        "address_state": "STRUCTURED_ADDRESS_CANDIDATE",
+                        "address": structured_address,
+                        "structured_address": structured_address,
+                    }
+                )
+                address_internal[candidate_id] = item
+            elif (
+                parsed_address.classification == "ADDRESS_PREFILL_CANDIDATE"
+                and parsed_address.prefill_text is not None
+            ):
+                address_prefill_public.append(
+                    {
+                        **common,
+                        "candidate_type": "prefill",
+                        "address_state": "ADDRESS_PREFILL_CANDIDATE",
+                        "prefill_text": parsed_address.prefill_text,
+                        "structured_address": None,
+                    }
+                )
 
         education_items = [item for item in discovered if item.route.domain == "education"]
         grouped: dict[str, list[DiscoveredItem]] = {}
@@ -405,6 +445,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             "identity": len(identity_public),
             "education": len(education_public),
             "address_candidates": len(address_public),
+            "address_prefill_candidates": len(address_prefill_public),
             "xml_available": sum(item.xml_available for item in discovered),
             "pdf_only": sum(item.pdf_available and not item.xml_available for item in discovered),
             "parse_failures": parse_failures,
@@ -415,6 +456,8 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                 "identity": identity_public,
                 "education": education_public,
                 "address_candidates": address_public,
+                "address_prefill_candidates": address_prefill_public,
+                "address_discovery_state": address_discovery_state,
                 "counts": counts,
                 "discovered_at": self.now(),
             },
