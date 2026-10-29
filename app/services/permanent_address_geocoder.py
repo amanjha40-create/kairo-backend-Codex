@@ -22,7 +22,9 @@ from app.services.permanent_address_onsite import (
 )
 from app.services.permanent_address_quality import (
     POLICY_VERSION,
+    STREET_UNAVAILABLE_QUALITY,
     STREET_UNAVAILABLE_RADIUS_M,
+    TargetDecision,
     evaluate_targets,
     normalize,
     street_normalize,
@@ -789,6 +791,33 @@ class GoogleAddressGeocoder:
             quality_query,
             street_unavailable_radius_m=self.street_unavailable_radius_m,
         )
+        _, eligibility_reasons = _google_decision_diagnostics(provider_result, decision)
+        # A Places-selected establishment can resolve as a non-partial geometric
+        # centre without route components. Once the strict structured parity
+        # checks above pass, keep Google's selected-place coordinate authoritative
+        # under the existing narrow street-unavailable radius instead of applying
+        # free-text result-type eligibility rules.
+        if (
+            not decision.eligible
+            and diagnostic.location_type == "GEOMETRIC_CENTER"
+            and not diagnostic.partial_match
+            and diagnostic.result_type_class == "other"
+            and not street_reference
+            and set(eligibility_reasons)
+            <= {
+                "no_eligible_target",
+                "street_missing_or_mismatch",
+                "broad_or_unsupported_place_type",
+            }
+        ):
+            decision = TargetDecision(
+                "GPS_TARGET_ELIGIBLE_STREET_UNAVAILABLE",
+                STREET_UNAVAILABLE_QUALITY,
+                self.street_unavailable_radius_m,
+                0,
+                ("provider_street_unavailable",),
+                street_status="provider_unavailable",
+            )
         metadata = asdict(decision)
         metadata.update(
             provider=self.provider_name,

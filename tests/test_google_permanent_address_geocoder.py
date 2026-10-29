@@ -188,6 +188,59 @@ async def test_google_place_id_allows_provider_omitted_street_components(diagnos
     assert diagnostic["reason"] == "GOOGLE_GEOCODE_SUCCESS"
 
 
+@pytest.mark.asyncio
+async def test_google_place_id_allows_selected_establishment_geometric_center(
+    diagnostic_stream,
+):
+    result = google_result(
+        location_type="GEOMETRIC_CENTER",
+        result_types=["establishment", "point_of_interest"],
+    )
+    result["address_components"] = [
+        component
+        for component in result["address_components"]
+        if "route" not in component["types"]
+        and "street_number" not in component["types"]
+    ]
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+
+    metadata, target = await service.geocode_place_id(
+        ADDRESS, "ChIJ-synthetic-place"
+    )
+
+    assert metadata["structured_parity"] is True
+    assert metadata["quality"] == "precise_address_street_unavailable"
+    assert metadata["radius_m"] == 75
+    assert target["position"] == [75.7628, 26.8505]
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["operation"] == "place_id_geocode"
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_google_place_id_rejects_approximate_unmapped_place(diagnostic_stream):
+    result = google_result(
+        location_type="APPROXIMATE",
+        result_types=["establishment", "point_of_interest"],
+    )
+    result["address_components"] = [
+        component
+        for component in result["address_components"]
+        if "route" not in component["types"]
+        and "street_number" not in component["types"]
+    ]
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+
+    metadata, target = await service.geocode_place_id(
+        ADDRESS, "ChIJ-synthetic-place"
+    )
+
+    assert metadata["structured_parity"] is True
+    assert target is None
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_POLICY_INELIGIBLE"
+
+
 @pytest.mark.parametrize(
     ("component_type", "replacement", "reason"),
     [
