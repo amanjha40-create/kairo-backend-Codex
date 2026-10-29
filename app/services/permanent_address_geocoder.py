@@ -4,7 +4,7 @@ import asyncio
 import json
 import math
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from uuid import uuid4
 
 import boto3
@@ -24,6 +24,8 @@ from app.services.permanent_address_quality import (
     POLICY_VERSION,
     STREET_UNAVAILABLE_RADIUS_M,
     evaluate_targets,
+    normalize,
+    street_normalize,
 )
 
 AMAZON_PROVIDER = "amazon_location"
@@ -48,6 +50,7 @@ class GoogleProviderResult:
     google_status: str
     result_count: int
     coordinates_present: bool
+    raw_results: tuple[dict, ...] = field(default=(), repr=False)
 
 
 class GoogleDiagnosticFailure(Exception):
@@ -217,6 +220,9 @@ class AmazonAddressGeocoder:
             return metadata, private
         except Exception:
             raise ServiceUnavailableError("Address lookup is temporarily unavailable") from None
+
+    async def geocode_place_id(self, address, place_id):
+        raise ServiceUnavailableError("Address lookup is temporarily unavailable")
 
     def _request(self, query, text):
         client = boto3.client(
@@ -409,6 +415,56 @@ def _google_decision_diagnostics(provider_result, decision):
     return diagnostic, eligibility_reasons
 
 
+def _component_within(value, component):
+    value_tokens = street_normalize(value).split()
+    component_tokens = street_normalize(component).split()
+    if not value_tokens or not component_tokens or len(component_tokens) > len(value_tokens):
+        return False
+    return any(
+        value_tokens[index : index + len(component_tokens)] == component_tokens
+        for index in range(len(value_tokens) - len(component_tokens) + 1)
+    )
+
+
+def _place_id_structured_parity(address, result):
+    country = _google_text(result, "country", short=True)
+    state = _google_text(result, "administrative_area_level_1")
+    city = _google_text(
+        result,
+        "locality",
+        "postal_town",
+        "administrative_area_level_2",
+    )
+    postal_code = _google_text(result, "postal_code")
+    route = _google_text(result, "route")
+    premise = _google_text(result, "premise")
+    address_number = _google_text(result, "street_number")
+    street_reference = route or premise
+    checks = {
+        "country": country == "IN",
+        "state": bool(state) and normalize(state) == normalize(address.get("state")),
+        "city": bool(city) and normalize(city) == normalize(address.get("city")),
+        "pin": bool(postal_code)
+        and normalize(postal_code) == normalize(address.get("postal_code")),
+        "street": bool(street_reference)
+        and _component_within(address.get("address_line_1"), street_reference),
+        "address_number": not address_number
+        or _component_within(address.get("address_line_1"), address_number),
+    }
+    reasons = []
+    if not checks["country"]:
+        reasons.append("country_mismatch")
+    if not checks["state"]:
+        reasons.append("state_mismatch")
+    if not checks["city"]:
+        reasons.append("locality_mismatch")
+    if not checks["pin"]:
+        reasons.append("pin_mismatch_or_missing")
+    if not checks["street"] or not checks["address_number"]:
+        reasons.append("street_missing_or_mismatch")
+    return checks, tuple(reasons), street_reference
+
+
 class GoogleAddressGeocoder:
     provider_name = GOOGLE_PROVIDER
 
@@ -436,7 +492,13 @@ class GoogleAddressGeocoder:
     async def _request(self, params):
         request_params = {**params, "key": self._secret(), "language": "en"}
         timeout = httpx.Timeout(connect=5, read=15, write=5, pool=5)
-        operation = "geocode" if "address" in params else "reverse_geocode"
+        operation = (
+            "place_id_geocode"
+            if "place_id" in params
+            else "geocode"
+            if "address" in params
+            else "reverse_geocode"
+        )
         correlation_id = uuid4().hex
         try:
             with places_call(operation, self.provider_name):
@@ -479,7 +541,7 @@ class GoogleAddressGeocoder:
                 status = payload.get("status")
                 if status == "ZERO_RESULTS":
                     result = GoogleProviderResult(
-                        [], (), correlation_id, http_status, status, 0, False
+                        [], (), correlation_id, http_status, status, 0, False, ()
                     )
                     log_google_geocode_diagnostic(
                         operation=operation,
@@ -562,6 +624,7 @@ class GoogleAddressGeocoder:
                     status,
                     len(results),
                     coordinates_present,
+                    tuple(results),
                 )
         except GoogleDiagnosticFailure as exc:
             log_google_geocode_diagnostic(
@@ -652,6 +715,120 @@ class GoogleAddressGeocoder:
             eligibility_reasons=eligibility_reasons,
         )
         chosen = items[decision.selected_index]
+        private = {
+            "position": chosen["Position"],
+            "normalized_address": {
+                key: chosen.get("Address", {}).get(key)
+                for key in (
+                    "Country",
+                    "Region",
+                    "Locality",
+                    "PostalCode",
+                    "Street",
+                    "AddressNumber",
+                )
+            },
+        }
+        return metadata, private
+
+    async def geocode_place_id(self, address, place_id):
+        provider_result = await self._request({"place_id": place_id})
+        operation = "place_id_geocode"
+        if provider_result.result_count != 1 or len(provider_result.raw_results) != 1:
+            metadata = {
+                "provider": self.provider_name,
+                "policy_version": POLICY_VERSION,
+                "resolution_mode": "place_id",
+                "classification": "ADDRESS_NEEDS_REVIEW",
+                "reasons": ("no_eligible_target",),
+            }
+            return metadata, None
+
+        raw_result = provider_result.raw_results[0]
+        diagnostic = provider_result.diagnostics[0]
+        _, parity_reasons, street_reference = _place_id_structured_parity(
+            address, raw_result
+        )
+        if parity_reasons:
+            metadata = {
+                "provider": self.provider_name,
+                "policy_version": POLICY_VERSION,
+                "resolution_mode": "place_id",
+                "classification": "ADDRESS_NEEDS_REVIEW",
+                "reasons": parity_reasons,
+                "structured_parity": False,
+            }
+            log_google_geocode_diagnostic(
+                operation=operation,
+                reason="GOOGLE_GEOCODE_POLICY_INELIGIBLE",
+                correlation_id=provider_result.correlation_id,
+                http_status=provider_result.http_status,
+                google_status=provider_result.google_status,
+                result_count=provider_result.result_count,
+                coordinates_present=provider_result.coordinates_present,
+                google_location_type=diagnostic.location_type,
+                partial_match=diagnostic.partial_match,
+                selected_result_type_class=diagnostic.result_type_class,
+                required_component_presence=diagnostic.required_component_presence,
+                eligibility_reasons=parity_reasons,
+            )
+            return metadata, None
+
+        item = provider_result.items[0]
+        quality_item = {
+            **item,
+            "Address": {**(item.get("Address") or {}), "Street": street_reference},
+        }
+        quality_query = query_components(address)
+        quality_query["Street"] = street_reference
+        decision = evaluate_targets(
+            [quality_item],
+            quality_query,
+            street_unavailable_radius_m=self.street_unavailable_radius_m,
+        )
+        metadata = asdict(decision)
+        metadata.update(
+            provider=self.provider_name,
+            policy_version=POLICY_VERSION,
+            resolution_mode="place_id",
+            structured_parity=True,
+        )
+        _, eligibility_reasons = _google_decision_diagnostics(provider_result, decision)
+        if not decision.eligible:
+            log_google_geocode_diagnostic(
+                operation=operation,
+                reason="GOOGLE_GEOCODE_POLICY_INELIGIBLE",
+                correlation_id=provider_result.correlation_id,
+                http_status=provider_result.http_status,
+                google_status=provider_result.google_status,
+                result_count=provider_result.result_count,
+                coordinates_present=provider_result.coordinates_present,
+                google_location_type=diagnostic.location_type,
+                partial_match=diagnostic.partial_match,
+                selected_result_type_class=diagnostic.result_type_class,
+                required_component_presence=diagnostic.required_component_presence,
+                provider_neutral_quality=decision.quality,
+                eligibility_reasons=eligibility_reasons,
+            )
+            return metadata, None
+
+        log_google_geocode_diagnostic(
+            operation=operation,
+            reason="GOOGLE_GEOCODE_SUCCESS",
+            correlation_id=provider_result.correlation_id,
+            http_status=provider_result.http_status,
+            google_status=provider_result.google_status,
+            result_count=provider_result.result_count,
+            coordinates_present=provider_result.coordinates_present,
+            normalized_result_eligible=True,
+            google_location_type=diagnostic.location_type,
+            partial_match=diagnostic.partial_match,
+            selected_result_type_class=diagnostic.result_type_class,
+            required_component_presence=diagnostic.required_component_presence,
+            provider_neutral_quality=decision.quality,
+            eligibility_reasons=eligibility_reasons,
+        )
+        chosen = provider_result.items[0]
         private = {
             "position": chosen["Position"],
             "normalized_address": {

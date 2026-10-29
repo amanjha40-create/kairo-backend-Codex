@@ -261,11 +261,22 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         self.require_enabled()
         cipher = TargetCipher(self.settings)
         await lock_private_owner(self.db, owner)
-        claimed = payload.model_dump()
+        place_id = payload.google_place_id
+        claimed = payload.model_dump(exclude={"google_place_id"})
         canonical = {k: normalize(v) for k, v in claimed.items()}
         digest = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
         previous = await self.current(owner)
-        if previous and previous.address_hash == digest:
+        if (
+            previous
+            and previous.address_hash == digest
+            and (
+                not place_id
+                or (
+                    previous.geocode_status == "READY"
+                    and (previous.geocode_metadata or {}).get("resolution_mode") == "place_id"
+                )
+            )
+        ):
             return await self.state(owner)
         now = self.clock()
         recent = list(
@@ -289,7 +300,11 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         budget.request_count += 1
         if previous:
             if previous.document_id:
-                self.document_event(previous, previous.document_id, "approval_invalidated_by_address_edit")
+                self.document_event(
+                    previous,
+                    previous.document_id,
+                    "approval_invalidated_by_address_edit",
+                )
             previous.invalidated_at = now
             previous.target_status = "superseded"
             attempts = (
@@ -315,13 +330,17 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         # cannot automatically spend again for this address version.
         await self.db.commit()
         try:
-            metadata, target = await self.geocoder.geocode(claimed)
+            if place_id:
+                metadata, target = await self.geocoder.geocode_place_id(claimed, place_id)
+            else:
+                metadata, target = await self.geocoder.geocode(claimed)
         except ServiceUnavailableError:
             metadata, target = (
                 {
                     "provider": getattr(self.geocoder, "provider_name", "unavailable"),
                     "classification": "ADDRESS_NEEDS_REVIEW",
                     "reasons": ["provider_unavailable"],
+                    "resolution_mode": "place_id" if place_id else "text",
                 },
                 None,
             )
@@ -451,7 +470,11 @@ class PermanentAddressService(AddressDocumentMixin, ManualLocationReviewMixin):
         row.document_status = outcome
         evidence = await self.document_record(doc.id)
         if evidence:
-            evidence.status = {"MATCH": "MATCH", "MISMATCH": "REJECTED", "NEEDS_REVIEW": "NEEDS_CORRECTION"}[outcome]
+            evidence.status = {
+                "MATCH": "MATCH",
+                "MISMATCH": "REJECTED",
+                "NEEDS_REVIEW": "NEEDS_CORRECTION",
+            }[outcome]
         self.document_event(row, doc.id, "legacy_review_" + outcome.lower(), reviewer)
         row.completed_at = None
         self.db.add(

@@ -151,6 +151,80 @@ async def test_google_forward_geocode_normalizes_without_raw_payload(diagnostic_
     assert diagnostic["normalized_result_eligible"] is True
 
 
+@pytest.mark.asyncio
+async def test_google_place_id_geocode_uses_authoritative_selected_target(diagnostic_stream):
+    service, observed = geocoder(
+        Response(payload={"status": "OK", "results": [google_result()]})
+    )
+    metadata, target = await service.geocode_place_id(
+        ADDRESS, "ChIJ-synthetic-place"
+    )
+    assert metadata["resolution_mode"] == "place_id"
+    assert metadata["structured_parity"] is True
+    assert target["position"] == [75.7628, 26.8505]
+    params = observed["request_kwargs"]["params"]
+    assert params["place_id"] == "ChIJ-synthetic-place"
+    assert "address" not in params and "components" not in params
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["operation"] == "place_id_geocode"
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_SUCCESS"
+
+
+@pytest.mark.parametrize(
+    ("component_type", "replacement", "reason"),
+    [
+        ("postal_code", "400001", "pin_mismatch_or_missing"),
+        ("administrative_area_level_1", "Gujarat", "state_mismatch"),
+        ("country", "US", "country_mismatch"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_google_place_id_structural_mismatch_fails_closed(
+    component_type, replacement, reason, diagnostic_stream
+):
+    result = google_result()
+    component = next(
+        value for value in result["address_components"] if component_type in value["types"]
+    )
+    component["long_name"] = replacement
+    component["short_name"] = replacement
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode_place_id(
+        ADDRESS, "ChIJ-synthetic-place"
+    )
+    assert target is None
+    assert metadata["structured_parity"] is False
+    assert reason in metadata["reasons"]
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["operation"] == "place_id_geocode"
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_POLICY_INELIGIBLE"
+
+
+@pytest.mark.asyncio
+async def test_google_place_id_not_found_never_falls_back_to_text(diagnostic_stream):
+    service, observed = geocoder(Response(payload={"status": "ZERO_RESULTS", "results": []}))
+    metadata, target = await service.geocode_place_id(
+        ADDRESS, "obsolete-place-id"
+    )
+    assert target is None
+    assert metadata["resolution_mode"] == "place_id"
+    params = observed["request_kwargs"]["params"]
+    assert params["place_id"] == "obsolete-place-id"
+    assert "address" not in params
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_ZERO_RESULTS"
+
+
+@pytest.mark.asyncio
+async def test_google_place_id_timeout_is_sanitized_without_text_retry():
+    service, observed = geocoder(httpx.ReadTimeout("synthetic timeout"))
+    with pytest.raises(ServiceUnavailableError):
+        await service.geocode_place_id(ADDRESS, "ChIJ-synthetic-place")
+    params = observed["request_kwargs"]["params"]
+    assert params["place_id"] == "ChIJ-synthetic-place"
+    assert "address" not in params
+
+
 @pytest.mark.parametrize("result_type", ["premise", "subpremise"])
 @pytest.mark.asyncio
 async def test_google_rooftop_precise_result_types_are_eligible(

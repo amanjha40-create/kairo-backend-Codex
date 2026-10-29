@@ -175,6 +175,12 @@ def test_client_verified_flag_rejected():
         PermanentAddressInput(**ADDRESS.model_dump(), verified=True)
 
 
+@pytest.mark.parametrize("field", ["latitude", "longitude", "target_coordinates"])
+def test_client_target_coordinates_are_rejected(field):
+    with pytest.raises(ValidationError):
+        PermanentAddressInput(**ADDRESS.model_dump(), **{field: 1})
+
+
 def test_radius_cannot_expand_unbounded():
     with pytest.raises(ValueError):
         LocationPolicy(approximate_radius_m=151)
@@ -208,6 +214,8 @@ def test_cipher_context_and_plaintext():
 class FakeGeocoder:
     def __init__(self):
         self.calls = 0
+        self.place_id_calls = 0
+        self.last_place_id = None
 
     async def geocode(self, address):
         self.calls += 1
@@ -215,6 +223,16 @@ class FakeGeocoder:
             "position": [0.0, 0.0],
             "normalized_address": {},
         }
+
+    async def geocode_place_id(self, address, place_id):
+        self.place_id_calls += 1
+        self.last_place_id = place_id
+        return {
+            "quality": "precise_address",
+            "provider": "google",
+            "resolution_mode": "place_id",
+            "structured_parity": True,
+        }, {"position": [0.0, 0.0], "normalized_address": {}}
 
 
 class FakeStorage:
@@ -294,6 +312,50 @@ async def test_address_dedup_and_version_reset(case):
     assert state.address_version == 2 and state.successful_gps_checks == 0 and geo.calls == 2
     assert (await db.get(PermanentAddressVersion, version)).invalidated_at is not None
     assert len(list((await db.scalars(select(PermanentAddressSession))).all())) >= 1
+
+
+@pytest.mark.asyncio
+async def test_place_id_is_transient_and_selects_place_resolution(case):
+    db, users, svc, _, geo = case
+    payload = ADDRESS.model_copy(update={"google_place_id": "ChIJ-synthetic-place"})
+    state = await svc.save_address(users[0].id, payload)
+    row = await db.get(PermanentAddressVersion, state.address_version_id)
+    assert geo.calls == 0
+    assert geo.place_id_calls == 1
+    assert geo.last_place_id == "ChIJ-synthetic-place"
+    assert row.claimed_address == ADDRESS.model_dump()
+    assert "google_place_id" not in row.claimed_address
+    assert "google_place_id" not in state.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_place_id_replaces_same_address_text_geocode_target(case):
+    _, users, svc, _, geo = case
+    first = await svc.save_address(users[0].id, ADDRESS)
+    payload = ADDRESS.model_copy(update={"google_place_id": "ChIJ-synthetic-place"})
+    second = await svc.save_address(users[0].id, payload)
+    assert first.address_version == 1
+    assert second.address_version == 2
+    assert geo.calls == 1
+    assert geo.place_id_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_place_id_failure_never_calls_text_geocoder_and_can_be_reselected(case):
+    db, users, svc, _, geo = case
+
+    async def fail_place_id(address, place_id):
+        geo.place_id_calls += 1
+        raise ServiceUnavailableError("Address lookup is temporarily unavailable")
+
+    geo.geocode_place_id = fail_place_id
+    payload = ADDRESS.model_copy(update={"google_place_id": "invalid-place-id"})
+    first = await svc.save_address(users[0].id, payload)
+    second = await svc.save_address(users[0].id, payload)
+    assert geo.calls == 0
+    assert geo.place_id_calls == 2
+    assert first.geocode_status == second.geocode_status == "NEEDS_REVIEW"
+    assert second.address_version == 2
 
 
 @pytest.mark.asyncio

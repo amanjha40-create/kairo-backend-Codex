@@ -21,6 +21,14 @@ class PermanentAddressInput(StrictInput):
     state: str = Field(min_length=1, max_length=100)
     postal_code: str = Field(pattern=r"^[1-9][0-9]{5}$")
     country: Literal["IN"] = "IN"
+    google_place_id: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        exclude=True,
+        repr=False,
+    )
 
     @field_validator("address_line_1", "address_line_2", "locality", "city", "state")
     @classmethod
