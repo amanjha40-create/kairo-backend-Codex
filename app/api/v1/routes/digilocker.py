@@ -164,7 +164,45 @@ class IdentityVerificationRequest(BaseModel):
     consent_version: Literal["v1"]
 
 
-@router.get("/identity/verifications")
+class IdentityVerificationItem(BaseModel):
+    id: str
+    source: Literal["digilocker"]
+    verification_source: Literal["digilocker"]
+    verification_status: Literal["verified", "needs_review"]
+    source_type: Literal["issued_document"]
+    document_type: Literal["PANCR", "DRVLC"]
+    integrity_result: Literal["verified", "failed"]
+    match_result: Literal[
+        "VERIFIED_MATCH", "PARTIAL_MATCH", "MISMATCH", "UNABLE_TO_VERIFY"
+    ]
+    match_reason: str | None
+    masked_identifier: str | None
+    verified_at: datetime | None
+    document_valid_until: date | None
+    consent_purpose: Literal["identity_verification"]
+    consent_version: Literal["v1"]
+    consented_at: datetime
+    current: bool
+
+
+class IdentityHistoryResponse(BaseModel):
+    items: list[IdentityVerificationItem]
+    identity_verified: bool
+
+
+class IdentityVerificationOutcome(BaseModel):
+    document_type: Literal["PANCR", "DRVLC"]
+    status: Literal["already_verified", "verified", "needs_review", "failed"]
+    verification_id: str | None = None
+    error_code: str | None = None
+    retryable: bool
+
+
+class IdentityVerificationResponse(IdentityHistoryResponse):
+    document_outcomes: list[IdentityVerificationOutcome] = Field(default_factory=list)
+
+
+@router.get("/identity/verifications", response_model=IdentityHistoryResponse)
 async def identity_history(response: Response, user: Principal, service: IdentityService):
     response.headers.update(PRIVATE_HEADERS)
     return await service.history(user.id)
@@ -176,7 +214,7 @@ async def identity_trust(response: Response, user: Principal, service: IdentityS
     return await service.trust(user.id)
 
 
-@router.post("/identity/verify")
+@router.post("/identity/verify", response_model=IdentityVerificationResponse)
 async def verify_identity(
     body: IdentityVerificationRequest, response: Response, user: Principal, service: IdentityService
 ):

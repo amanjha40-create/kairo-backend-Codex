@@ -77,9 +77,16 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
 
     def _public(self, row, user):
         current = identity_current(row, user, self.now().date())
+        accepted = bool(
+            row.integrity_result == "verified"
+            and row.match_result == "VERIFIED_MATCH"
+            and row.verified_at is not None
+        )
         return {
             "id": str(row.id),
             "source": row.source,
+            "verification_source": row.source,
+            "verification_status": "verified" if accepted else "needs_review",
             "source_type": row.source_type,
             "document_type": row.document_type,
             "integrity_result": row.integrity_result,

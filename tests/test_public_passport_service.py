@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from app.models.education import Education
+from app.models.education_document import EducationDocument
 from app.models.employment import Employment
 from app.models.internship import Internship
 from app.schemas.passport_share import PassportSharePermissions
@@ -67,6 +68,8 @@ class _FakeSession:
                     )
                     rows = [row for row in rows if row.verification_status in allowed]
             return _ExecuteResult(rows)
+        if entity is EducationDocument:
+            return _ExecuteResult([])
         if entity is Internship:
             return _ExecuteResult(self._internships)
         raise AssertionError(f"Unexpected entity query: {entity}")

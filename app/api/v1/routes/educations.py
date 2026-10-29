@@ -57,7 +57,7 @@ async def list_my_educations(
 ) -> Page[EducationResponse]:
     items, total = await svc.list_for_user(current.id, offset=page.offset, limit=page.limit)
     return Page[EducationResponse].create(
-        items=[EducationResponse.model_validate(e) for e in items],
+        items=await svc.responses(items),
         total=total,
         params=page,
     )
@@ -70,7 +70,7 @@ async def create_education(
     svc: Annotated[EducationService, Depends(get_education_service)],
 ) -> EducationResponse:
     edu = await svc.create(current.id, payload)
-    return EducationResponse.model_validate(edu)
+    return await svc.response(edu)
 
 
 @router.get("/{education_id}", response_model=EducationResponse)
@@ -80,7 +80,7 @@ async def get_education(
     svc: Annotated[EducationService, Depends(get_education_service)],
 ) -> EducationResponse:
     edu = await svc.get_owned(current.id, education_id)
-    return EducationResponse.model_validate(edu)
+    return await svc.response(edu)
 
 
 @router.patch("/{education_id}", response_model=EducationResponse)
@@ -91,7 +91,7 @@ async def update_education(
     svc: Annotated[EducationService, Depends(get_education_service)],
 ) -> EducationResponse:
     edu = await svc.update(current.id, education_id, payload)
-    return EducationResponse.model_validate(edu)
+    return await svc.response(edu)
 
 
 @router.post("/{education_id}/submit", response_model=EducationResponse)
@@ -101,7 +101,7 @@ async def submit_education(
     svc: Annotated[EducationService, Depends(get_education_service)],
 ) -> EducationResponse:
     edu = await svc.submit(current.id, education_id)
-    return EducationResponse.model_validate(edu)
+    return await svc.response(edu)
 
 
 @router.post(

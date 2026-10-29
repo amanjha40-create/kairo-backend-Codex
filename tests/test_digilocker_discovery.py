@@ -559,6 +559,10 @@ async def test_spcer_variant_repeated_import_is_idempotent(harness):
         first = await discovery.import_records(
             harness.ids[0], [selected], consent=False, consent_version="v1"
         )
+        education = await session.scalar(
+            select(Education).where(Education.user_id == harness.ids[0])
+        )
+        first_verified_at = education.verified_at
         second = await discovery.import_records(
             harness.ids[0], [selected], consent=False, consent_version="v1"
         )
@@ -566,15 +570,13 @@ async def test_spcer_variant_repeated_import_is_idempotent(harness):
         await session.close()
     assert first["outcomes"][0]["status"] == "imported"
     assert second["outcomes"][0]["status"] == "already_added"
+    assert first_verified_at is not None
     async with async_session_factory() as check:
-        assert (
-            await check.scalar(
-                select(func.count())
-                .select_from(Education)
-                .where(Education.user_id == harness.ids[0])
-            )
-            == 1
+        education = await check.scalar(
+            select(Education).where(Education.user_id == harness.ids[0])
         )
+        assert education.verification_status == "verified"
+        assert education.verified_at == first_verified_at
         assert (
             await check.scalar(
                 select(func.count())
@@ -600,6 +602,39 @@ async def test_manual_or_resume_education_exact_match(harness, existing, expecte
     finally:
         await session.close()
     assert result["education"][0]["possible_existing_record_match"] == expected
+
+
+async def test_manual_education_is_upgraded_without_duplicate(harness):
+    await prepare_user(harness)
+    education_id = (await add_education(harness.ids[0]))[0]
+    row = issued("DGCER")
+    storage = FakeStorage()
+    session, discovery = await service(
+        harness,
+        FakeDocuments([row], {row["uri"]: education_xml("DGCER")}),
+        storage=storage,
+    )
+    try:
+        available = await discovery.available_records(harness.ids[0])
+        selected = available["education"][0]["candidate_id"]
+        result = await discovery.import_records(
+            harness.ids[0], [selected], consent=False, consent_version="v1"
+        )
+    finally:
+        await session.close()
+    assert result["outcomes"][0]["status"] == "linked"
+    assert result["outcomes"][0]["record_id"] == education_id
+    async with async_session_factory() as check:
+        educations = list(
+            (
+                await check.scalars(
+                    select(Education).where(Education.user_id == harness.ids[0])
+                )
+            ).all()
+        )
+        assert len(educations) == 1
+        assert educations[0].verification_status == "verified"
+        assert educations[0].verified_at is not None
 
 
 async def test_ambiguous_education_requires_review(harness):

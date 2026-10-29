@@ -520,6 +520,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
 
         uploaded: list[str] = []
         evidence_count = 0
+        accepted_at = self.now()
         try:
             for item in group.items:
                 if item.existing_evidence_id is not None:
@@ -558,7 +559,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                         byte_size=len(document.content),
                         checksum_sha256=hashlib.sha256(document.content).hexdigest(),
                         verification_status="verified",
-                        verified_at=self.now(),
+                        verified_at=accepted_at,
                         extracted_payload={
                             "digilocker": {
                                 "source": "digilocker",
@@ -567,7 +568,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                                 "issuer_id": item.item["issuerid"],
                                 "issuer_name": item.item["issuer"],
                                 "reference_fingerprint": fingerprint,
-                                "retrieved_at": self.now().isoformat(),
+                                "retrieved_at": accepted_at.isoformat(),
                                 "parser_status": item.parser_status,
                             }
                         },
@@ -581,6 +582,9 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                 for object_key in uploaded:
                     await self.storage.delete_best_effort(object_key=object_key)
                 return self._outcome(group.candidate_id, "education", "needs_review", group)
+            if education.verification_status != "verified" or education.verified_at is None:
+                education.verification_status = "verified"
+                education.verified_at = accepted_at
             await self.session.commit()
         except (SQLAlchemyError, ServiceUnavailableError):
             await self.session.rollback()

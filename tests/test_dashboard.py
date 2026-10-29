@@ -14,6 +14,7 @@ from app.main import app
 from app.schemas.passport_engine import (
     DashboardActivePassportShares,
     DashboardActivityItem,
+    DashboardDigiLockerSummary,
     DashboardResponse,
     DashboardShareAnalyticsItem,
     DashboardShareSummaryItem,
@@ -105,6 +106,14 @@ class FakePassportEngineService:
                     subject_id=user_id,
                 )
             ],
+            digilocker=DashboardDigiLockerSummary(
+                connection_status="reconnect_required",
+                verified_records_count=3,
+                new_records_available_count=None,
+                needs_review_count=None,
+                last_synced_at=None,
+                discovery_status="reconnect_required",
+            ),
         )
 
 
@@ -128,3 +137,5 @@ async def test_get_dashboard_returns_backend_owned_summary() -> None:
     assert body["trust_score"]["overall"] == 72
     assert body["active_passport_shares"]["count"] == 1
     assert body["recent_share_analytics"][0]["total_views"] == 3
+    assert body["digilocker"]["verified_records_count"] == 3
+    assert body["digilocker"]["connection_status"] == "reconnect_required"

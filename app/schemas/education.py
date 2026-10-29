@@ -81,6 +81,7 @@ class EducationResponse(BaseModel):
     end_date_precision: Literal["day", "month", "year"] | None = None
     is_currently_studying: bool
     verification_status: EducationVerificationStatus
+    verification_source: str | None = None
     submitted_at: datetime | None = None
     reviewed_at: datetime | None = None
     verified_at: datetime | None = None

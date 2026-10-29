@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
+from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +42,8 @@ from app.schemas.passport_engine import (
     PassportVerificationSummary,
 )
 from app.schemas.passport_share import PassportSharePermissions
+from app.services.digilocker_home_summary import DigiLockerHomeSummaryService
+from app.services.digilocker_verification_projection import education_verification_projections
 from app.services.public_passport_service import PublicPassportService
 from app.services.trust_score_service import TrustScoreService
 from app.services.user_service import UserService
@@ -49,12 +52,18 @@ from app.services.user_service import UserService
 class PassportEngineService:
     """Canonical owner-facing Trust Passport aggregation."""
 
-    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        redis: Redis | None = None,
+    ) -> None:
         self._session = session
         self._settings = settings
         self._users = UserService(session, settings)
         self._trust = TrustScoreService(session)
         self._public_passport = PublicPassportService(session, settings)
+        self._digilocker = DigiLockerHomeSummaryService(session, settings, redis)
 
     async def get_owner_passport(self, user_id: UUID) -> OwnerPassportResponse:
         profile = await self._users.get_public_profile(user_id)
@@ -108,6 +117,7 @@ class PassportEngineService:
         active_passport_shares = await self._build_active_passport_shares(user_id)
         recent_share_analytics = await self._build_recent_share_analytics(user_id)
         recent_activity = await self._build_recent_activity(user_id)
+        digilocker = await self._digilocker.build(user_id)
 
         return DashboardResponse(
             profile_completion=profile_completion,
@@ -118,6 +128,7 @@ class PassportEngineService:
             active_passport_shares=active_passport_shares,
             recent_share_analytics=recent_share_analytics,
             recent_activity=recent_activity,
+            digilocker=digilocker,
         )
 
     async def get_onboarding_status(self, user_id: UUID) -> OnboardingStatusResponse:
@@ -206,7 +217,7 @@ class PassportEngineService:
 
     async def _build_verification_summary(self, user_id: UUID) -> PassportVerificationSummary:
         employments = await self._status_summary(Employment, Employment.created_by_user_id == user_id)
-        educations = await self._status_summary(Education, Education.user_id == user_id)
+        educations = await self._education_status_summary(user_id)
         internships = await self._status_summary(Internship, Internship.user_id == user_id)
         freelance = await self._status_summary(FreelanceContract, FreelanceContract.user_id == user_id)
         gig_platforms = await self._status_summary(GigPlatform, GigPlatform.user_id == user_id)
@@ -263,6 +274,23 @@ class PassportEngineService:
         statuses = {str(status): int(count) for status, count in rows}
         total = sum(statuses.values())
         return PassportSectionStatusSummary(total=total, statuses=statuses)
+
+    async def _education_status_summary(self, user_id: UUID) -> PassportSectionStatusSummary:
+        educations = list(
+            (
+                await self._session.scalars(
+                    select(Education).where(
+                        Education.user_id == user_id,
+                        Education.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        projections = await education_verification_projections(self._session, educations)
+        statuses: dict[str, int] = {}
+        for projection in projections.values():
+            statuses[projection.status] = statuses.get(projection.status, 0) + 1
+        return PassportSectionStatusSummary(total=len(educations), statuses=statuses)
 
     async def _build_onboarding_status(self, user: User) -> OnboardingStatusResponse:
         email_verified = user.email_verified_at is not None

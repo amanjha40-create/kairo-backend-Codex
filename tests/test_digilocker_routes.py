@@ -184,6 +184,12 @@ def test_openapi_exposes_connection_and_document_routes():
         BASE + "/eaadhaar/verify",
     }
     assert "security" not in schema["paths"][BASE + "/callback"]["get"]
+    identity_fields = schema["components"]["schemas"]["IdentityVerificationItem"][
+        "properties"
+    ]
+    assert {"verification_status", "verification_source", "verified_at"} <= set(
+        identity_fields
+    )
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:
         assert schema["paths"][BASE + path][method]["security"]
 

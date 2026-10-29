@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import asyncio
+import hashlib
 from datetime import UTC, datetime
-from urllib.parse import quote, urlsplit, parse_qs
+from urllib.parse import parse_qs, quote, urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,8 +23,8 @@ from app.models import (
     PortfolioItem,
     Project,
     Skill,
-    UserDocument,
     User,
+    UserDocument,
 )
 from app.models.employment_document import EmploymentDocument
 from app.models.freelance_contract import FreelanceContract
@@ -45,12 +45,13 @@ from app.schemas.public_passport import (
     PublicPassportResponse,
     PublicPassportShareMetadata,
     PublicPassportSkill,
+    PublicPassportTrustScore,
     PublicPassportUserDocument,
     PublicPassportVault,
-    PublicPassportTrustScore,
 )
-from app.services.passport_sharing_policy import resolve_policy
 from app.services.address_document_privacy import private_address_document
+from app.services.digilocker_verification_projection import education_verification_projections
+from app.services.passport_sharing_policy import resolve_policy
 from app.services.trust_score_service import TrustScoreService
 from app.services.user_service import UserService
 
@@ -264,11 +265,17 @@ class PublicPassportService:
                 .where(Education.user_id == user_id, Education.deleted_at.is_(None))
                 .order_by(Education.start_date.desc())
             )
+            edu_rows = list((await self._session.execute(education_query)).scalars().all())
+            projections = await education_verification_projections(self._session, edu_rows)
             if public_only:
-                education_query = education_query.where(
-                    Education.verification_status.in_({"verified"} if sharing_mode == "verified_only" else self._PUBLIC_EDUCATION_STATUSES),
+                visible_statuses = (
+                    {"verified"}
+                    if sharing_mode == "verified_only"
+                    else self._PUBLIC_EDUCATION_STATUSES
                 )
-            edu_rows = (await self._session.execute(education_query)).scalars().all()
+                edu_rows = [
+                    row for row in edu_rows if projections[row.id].status in visible_statuses
+                ]
             educations = [
                 PublicPassportEducation(
                     id=row.id,
@@ -282,7 +289,7 @@ class PublicPassportService:
                     end_date=row.end_date,
                     end_date_precision=row.end_date_precision,
                     is_currently_studying=row.is_currently_studying,
-                    verification_status=row.verification_status,
+                    verification_status=projections[row.id].status,
                 )
                 for row in edu_rows
             ]

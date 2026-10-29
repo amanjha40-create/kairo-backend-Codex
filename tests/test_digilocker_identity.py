@@ -219,6 +219,12 @@ async def test_persistence_privacy_repeat_concurrency_no_score_or_profile_mutati
         "••••••234F",
         "••••••••1234",
     }
+    assert all(
+        row["verification_status"] == "verified"
+        and row["verification_source"] == "digilocker"
+        and row["verified_at"] is not None
+        for row in results[0]["items"]
+    )
     assert "ABCDE1234F" not in str(results)
     assert "MH-12 2020/001234" not in str(results)
     assert {r["id"] for r in results[0]["items"]} == {r["id"] for r in results[1]["items"]}

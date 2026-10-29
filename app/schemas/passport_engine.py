@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -111,6 +111,17 @@ class DashboardActivityItem(BaseModel):
     subject_id: UUID | None
 
 
+class DashboardDigiLockerSummary(BaseModel):
+    connection_status: Literal["never_connected", "connected", "reconnect_required"]
+    verified_records_count: int = Field(ge=0)
+    new_records_available_count: int | None = Field(default=None, ge=0)
+    needs_review_count: int | None = Field(default=None, ge=0)
+    last_synced_at: datetime | None = None
+    discovery_status: Literal[
+        "fresh", "not_connected", "reconnect_required", "unavailable"
+    ]
+
+
 class DashboardResponse(BaseModel):
     profile_completion: OnboardingStatusResponse
     profile_completion_percentage: int = 0
@@ -120,6 +131,7 @@ class DashboardResponse(BaseModel):
     active_passport_shares: DashboardActivePassportShares
     recent_share_analytics: list[DashboardShareAnalyticsItem]
     recent_activity: list[DashboardActivityItem]
+    digilocker: DashboardDigiLockerSummary
 
 
 class OwnerPassportResponse(BaseModel):

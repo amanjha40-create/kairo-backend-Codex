@@ -26,8 +26,10 @@ from app.schemas.education import (
     EducationDocumentDownloadUrlResponse,
     EducationDocumentUploadIntentRequest,
     EducationDocumentUploadIntentResponse,
+    EducationResponse,
     EducationUpdateRequest,
 )
+from app.services.digilocker_verification_projection import education_verification_projections
 from app.verification_requests.enums import VerificationRequestStatus
 
 logger = logging.getLogger(__name__)
@@ -84,6 +86,22 @@ class EducationService:
         if edu is None:
             raise NotFoundError("Education record not found")
         return edu
+
+    async def responses(self, educations: list[Education]) -> list[EducationResponse]:
+        projections = await education_verification_projections(self._session, educations)
+        return [
+            EducationResponse.model_validate(education).model_copy(
+                update={
+                    "verification_status": projections[education.id].status,
+                    "verification_source": projections[education.id].source,
+                    "verified_at": projections[education.id].verified_at,
+                }
+            )
+            for education in educations
+        ]
+
+    async def response(self, education: Education) -> EducationResponse:
+        return (await self.responses([education]))[0]
 
     async def update(
         self, user_id: UUID, education_id: UUID, payload: EducationUpdateRequest,

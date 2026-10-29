@@ -428,8 +428,9 @@ def get_passport_share_service(
 def get_passport_engine_service(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    redis: Redis = Depends(get_redis),
 ) -> PassportEngineService:
-    return PassportEngineService(session, settings)
+    return PassportEngineService(session, settings, redis)
 
 
 def get_passport_pdf_service(
