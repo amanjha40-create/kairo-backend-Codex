@@ -21,8 +21,11 @@ class EducationDocumentType(StrEnum):
     """Supporting evidence for an education record."""
 
     DEGREE_CERTIFICATE = "degree_certificate"
+    PASSING_CERTIFICATE = "passing_certificate"
+    PROVISIONAL_CERTIFICATE = "provisional_certificate"
     TRANSCRIPT = "transcript"
     MARKSHEET = "marksheet"
+    MIGRATION_CERTIFICATE = "migration_certificate"
     ADMISSION_LETTER = "admission_letter"
     ENROLLMENT_PROOF = "enrollment_proof"
     OTHER = "other"

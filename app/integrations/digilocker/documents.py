@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.integrations.digilocker.crypto import parse_keyring
 from app.integrations.digilocker.provider import ProviderError
+from app.integrations.digilocker.registry import SUPPORTED_DOCTYPES
 
 HOST = "https://digilocker.meripehchaan.gov.in"
 ISSUED_URL = HOST + "/public/oauth2/2/files/issued"
@@ -23,7 +24,7 @@ FILE_URL = HOST + "/public/oauth2/1/file/"
 XML_URL = HOST + "/public/oauth2/1/xml/"
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_LIST_BYTES = 1024 * 1024
-SUPPORTED_TYPES = {"PANCR", "DRVLC"}
+SUPPORTED_TYPES = SUPPORTED_DOCTYPES
 MIMES = {"application/pdf", "application/xml", "text/xml", "image/jpeg", "image/png"}
 logger = logging.getLogger(__name__)
 
@@ -192,8 +193,13 @@ class DigiLockerDocuments:
                         try:
                             error = json.loads(error_data)
                             code = error.get("error") if isinstance(error, dict) else None
-                            if code in ("uri_missing", "invalid_uri", "invalid_request",
-                                        "unsupported_document", "insufficient_scope"):
+                            if code in (
+                                "uri_missing",
+                                "invalid_uri",
+                                "invalid_request",
+                                "unsupported_document",
+                                "insufficient_scope",
+                            ):
                                 rejection_code = code
                         except (ValueError, UnicodeError, RecursionError):
                             pass
@@ -247,8 +253,12 @@ class DigiLockerDocuments:
         finally:
             logger.info(
                 "digilocker_document_response",
-                extra={"operation": operation, "provider_status": status, "category": category,
-                       "rejection_code": rejection_code},
+                extra={
+                    "operation": operation,
+                    "provider_status": status,
+                    "category": category,
+                    "rejection_code": rejection_code,
+                },
             )
             if self.client is None:
                 await client.aclose()

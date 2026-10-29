@@ -175,6 +175,8 @@ def test_openapi_exposes_connection_and_document_routes():
         BASE + "/connection",
         BASE + "/documents/issued",
         BASE + "/documents/retrieve",
+        BASE + "/available-records",
+        BASE + "/records/import",
         BASE + "/identity/verify",
         BASE + "/identity/verifications",
         BASE + "/identity/trust",

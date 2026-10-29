@@ -114,7 +114,15 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
         return result
 
     @transaction
-    async def verify(self, user_id, document_types, *, consent, consent_version):
+    async def verify(
+        self,
+        user_id,
+        document_types,
+        *,
+        consent,
+        consent_version,
+        selected_references: dict[str, str] | None = None,
+    ):
         if consent is not True or consent_version != "v1":
             raise ValidationAppError("Explicit identity verification consent is required.")
         if (
@@ -169,18 +177,34 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             connection = await self._connection(user_id)
             items, _ = await self.documents.issued(token)
             selected = []
+            selected_references = selected_references or {}
+            if set(selected_references) - set(document_types):
+                raise ValidationAppError(
+                    "Selected document unavailable or ambiguous.",
+                    code="digilocker_selection_unavailable",
+                )
             for doctype in pending_types:
                 candidates = {
                     item["uri"]: item
                     for item in items
                     if item["supported"] and item["doctype"] == doctype
                 }
-                if len(candidates) != 1:
+                selected_reference = selected_references.get(doctype)
+                if selected_reference is not None:
+                    selected_item = candidates.get(selected_reference)
+                    if selected_item is None:
+                        raise ValidationAppError(
+                            "Selected document unavailable or ambiguous.",
+                            code="digilocker_selection_unavailable",
+                        )
+                    selected.append(selected_item)
+                elif len(candidates) != 1:
                     raise ValidationAppError(
                         "Selected document unavailable or ambiguous.",
                         code="digilocker_selection_unavailable",
                     )
-                selected.append(next(iter(candidates.values())))
+                else:
+                    selected.append(next(iter(candidates.values())))
             now = self.now()
             notices = []
             provider_failures = []
@@ -290,15 +314,21 @@ class DigiLockerIdentityService(DigiLockerDocumentService):
             if not notices and provider_failures and not current:
                 raise self._provider_failure(*provider_failures[0])
             await self.session.flush()
-            notices = [(str(row.id) + ":" + now.isoformat(), doctype, outcome)
-                       for row, doctype, outcome in notices]
+            notices = [
+                (str(row.id) + ":" + now.isoformat(), doctype, outcome)
+                for row, doctype, outcome in notices
+            ]
             result = await self._results(user)
             result["document_outcomes"] = outcomes
             await self.session.commit()
             for event_id, doctype, outcome in notices:
                 await notify_identity_result(
-                    self.session, self.settings, user_id,
-                    document_type=doctype, result=outcome, event_id=event_id,
+                    self.session,
+                    self.settings,
+                    user_id,
+                    document_type=doctype,
+                    result=outcome,
+                    event_id=event_id,
                 )
             return result
         except ProviderError as exc:

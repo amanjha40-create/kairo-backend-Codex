@@ -15,7 +15,13 @@ from app.db.session import get_session
 from app.exceptions import AppException, ServiceUnavailableError
 from app.infrastructure.redis.deps import get_redis
 from app.integrations.digilocker.browser_return import browser_redirect, completion_page
+from app.schemas.digilocker_discovery import (
+    AvailableRecordsResponse,
+    ImportRecordsRequest,
+    ImportRecordsResponse,
+)
 from app.schemas.trust_score import IdentityTrustResponse
+from app.services.digilocker_discovery_service import DigiLockerDiscoveryService
 from app.services.digilocker_document_service import DigiLockerDocumentService
 from app.services.digilocker_eaadhaar_service import DigiLockerEAadhaarService
 from app.services.digilocker_identity_service import DigiLockerIdentityService
@@ -77,6 +83,17 @@ def get_identity_service(
 IdentityService = Annotated[DigiLockerIdentityService, Depends(get_identity_service)]
 
 
+def get_discovery_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[Redis, Depends(get_redis)],
+):
+    return DigiLockerDiscoveryService(session, settings, redis)
+
+
+DiscoveryService = Annotated[DigiLockerDiscoveryService, Depends(get_discovery_service)]
+
+
 def get_eaadhaar_service(
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -106,9 +123,16 @@ class EAadhaarVerificationResponse(BaseModel):
     document_type: Literal["EAADHAAR"]
     integrity_result: Literal["verified"]
     match_result: Literal["VERIFIED_MATCH", "PARTIAL_MATCH", "MISMATCH", "UNABLE_TO_VERIFY"]
-    match_reason: Literal[
-        "NAME_MISMATCH", "DOB_MISMATCH", "NAME_AND_DOB_MISMATCH", "REQUIRED_FIELD_MISSING", "OTHER"
-    ] | None
+    match_reason: (
+        Literal[
+            "NAME_MISMATCH",
+            "DOB_MISMATCH",
+            "NAME_AND_DOB_MISMATCH",
+            "REQUIRED_FIELD_MISSING",
+            "OTHER",
+        ]
+        | None
+    )
     verified_at: datetime | None
     document_valid_until: date | None
     consent_purpose: Literal["identity_verification"]
@@ -159,6 +183,33 @@ async def verify_identity(
     response.headers.update(PRIVATE_HEADERS)
     return await service.verify(
         user.id, body.document_types, consent=body.consent, consent_version=body.consent_version
+    )
+
+
+@router.get("/available-records", response_model=AvailableRecordsResponse)
+async def available_records(
+    response: Response,
+    user: Principal,
+    service: DiscoveryService,
+):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.available_records(user.id)
+
+
+@router.post("/records/import", response_model=ImportRecordsResponse)
+async def import_records(
+    body: ImportRecordsRequest,
+    response: Response,
+    user: Principal,
+    service: DiscoveryService,
+):
+    response.headers.update(PRIVATE_HEADERS)
+    return await service.import_records(
+        user.id,
+        body.candidate_ids,
+        education_targets=body.education_targets,
+        consent=body.consent,
+        consent_version=body.consent_version,
     )
 
 
