@@ -170,6 +170,24 @@ async def test_google_place_id_geocode_uses_authoritative_selected_target(diagno
     assert diagnostic["reason"] == "GOOGLE_GEOCODE_SUCCESS"
 
 
+@pytest.mark.asyncio
+async def test_google_place_id_allows_provider_omitted_street_components(diagnostic_stream):
+    result = google_result()
+    result["address_components"] = [
+        component
+        for component in result["address_components"]
+        if "route" not in component["types"] and "street_number" not in component["types"]
+    ]
+    service, _ = geocoder(Response(payload={"status": "OK", "results": [result]}))
+    metadata, target = await service.geocode_place_id(ADDRESS, "ChIJ-synthetic-place")
+    assert metadata["structured_parity"] is True
+    assert metadata["quality"] == "precise_address_street_unavailable"
+    assert target["position"] == [75.7628, 26.8505]
+    diagnostic = diagnostic_record(diagnostic_stream)
+    assert diagnostic["operation"] == "place_id_geocode"
+    assert diagnostic["reason"] == "GOOGLE_GEOCODE_SUCCESS"
+
+
 @pytest.mark.parametrize(
     ("component_type", "replacement", "reason"),
     [

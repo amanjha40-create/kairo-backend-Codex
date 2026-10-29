@@ -446,8 +446,8 @@ def _place_id_structured_parity(address, result):
         "city": bool(city) and normalize(city) == normalize(address.get("city")),
         "pin": bool(postal_code)
         and normalize(postal_code) == normalize(address.get("postal_code")),
-        "street": bool(street_reference)
-        and _component_within(address.get("address_line_1"), street_reference),
+        "street": not street_reference
+        or _component_within(address.get("address_line_1"), street_reference),
         "address_number": not address_number
         or _component_within(address.get("address_line_1"), address_number),
     }
@@ -460,7 +460,9 @@ def _place_id_structured_parity(address, result):
         reasons.append("locality_mismatch")
     if not checks["pin"]:
         reasons.append("pin_mismatch_or_missing")
-    if not checks["street"] or not checks["address_number"]:
+    if (street_reference and not checks["street"]) or (
+        address_number and not checks["address_number"]
+    ):
         reasons.append("street_missing_or_mismatch")
     return checks, tuple(reasons), street_reference
 
@@ -780,7 +782,8 @@ class GoogleAddressGeocoder:
             "Address": {**(item.get("Address") or {}), "Street": street_reference},
         }
         quality_query = query_components(address)
-        quality_query["Street"] = street_reference
+        if street_reference:
+            quality_query["Street"] = street_reference
         decision = evaluate_targets(
             [quality_item],
             quality_query,
