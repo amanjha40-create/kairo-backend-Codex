@@ -22,6 +22,7 @@ from app.schemas.hr_v2 import (
     EmployeeLifecycleUpdateRequest,
     FormerEmployeeCorrectionCreateRequest,
     FormerEmployeeCorrectionDecisionRequest,
+    OrganizationJobRoleCreateRequest,
     OrganizationRoleAssignmentRequest,
 )
 from app.services.hr_v2_service import HRV2Service
@@ -105,6 +106,43 @@ async def test_deactivate_role_returns_loaded_committed_response_and_repeat_is_s
                 assert persisted.is_active is False
                 assert persisted.updated_at == result.updated_at
                 assert assigned_person.role_id == role_id
+
+
+async def test_member_proposal_owner_approval_returns_loaded_committed_response():
+    async with async_session_factory() as session:
+        service, owner, org, _, _ = await _fixture(session)
+        member = User(
+            email=f"role-approver-{uuid4()}@example.test",
+            full_name="Synthetic Member",
+            role="hr",
+            is_active=True,
+        )
+        session.add(member)
+        await session.flush()
+        session.add(
+            OrganizationMember(
+                organization_id=org.id,
+                user_id=member.id,
+                role=OrganizationRole.MEMBER,
+            )
+        )
+        await session.commit()
+
+        proposed = await service.create_role(
+            member.id,
+            org.public_id,
+            OrganizationJobRoleCreateRequest(
+                name=f"Synthetic Analyst {uuid4()}",
+                mode="submit",
+            ),
+        )
+        approved = await service.approve_role(owner.id, org.public_id, proposed.public_id)
+
+        assert proposed.status == "pending_approval"
+        assert approved.status == "active"
+        assert approved.approved_by_user_id == owner.id
+        assert approved.updated_at is not None
+        assert approved.model_dump(mode="json")["updated_at"]
 
 
 @pytest.mark.parametrize("joining", [date(2024, 12, 31), date(2025, 1, 31)])

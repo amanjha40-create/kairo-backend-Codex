@@ -248,6 +248,7 @@ class HRV2Service:
             organization.id, actor_user_id, "role_updated", "organization_job_role", role.public_id
         )
         await self._session.commit()
+        await self._session.refresh(role)
         count = await self._role_assignment_count(role.id)
         return self._role_response(role, count)
 
@@ -274,6 +275,7 @@ class HRV2Service:
             role.public_id,
         )
         await self._session.commit()
+        await self._session.refresh(role)
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def reject_role(
@@ -301,6 +303,7 @@ class HRV2Service:
             {"reason": payload.reason} if payload.reason else None,
         )
         await self._session.commit()
+        await self._session.refresh(role)
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def deactivate_role(
