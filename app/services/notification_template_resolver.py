@@ -11,11 +11,19 @@ class NotificationTemplateResolver:
 
     DEFAULT_TEMPLATE_BY_EVENT: dict[str, str] = {
         "trust_invitation_created": "trust_invitation",
+        "trust_invitation_received": "trust_invitation",
+        "trust_invitation_accepted": "trust_invitation",
+        "trust_invitation_updated": "trust_invitation",
+        "trust_invitation_completed": "trust_invitation",
         "verification_completed": "verification_completed",
     }
 
     def resolve(self, request: NotificationRequest) -> tuple[str, str]:
-        template_key = request.template_key or self.DEFAULT_TEMPLATE_BY_EVENT.get(request.normalized_event_type())
+        template_key = request.template_key or self.DEFAULT_TEMPLATE_BY_EVENT.get(
+            request.normalized_event_type()
+        )
         if template_key is None:
-            raise ValidationAppError("Notification template could not be resolved", code="notification_template_missing")
+            raise ValidationAppError(
+                "Notification template could not be resolved", code="notification_template_missing"
+            )
         return template_key.strip().lower(), request.template_version.strip() or "v1"

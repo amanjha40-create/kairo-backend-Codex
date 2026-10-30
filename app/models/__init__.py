@@ -1,7 +1,6 @@
 """Import models for Alembic metadata discovery."""
 
 from app.models.account_deletion import AccountDeletion, AccountDeletionItem
-from app.models.organization_deletion_resolution import OrganizationDeletionResolution
 from app.models.admin_access_audit_event import AdminAccessAuditEvent
 from app.models.admin_access_invitation import AdminAccessInvitation
 from app.models.admin_profile_provenance import AdminProfileProvenance
@@ -43,11 +42,13 @@ from app.models.notification_event import NotificationEvent
 from app.models.notification_preference import NotificationPreference
 from app.models.organization import Organization
 from app.models.organization_activity_event import OrganizationActivityEvent
+from app.models.organization_deletion_resolution import OrganizationDeletionResolution
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization_job_role import OrganizationJobRole
 from app.models.organization_logo_upload import OrganizationLogoUpload
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
+from app.models.organization_person_correction import OrganizationPersonCorrection
 from app.models.organization_person_identifier import OrganizationPersonIdentifier
 from app.models.organization_person_note import OrganizationPersonNote
 from app.models.organization_person_passport_access import OrganizationPersonPassportAccess
@@ -151,6 +152,7 @@ __all__ = [
     "OrganizationLogoUpload",
     "OrganizationMember",
     "OrganizationPerson",
+    "OrganizationPersonCorrection",
     "InstitutionPersonConsent",
     "InstitutionPersonLifecycleEvent",
     "InstitutionPersonProfile",

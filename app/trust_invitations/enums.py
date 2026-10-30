@@ -30,6 +30,7 @@ class TrustInvitationVerificationType(StrEnum):
     EDUCATION = "education"
     CERTIFICATION = "certification"
     PROFESSIONAL_REFERENCE = "professional_reference"
+    PERMANENT_ADDRESS = "permanent_address"
 
 
 class TrustInvitationEventType(StrEnum):
@@ -38,6 +39,9 @@ class TrustInvitationEventType(StrEnum):
     RESENT = "resent"
     OPENED = "opened"
     ACCEPTED = "accepted"
+    DECLINED = "declined"
+    UPDATED = "updated"
+    COMPLETED = "completed"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
     DELIVERY_FAILED = "delivery_failed"

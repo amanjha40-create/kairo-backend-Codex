@@ -31,6 +31,7 @@ from app.schemas.organization import (
     OrganizationCreateRequest,
     OrganizationInvitationCreateRequest,
     OrganizationInvitationResponse,
+    OrganizationInvitationUpdateRequest,
     OrganizationMemberCreateRequest,
     OrganizationMemberResponse,
     OrganizationMemberSuspendRequest,
@@ -305,7 +306,9 @@ class OrganizationService:
             organization_id=organization.id,
             invited_by_user_id=actor_user_id,
             invitee_user_id=user.id if user is not None else None,
+            invitee_name=payload.invitee_name,
             invitee_email=invitee_email,
+            personal_message=payload.personal_message,
             role=payload.role,
             status=OrganizationInvitationStatus.PENDING,
             expires_at=datetime.now(tz=UTC) + INVITATION_TTL,
@@ -357,6 +360,33 @@ class OrganizationService:
             ),
             default_sort_by="created_at",
         )
+
+    async def update_invitation(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        invitation_public_id: UUID,
+        payload: OrganizationInvitationUpdateRequest,
+    ) -> OrganizationInvitationResponse:
+        organization, _ = await self.require_org_manager(actor_user_id, org_public_id)
+        invitation = await self._require_org_invitation(organization.id, invitation_public_id)
+        await self._expire_stale_invitations([invitation], datetime.now(tz=UTC))
+        if invitation.status != OrganizationInvitationStatus.PENDING:
+            raise ConflictError("Only pending Team invitations can be edited")
+        if "invitee_name" in payload.model_fields_set:
+            invitation.invitee_name = payload.invitee_name
+        if "personal_message" in payload.model_fields_set:
+            invitation.personal_message = payload.personal_message
+        await self._record_hr_event(
+            organization.id, actor_user_id, "team_invitation_updated", invitation.public_id
+        )
+        await self._session.commit()
+        refreshed = await self._invitations.get_by_public_id_for_organization(
+            organization.id, invitation.public_id
+        )
+        if refreshed is None:
+            raise NotFoundError("Organization invitation not found")
+        return self._to_invitation_response(refreshed)
 
     async def resend_invitation(
         self,
@@ -634,6 +664,8 @@ class OrganizationService:
             public_id=invitation.public_id,
             organization_public_id=invitation.organization.public_id,
             invitee_email=invitation.invitee_email,
+            invitee_name=getattr(invitation, "invitee_name", None),
+            personal_message=getattr(invitation, "personal_message", None),
             invitee_user_id=invitation.invitee_user_id,
             role=invitation.role,
             status=invitation.status,
@@ -827,6 +859,8 @@ class OrganizationService:
                     .title(),
                     "invitation_url": invitation_url,
                     "expires_at_iso": invitation.token_expires_at.isoformat(),
+                    "invitee_name": getattr(invitation, "invitee_name", None),
+                    "personal_message": getattr(invitation, "personal_message", None),
                 },
                 recipient_user_id=invitation.invitee_user_id,
             )

@@ -24,11 +24,13 @@ from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_job_role import OrganizationJobRole
 from app.models.organization_logo_upload import OrganizationLogoUpload
 from app.models.organization_person import OrganizationPerson
+from app.models.organization_person_correction import OrganizationPersonCorrection
 from app.models.permanent_address import PermanentAddressSession, PermanentAddressVersion
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
+from app.organization.permissions import is_organization_manager
 from app.organization_people.enums import (
     OrganizationPersonEmploymentStatus,
     OrganizationPersonRelationship,
@@ -38,6 +40,10 @@ from app.schemas.hr_v2 import (
     DEFAULT_VERIFICATION_PREFERENCES,
     EmployeeLifecycleResponse,
     EmployeeLifecycleUpdateRequest,
+    FormerEmployeeCorrectionCreateRequest,
+    FormerEmployeeCorrectionDecisionRequest,
+    FormerEmployeeCorrectionResponse,
+    HiringRoleDecisionRequest,
     OrganizationJobRoleCreateRequest,
     OrganizationJobRoleResponse,
     OrganizationJobRoleUpdateRequest,
@@ -103,13 +109,14 @@ class HRV2Service:
         person = await self._locked_person(organization.id, person_public_id)
 
         current = OrganizationPersonEmploymentStatus(person.employment_status)
-        if (
-            current == OrganizationPersonEmploymentStatus.EX_EMPLOYEE
-            and payload.employment_status == OrganizationPersonEmploymentStatus.ACTIVE
-        ):
+        if current == OrganizationPersonEmploymentStatus.EX_EMPLOYEE:
+            if payload.employment_status == OrganizationPersonEmploymentStatus.ACTIVE:
+                raise ConflictError(
+                    "Reactivation is not supported in HR V2 V1 because historical exit data "
+                    "requires a deliberate rehire lifecycle"
+                )
             raise ConflictError(
-                "Reactivation is not supported in HR V2 V1 because historical exit data "
-                "requires a deliberate rehire lifecycle"
+                "Former-employee history is immutable; request an audited correction"
             )
         if payload.employment_status == OrganizationPersonEmploymentStatus.EX_EMPLOYEE:
             if payload.last_working_day is None:
@@ -163,9 +170,10 @@ class HRV2Service:
         org_public_id: UUID,
         payload: OrganizationJobRoleCreateRequest,
     ) -> OrganizationJobRoleResponse:
-        organization, _ = await self._organizations.require_org_manager(
+        organization, membership = await self._organizations.require_org_member(
             actor_user_id, org_public_id
         )
+        self._assert_active_access(organization, membership)
         normalized = normalize_role_name(payload.name)
         await self._assert_unique_role_name(organization.id, normalized)
         role = OrganizationJobRole(
@@ -173,6 +181,28 @@ class HRV2Service:
             name=" ".join(payload.name.split()),
             normalized_name=normalized,
             description=payload.description,
+            department=payload.department,
+            location=payload.location,
+            work_mode=payload.work_mode,
+            status=(
+                "draft"
+                if payload.mode == "draft"
+                else "active"
+                if is_organization_manager(membership.role)
+                else "pending_approval"
+            ),
+            is_active=payload.mode != "draft" and is_organization_manager(membership.role),
+            created_by_user_id=actor_user_id,
+            approved_by_user_id=(
+                actor_user_id
+                if is_organization_manager(membership.role) and payload.mode == "submit"
+                else None
+            ),
+            approved_at=(
+                datetime.now(tz=UTC)
+                if is_organization_manager(membership.role) and payload.mode == "submit"
+                else None
+            ),
         )
         self._session.add(role)
         await self._session.flush()
@@ -201,14 +231,77 @@ class HRV2Service:
             role.normalized_name = normalized
         if "description" in payload.model_fields_set:
             role.description = payload.description
+        for field in ("department", "location", "work_mode"):
+            if field in payload.model_fields_set:
+                setattr(role, field, getattr(payload, field))
         if payload.is_active is not None:
             role.is_active = payload.is_active
+            if payload.is_active:
+                role.status = "active"
+                role.archived_at = None
+                role.approved_by_user_id = actor_user_id
+                role.approved_at = role.approved_at or datetime.now(tz=UTC)
+            else:
+                role.status = "archived"
+                role.archived_at = datetime.now(tz=UTC)
         await self._record_event(
             organization.id, actor_user_id, "role_updated", "organization_job_role", role.public_id
         )
         await self._session.commit()
         count = await self._role_assignment_count(role.id)
         return self._role_response(role, count)
+
+    async def approve_role(
+        self, actor_user_id: UUID, org_public_id: UUID, role_public_id: UUID
+    ) -> OrganizationJobRoleResponse:
+        organization, _ = await self._organizations.require_org_manager(
+            actor_user_id, org_public_id
+        )
+        role = await self._role(organization.id, role_public_id)
+        if role.status not in {"draft", "pending_approval", "rejected"}:
+            raise ConflictError("Hiring role is not awaiting approval")
+        now = datetime.now(tz=UTC)
+        role.status = "active"
+        role.is_active = True
+        role.approved_by_user_id = actor_user_id
+        role.approved_at = now
+        role.rejected_at = None
+        await self._record_event(
+            organization.id,
+            actor_user_id,
+            "hiring_role_approved",
+            "organization_job_role",
+            role.public_id,
+        )
+        await self._session.commit()
+        return self._role_response(role, await self._role_assignment_count(role.id))
+
+    async def reject_role(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        role_public_id: UUID,
+        payload: HiringRoleDecisionRequest,
+    ) -> OrganizationJobRoleResponse:
+        organization, _ = await self._organizations.require_org_manager(
+            actor_user_id, org_public_id
+        )
+        role = await self._role(organization.id, role_public_id)
+        if role.status != "pending_approval":
+            raise ConflictError("Only pending Hiring Roles can be rejected")
+        role.status = "rejected"
+        role.is_active = False
+        role.rejected_at = datetime.now(tz=UTC)
+        await self._record_event(
+            organization.id,
+            actor_user_id,
+            "hiring_role_rejected",
+            "organization_job_role",
+            role.public_id,
+            {"reason": payload.reason} if payload.reason else None,
+        )
+        await self._session.commit()
+        return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def deactivate_role(
         self, actor_user_id: UUID, org_public_id: UUID, role_public_id: UUID
@@ -218,6 +311,8 @@ class HRV2Service:
         )
         role = await self._role(organization.id, role_public_id)
         role.is_active = False
+        role.status = "archived"
+        role.archived_at = datetime.now(tz=UTC)
         await self._record_event(
             organization.id,
             actor_user_id,
@@ -241,6 +336,13 @@ class HRV2Service:
         )
         self._assert_active_access(organization, membership)
         person = await self._locked_person(organization.id, person_public_id)
+        if (
+            OrganizationPersonEmploymentStatus(getattr(person, "employment_status", "active"))
+            == OrganizationPersonEmploymentStatus.EX_EMPLOYEE
+        ):
+            raise ConflictError(
+                "Former-employee history is immutable; request an audited correction"
+            )
         joining_date = (
             payload.joining_date
             if "joining_date" in payload.model_fields_set
@@ -273,6 +375,153 @@ class HRV2Service:
             department=person.department,
             joining_date=person.joining_date,
         )
+
+    async def create_former_employee_correction(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        person_public_id: UUID,
+        payload: FormerEmployeeCorrectionCreateRequest,
+    ) -> FormerEmployeeCorrectionResponse:
+        organization, membership = await self._organizations.require_org_member(
+            actor_user_id, org_public_id
+        )
+        self._assert_active_access(organization, membership)
+        person = await self._locked_person(organization.id, person_public_id)
+        if (
+            OrganizationPersonEmploymentStatus(person.employment_status)
+            != OrganizationPersonEmploymentStatus.EX_EMPLOYEE
+        ):
+            raise ConflictError("Corrections are reserved for immutable former-employee history")
+        proposed_changes = dict(payload.proposed_changes)
+        if proposed_changes.get("role_id") is not None:
+            role_public_id = UUID(str(proposed_changes["role_id"]))
+            await self._role(organization.id, role_public_id)
+        snapshot = await self._employment_snapshot(person)
+        row = OrganizationPersonCorrection(
+            organization_id=organization.id,
+            organization_person_id=person.id,
+            proposed_changes=proposed_changes,
+            before_snapshot=snapshot,
+            reason=payload.reason,
+            requested_by_user_id=actor_user_id,
+        )
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return self._correction_response(row, person.public_id)
+
+    async def approve_former_employee_correction(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        correction_public_id: UUID,
+        payload: FormerEmployeeCorrectionDecisionRequest,
+    ) -> FormerEmployeeCorrectionResponse:
+        organization, _ = await self._organizations.require_org_manager(
+            actor_user_id, org_public_id
+        )
+        row = (
+            await self._session.execute(
+                select(OrganizationPersonCorrection)
+                .where(
+                    OrganizationPersonCorrection.organization_id == organization.id,
+                    OrganizationPersonCorrection.public_id == correction_public_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise NotFoundError("Former-employee correction not found")
+        if row.status != "pending":
+            raise ConflictError("Correction has already been decided")
+        person = await self._session.get(OrganizationPerson, row.organization_person_id)
+        if (
+            person is None
+            or OrganizationPersonEmploymentStatus(person.employment_status)
+            != OrganizationPersonEmploymentStatus.EX_EMPLOYEE
+        ):
+            raise ConflictError("Former-employee record is no longer eligible")
+        changes = dict(row.proposed_changes)
+        joining_date = self._correction_date(
+            changes.get("joining_date"),
+            person.joining_date,
+            "joining_date" in changes,
+        )
+        last_working_day = self._correction_date(
+            changes.get("last_working_day"),
+            person.last_working_day,
+            "last_working_day" in changes,
+        )
+        if (
+            joining_date is not None
+            and last_working_day is not None
+            and joining_date > last_working_day
+        ):
+            raise ValidationAppError("joining_date cannot be after last_working_day")
+        resolved_role_id = person.role_id
+        if "role_id" in changes:
+            role_public_id = changes.pop("role_id")
+            if role_public_id is None:
+                resolved_role_id = None
+            else:
+                role = await self._role(organization.id, UUID(str(role_public_id)))
+                resolved_role_id = role.id
+        person.role_id = resolved_role_id
+        self._apply_employment_correction(person, changes)
+        row.after_snapshot = await self._employment_snapshot(person)
+        row.status = "approved"
+        row.decided_by_user_id = actor_user_id
+        row.decided_at = datetime.now(tz=UTC)
+        row.decision_reason = payload.decision_reason
+        await self._record_event(
+            organization.id,
+            actor_user_id,
+            "former_employee_correction_approved",
+            "organization_person",
+            person.public_id,
+            {"correction_public_id": str(row.public_id)},
+        )
+        person_public_id = person.public_id
+        await self._session.commit()
+        await self._session.refresh(row)
+        return self._correction_response(row, person_public_id)
+
+    async def reject_former_employee_correction(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        correction_public_id: UUID,
+        payload: FormerEmployeeCorrectionDecisionRequest,
+    ) -> FormerEmployeeCorrectionResponse:
+        organization, _ = await self._organizations.require_org_manager(
+            actor_user_id, org_public_id
+        )
+        row = (
+            await self._session.execute(
+                select(OrganizationPersonCorrection)
+                .where(
+                    OrganizationPersonCorrection.organization_id == organization.id,
+                    OrganizationPersonCorrection.public_id == correction_public_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise NotFoundError("Former-employee correction not found")
+        if row.status != "pending":
+            raise ConflictError("Correction has already been decided")
+        person = await self._session.get(OrganizationPerson, row.organization_person_id)
+        if person is None:
+            raise NotFoundError("Organization person not found")
+        row.status = "rejected"
+        row.decided_by_user_id = actor_user_id
+        row.decided_at = datetime.now(tz=UTC)
+        row.decision_reason = payload.decision_reason
+        person_public_id = person.public_id
+        await self._session.commit()
+        await self._session.refresh(row)
+        return self._correction_response(row, person_public_id)
 
     async def create_logo_upload_intent(
         self,
@@ -608,10 +857,72 @@ class HRV2Service:
             public_id=role.public_id,
             name=role.name,
             description=role.description,
+            department=getattr(role, "department", None),
+            location=getattr(role, "location", None),
+            work_mode=getattr(role, "work_mode", None),
+            status=getattr(role, "status", "active" if role.is_active else "archived"),
+            created_by_user_id=getattr(role, "created_by_user_id", None),
+            approved_by_user_id=getattr(role, "approved_by_user_id", None),
+            approved_at=getattr(role, "approved_at", None),
+            rejected_at=getattr(role, "rejected_at", None),
+            archived_at=getattr(role, "archived_at", None),
             is_active=role.is_active,
             assigned_people_count=count,
             created_at=role.created_at,
             updated_at=role.updated_at,
+        )
+
+    async def _employment_snapshot(self, person: OrganizationPerson) -> dict[str, object]:
+        role = (
+            await self._session.get(OrganizationJobRole, person.role_id)
+            if person.role_id is not None
+            else None
+        )
+        return {
+            "role_id": str(role.public_id) if role is not None else None,
+            "department": person.department,
+            "joining_date": person.joining_date.isoformat() if person.joining_date else None,
+            "last_working_day": person.last_working_day.isoformat()
+            if person.last_working_day
+            else None,
+        }
+
+    @staticmethod
+    def _apply_employment_correction(
+        person: OrganizationPerson, changes: dict[str, object]
+    ) -> None:
+        for field, value in changes.items():
+            if field in {"joining_date", "last_working_day"}:
+                setattr(person, field, date.fromisoformat(str(value)) if value else None)
+            else:
+                setattr(person, field, value)
+
+    @staticmethod
+    def _correction_date(
+        value: object, current: date | None, supplied: bool
+    ) -> date | None:
+        if not supplied:
+            return current
+        return date.fromisoformat(str(value)) if value else None
+
+    @staticmethod
+    def _correction_response(
+        row: OrganizationPersonCorrection, person_public_id: UUID
+    ) -> FormerEmployeeCorrectionResponse:
+        return FormerEmployeeCorrectionResponse(
+            public_id=row.public_id,
+            person_public_id=person_public_id,
+            proposed_changes=row.proposed_changes,
+            before_snapshot=row.before_snapshot,
+            after_snapshot=row.after_snapshot,
+            reason=row.reason,
+            status=row.status,
+            requested_by_user_id=row.requested_by_user_id,
+            decided_by_user_id=row.decided_by_user_id,
+            decided_at=row.decided_at,
+            decision_reason=row.decision_reason,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
         )
 
     async def _logo_response(self, organization) -> OrganizationLogoResponse:  # noqa: ANN001

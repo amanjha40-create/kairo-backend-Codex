@@ -23,6 +23,8 @@ class TrustInvitationEmailTemplateData(BaseModel):
     subject_name: str = Field(min_length=1, max_length=255)
     invitation_url: str = Field(min_length=1, max_length=4096)
     expires_at_iso: str = Field(min_length=1, max_length=64)
+    role: str | None = Field(default=None, max_length=255)
+    reminder: bool = False
 
 
 class TeamInvitationEmailTemplateData(BaseModel):
@@ -33,6 +35,8 @@ class TeamInvitationEmailTemplateData(BaseModel):
     invited_role_label: str = Field(min_length=1, max_length=255)
     invitation_url: str = Field(min_length=1, max_length=4096)
     expires_at_iso: str = Field(min_length=1, max_length=64)
+    invitee_name: str | None = Field(default=None, max_length=255)
+    personal_message: str | None = Field(default=None, max_length=2000)
 
 
 class SignupOtpEmailTemplateData(BaseModel):

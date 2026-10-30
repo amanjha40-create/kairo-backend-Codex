@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import mimetypes
-from urllib.parse import urlparse
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,6 +17,7 @@ from app.infrastructure.s3.paths import build_user_avatar_key
 from app.infrastructure.s3.presign import generate_presigned_get_url, generate_presigned_put_url
 from app.infrastructure.s3.service import S3UploadService
 from app.models import ProfileLanguage, ProfileLink
+from app.repositories import UserRepository
 from app.schemas.profile import (
     ProfileLanguageCreate,
     ProfileLanguageResponse,
@@ -25,7 +26,6 @@ from app.schemas.profile import (
     ProfileLinkResponse,
     ProfileLinkUpdate,
 )
-from app.repositories import UserRepository
 from app.schemas.user import AvatarUploadIntentResponse, UserPublic, UserUpdate
 
 _AVATAR_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
@@ -78,7 +78,10 @@ class UserService:
         for field, value in changes.items():
             setattr(user, field, value)
 
-        if self._is_minimum_onboarding_complete(user) and user.employment_onboarding_completed_at is None:
+        if (
+            self._is_minimum_onboarding_complete(user)
+            and user.employment_onboarding_completed_at is None
+        ):
             user.employment_onboarding_completed_at = datetime.now(timezone.utc)
 
         await self._session.commit()
@@ -86,13 +89,30 @@ class UserService:
         return await self._to_public(user)
 
     async def _to_public(self, user) -> UserPublic:  # noqa: ANN001
-        languages = list((await self._session.execute(
-            select(ProfileLanguage).where(ProfileLanguage.user_id == user.id).order_by(ProfileLanguage.language.asc())
-        )).scalars().all())
-        links = list((await self._session.execute(
-            select(ProfileLink).where(ProfileLink.user_id == user.id).order_by(ProfileLink.created_at.asc())
-        )).scalars().all())
+        languages = list(
+            (
+                await self._session.execute(
+                    select(ProfileLanguage)
+                    .where(ProfileLanguage.user_id == user.id)
+                    .order_by(ProfileLanguage.language.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        links = list(
+            (
+                await self._session.execute(
+                    select(ProfileLink)
+                    .where(ProfileLink.user_id == user.id)
+                    .order_by(ProfileLink.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
         pub = UserPublic.model_validate(user)
+        pub.has_password = bool(user.password_hash)
         pub.avatar_url = await self._avatar_url(user.avatar_key)
         pub.languages = [ProfileLanguageResponse.model_validate(item) for item in languages]
         pub.professional_links = [ProfileLinkResponse.model_validate(item) for item in links]
@@ -100,7 +120,9 @@ class UserService:
         return pub
 
     @staticmethod
-    def _profile_completion(user, languages: list[ProfileLanguage], links: list[ProfileLink]) -> int:  # noqa: ANN001
+    def _profile_completion(
+        user, languages: list[ProfileLanguage], links: list[ProfileLink]
+    ) -> int:  # noqa: ANN001
         requirements = [
             bool((user.full_name or "").strip()),
             bool(user.avatar_key),
@@ -115,29 +137,57 @@ class UserService:
         return int(sum(requirements) * 100 / len(requirements))
 
     async def list_languages(self, user_id: UUID) -> list[ProfileLanguageResponse]:
-        rows = (await self._session.execute(
-            select(ProfileLanguage).where(ProfileLanguage.user_id == user_id).order_by(ProfileLanguage.language.asc())
-        )).scalars().all()
+        rows = (
+            (
+                await self._session.execute(
+                    select(ProfileLanguage)
+                    .where(ProfileLanguage.user_id == user_id)
+                    .order_by(ProfileLanguage.language.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
         return [ProfileLanguageResponse.model_validate(row) for row in rows]
 
-    async def create_language(self, user_id: UUID, payload: ProfileLanguageCreate) -> ProfileLanguageResponse:
+    async def create_language(
+        self, user_id: UUID, payload: ProfileLanguageCreate
+    ) -> ProfileLanguageResponse:
         language = payload.language.casefold()
-        existing = await self._session.scalar(select(ProfileLanguage).where(ProfileLanguage.user_id == user_id, ProfileLanguage.language.ilike(language)))
+        existing = await self._session.scalar(
+            select(ProfileLanguage).where(
+                ProfileLanguage.user_id == user_id, ProfileLanguage.language.ilike(language)
+            )
+        )
         if existing:
             raise ConflictError("This language is already on your profile")
-        row = ProfileLanguage(user_id=user_id, language=payload.language, proficiency=payload.proficiency)
+        row = ProfileLanguage(
+            user_id=user_id, language=payload.language, proficiency=payload.proficiency
+        )
         self._session.add(row)
         await self._session.commit()
         await self._session.refresh(row)
         return ProfileLanguageResponse.model_validate(row)
 
-    async def update_language(self, user_id: UUID, language_id: UUID, payload: ProfileLanguageUpdate) -> ProfileLanguageResponse:
-        row = await self._session.scalar(select(ProfileLanguage).where(ProfileLanguage.id == language_id, ProfileLanguage.user_id == user_id))
+    async def update_language(
+        self, user_id: UUID, language_id: UUID, payload: ProfileLanguageUpdate
+    ) -> ProfileLanguageResponse:
+        row = await self._session.scalar(
+            select(ProfileLanguage).where(
+                ProfileLanguage.id == language_id, ProfileLanguage.user_id == user_id
+            )
+        )
         if row is None:
             raise NotFoundError("Language not found")
         changes = payload.model_dump(exclude_unset=True)
         if "language" in changes:
-            duplicate = await self._session.scalar(select(ProfileLanguage).where(ProfileLanguage.user_id == user_id, ProfileLanguage.id != language_id, ProfileLanguage.language.ilike(changes["language"])))
+            duplicate = await self._session.scalar(
+                select(ProfileLanguage).where(
+                    ProfileLanguage.user_id == user_id,
+                    ProfileLanguage.id != language_id,
+                    ProfileLanguage.language.ilike(changes["language"]),
+                )
+            )
             if duplicate:
                 raise ConflictError("This language is already on your profile")
         for field, value in changes.items():
@@ -147,16 +197,28 @@ class UserService:
         return ProfileLanguageResponse.model_validate(row)
 
     async def delete_language(self, user_id: UUID, language_id: UUID) -> None:
-        row = await self._session.scalar(select(ProfileLanguage).where(ProfileLanguage.id == language_id, ProfileLanguage.user_id == user_id))
+        row = await self._session.scalar(
+            select(ProfileLanguage).where(
+                ProfileLanguage.id == language_id, ProfileLanguage.user_id == user_id
+            )
+        )
         if row is None:
             raise NotFoundError("Language not found")
         await self._session.delete(row)
         await self._session.commit()
 
     async def list_links(self, user_id: UUID) -> list[ProfileLinkResponse]:
-        rows = (await self._session.execute(
-            select(ProfileLink).where(ProfileLink.user_id == user_id).order_by(ProfileLink.created_at.asc())
-        )).scalars().all()
+        rows = (
+            (
+                await self._session.execute(
+                    select(ProfileLink)
+                    .where(ProfileLink.user_id == user_id)
+                    .order_by(ProfileLink.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
         return [ProfileLinkResponse.model_validate(row) for row in rows]
 
     @staticmethod
@@ -178,23 +240,37 @@ class UserService:
 
     async def create_link(self, user_id: UUID, payload: ProfileLinkCreate) -> ProfileLinkResponse:
         url = self._normalize_url(payload.url)
-        existing = await self._session.scalar(select(ProfileLink).where(ProfileLink.user_id == user_id, ProfileLink.url == url))
+        existing = await self._session.scalar(
+            select(ProfileLink).where(ProfileLink.user_id == user_id, ProfileLink.url == url)
+        )
         if existing:
             raise ConflictError("This professional link is already on your profile")
-        row = ProfileLink(user_id=user_id, link_type=payload.link_type, label=payload.label, url=url)
+        row = ProfileLink(
+            user_id=user_id, link_type=payload.link_type, label=payload.label, url=url
+        )
         self._session.add(row)
         await self._session.commit()
         await self._session.refresh(row)
         return ProfileLinkResponse.model_validate(row)
 
-    async def update_link(self, user_id: UUID, link_id: UUID, payload: ProfileLinkUpdate) -> ProfileLinkResponse:
-        row = await self._session.scalar(select(ProfileLink).where(ProfileLink.id == link_id, ProfileLink.user_id == user_id))
+    async def update_link(
+        self, user_id: UUID, link_id: UUID, payload: ProfileLinkUpdate
+    ) -> ProfileLinkResponse:
+        row = await self._session.scalar(
+            select(ProfileLink).where(ProfileLink.id == link_id, ProfileLink.user_id == user_id)
+        )
         if row is None:
             raise NotFoundError("Professional link not found")
         changes = payload.model_dump(exclude_unset=True)
         if "url" in changes and changes["url"]:
             changes["url"] = self._normalize_url(changes["url"])
-            duplicate = await self._session.scalar(select(ProfileLink).where(ProfileLink.user_id == user_id, ProfileLink.id != link_id, ProfileLink.url == changes["url"]))
+            duplicate = await self._session.scalar(
+                select(ProfileLink).where(
+                    ProfileLink.user_id == user_id,
+                    ProfileLink.id != link_id,
+                    ProfileLink.url == changes["url"],
+                )
+            )
             if duplicate:
                 raise ConflictError("This professional link is already on your profile")
         for field, value in changes.items():
@@ -204,7 +280,9 @@ class UserService:
         return ProfileLinkResponse.model_validate(row)
 
     async def delete_link(self, user_id: UUID, link_id: UUID) -> None:
-        row = await self._session.scalar(select(ProfileLink).where(ProfileLink.id == link_id, ProfileLink.user_id == user_id))
+        row = await self._session.scalar(
+            select(ProfileLink).where(ProfileLink.id == link_id, ProfileLink.user_id == user_id)
+        )
         if row is None:
             raise NotFoundError("Professional link not found")
         await self._session.delete(row)
@@ -261,7 +339,9 @@ class UserService:
 
         allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
         if content_type not in allowed:
-            raise ValidationAppError(f"Unsupported avatar type. Allowed: {', '.join(sorted(allowed))}")
+            raise ValidationAppError(
+                f"Unsupported avatar type. Allowed: {', '.join(sorted(allowed))}"
+            )
 
         ext = mimetypes.guess_extension(content_type) or ".jpg"
         ext = ext.lstrip(".")

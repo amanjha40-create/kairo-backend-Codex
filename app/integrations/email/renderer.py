@@ -64,6 +64,8 @@ def _render_candidate_account_activation(
             candidate_name=payload.candidate_name,
             activation_url=payload.activation_url,
             expires_at_iso=payload.expires_at_iso,
+            role=payload.role,
+            reminder=payload.reminder,
         )
     )
     return RenderedEmailMessage(
@@ -85,6 +87,8 @@ def _render_admin_invitation(to_email: str, data: dict[str, Any]) -> RenderedEma
             invited_role_label=payload.invited_role_label,
             invitation_url=payload.invitation_url,
             expires_at_iso=payload.expires_at_iso,
+            invitee_name=payload.invitee_name,
+            personal_message=payload.personal_message,
         )
     )
     return RenderedEmailMessage(

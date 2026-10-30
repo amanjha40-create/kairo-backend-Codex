@@ -11,10 +11,14 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_trust_invitation_service
 from app.schemas.pagination import ListQueryParams, Page
 from app.schemas.trust_invitation import (
+    CandidateInvitationHomeSummary,
+    CandidateTrustInvitationResponse,
     TrustInvitationAcceptResponse,
     TrustInvitationCreateRequest,
     TrustInvitationCreateResponse,
     TrustInvitationDetailResponse,
+    TrustInvitationDraftUpdateRequest,
+    TrustInvitationFinalizeRequest,
     TrustInvitationPublicLookupResponse,
     TrustInvitationResponse,
     TrustInvitationSummaryResponse,
@@ -23,10 +27,14 @@ from app.services.trust_invitation_service import TrustInvitationService
 
 router = APIRouter(tags=["trust-invitations"])
 
-org_router = APIRouter(prefix="/organizations/{org_public_id}/trust-invitations", tags=["trust-invitations"])
+org_router = APIRouter(
+    prefix="/organizations/{org_public_id}/trust-invitations", tags=["trust-invitations"]
+)
 
 
-@org_router.post("", response_model=TrustInvitationCreateResponse, status_code=status.HTTP_201_CREATED)
+@org_router.post(
+    "", response_model=TrustInvitationCreateResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_trust_invitation(
     org_public_id: UUID,
     payload: TrustInvitationCreateRequest,
@@ -55,7 +63,10 @@ async def list_trust_invitations(
     return await svc.list_for_organization(current.id, org_public_id, params)
 
 
-@router.get("/trust-invitations/by-id/{trust_invitation_public_id}", response_model=TrustInvitationDetailResponse)
+@router.get(
+    "/trust-invitations/by-id/{trust_invitation_public_id}",
+    response_model=TrustInvitationDetailResponse,
+)
 async def get_trust_invitation_detail(
     trust_invitation_public_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
@@ -64,7 +75,90 @@ async def get_trust_invitation_detail(
     return await svc.get_detail(current.id, trust_invitation_public_id)
 
 
-@router.post("/trust-invitations/{trust_invitation_public_id}/send", response_model=TrustInvitationDetailResponse)
+@router.patch(
+    "/trust-invitations/by-id/{trust_invitation_public_id}",
+    response_model=TrustInvitationDetailResponse,
+)
+async def update_trust_invitation_draft(
+    trust_invitation_public_id: UUID,
+    payload: TrustInvitationDraftUpdateRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> TrustInvitationDetailResponse:
+    return await svc.update_draft(current.id, trust_invitation_public_id, payload)
+
+
+@router.get("/candidate/trust-invitations", response_model=list[CandidateTrustInvitationResponse])
+async def list_my_trust_invitations(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> list[CandidateTrustInvitationResponse]:
+    return await svc.list_my(current.id)
+
+
+@router.get(
+    "/candidate/trust-invitations/home-summary", response_model=CandidateInvitationHomeSummary
+)
+async def get_my_trust_invitation_home_summary(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> CandidateInvitationHomeSummary:
+    return await svc.home_summary(current.id)
+
+
+@router.get(
+    "/candidate/trust-invitations/{trust_invitation_public_id}",
+    response_model=CandidateTrustInvitationResponse,
+)
+async def get_my_trust_invitation(
+    trust_invitation_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> CandidateTrustInvitationResponse:
+    return await svc.get_my(current.id, trust_invitation_public_id)
+
+
+@router.post(
+    "/candidate/trust-invitations/{trust_invitation_public_id}/accept",
+    response_model=CandidateTrustInvitationResponse,
+)
+async def accept_my_trust_invitation(
+    trust_invitation_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> CandidateTrustInvitationResponse:
+    return await svc.accept_my(current.id, trust_invitation_public_id)
+
+
+@router.post(
+    "/candidate/trust-invitations/{trust_invitation_public_id}/decline",
+    response_model=CandidateTrustInvitationResponse,
+)
+async def decline_my_trust_invitation(
+    trust_invitation_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> CandidateTrustInvitationResponse:
+    return await svc.decline_my(current.id, trust_invitation_public_id)
+
+
+@router.post(
+    "/candidate/trust-invitations/{trust_invitation_public_id}/finalize",
+    response_model=CandidateTrustInvitationResponse,
+)
+async def finalize_my_trust_invitation(
+    trust_invitation_public_id: UUID,
+    payload: TrustInvitationFinalizeRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[TrustInvitationService, Depends(get_trust_invitation_service)],
+) -> CandidateTrustInvitationResponse:
+    return await svc.finalize_my(current.id, trust_invitation_public_id, payload)
+
+
+@router.post(
+    "/trust-invitations/{trust_invitation_public_id}/send",
+    response_model=TrustInvitationDetailResponse,
+)
 async def send_trust_invitation(
     trust_invitation_public_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
@@ -73,7 +167,10 @@ async def send_trust_invitation(
     return await svc.send(current.id, trust_invitation_public_id)
 
 
-@router.post("/trust-invitations/{trust_invitation_public_id}/resend", response_model=TrustInvitationDetailResponse)
+@router.post(
+    "/trust-invitations/{trust_invitation_public_id}/resend",
+    response_model=TrustInvitationDetailResponse,
+)
 async def resend_trust_invitation(
     trust_invitation_public_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
@@ -82,7 +179,9 @@ async def resend_trust_invitation(
     return await svc.resend(current.id, trust_invitation_public_id)
 
 
-@router.delete("/trust-invitations/{trust_invitation_public_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/trust-invitations/{trust_invitation_public_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_trust_invitation(
     trust_invitation_public_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],
@@ -109,7 +208,9 @@ async def accept_trust_invitation(
     return await svc.accept(token, current.id, current.email)
 
 
-@router.post("/trust-invitations/{trust_invitation_public_id}/cancel", response_model=TrustInvitationResponse)
+@router.post(
+    "/trust-invitations/{trust_invitation_public_id}/cancel", response_model=TrustInvitationResponse
+)
 async def cancel_trust_invitation(
     trust_invitation_public_id: UUID,
     current: Annotated[CurrentUser, Depends(get_current_user)],

@@ -9,15 +9,23 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.tokens import hash_refresh_token
 from app.config import Settings
 from app.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
+from app.models.certification import Certification
+from app.models.digilocker_identity_verification import DigiLockerIdentityVerification
+from app.models.education import Education
+from app.models.employment import Employment
+from app.models.employment_reference import EmploymentReference
 from app.models.organization_job_role import OrganizationJobRole
+from app.models.passport_share_link import PassportShareLink
+from app.models.permanent_address import PermanentAddressVersion
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
+from app.models.user import User
 from app.notifications.contracts import NotificationRequest
 from app.organization.permissions import is_organization_manager
 from app.repositories.trust_invitation import TrustInvitationRepository
@@ -25,11 +33,16 @@ from app.repositories.user import UserRepository
 from app.schemas.hr_v2 import DEFAULT_VERIFICATION_PREFERENCES
 from app.schemas.pagination import ListQueryParams, Page, filter_sort_paginate
 from app.schemas.trust_invitation import (
+    CandidateInvitationHomeSummary,
+    CandidateTrustInvitationResponse,
     TrustInvitationAcceptResponse,
     TrustInvitationCreateRequest,
     TrustInvitationCreateResponse,
     TrustInvitationDetailResponse,
+    TrustInvitationDraftUpdateRequest,
+    TrustInvitationFinalizeRequest,
     TrustInvitationPublicLookupResponse,
+    TrustInvitationRequirementProgress,
     TrustInvitationResponse,
     TrustInvitationSummaryResponse,
     TrustInvitationTimelineEventResponse,
@@ -104,6 +117,10 @@ class TrustInvitationService:
             requested_types = self._verification_types_from_preferences(preferences)
         preferences["requested_types_source"] = "defaults" if uses_defaults else "explicit"
         preferences["reference_count_applied"] = False
+        requirements_snapshot = self._requirements_snapshot(payload.requirements, requested_types)
+        requested_types = [
+            TrustInvitationVerificationType(item["type"]) for item in requirements_snapshot
+        ]
         if (
             TrustInvitationVerificationType.PROFESSIONAL_REFERENCE in requested_types
             and preferences["reference_count"] > 0
@@ -125,6 +142,8 @@ class TrustInvitationService:
             role_id=job_role.id if job_role is not None else None,
             requested_verification_types=[item.value for item in requested_types],
             verification_preferences_snapshot=preferences,
+            requirements_snapshot=requirements_snapshot,
+            requirements_version=1,
             message=payload.message,
             token_hash=hash_refresh_token(signed_token),
             status=(
@@ -137,6 +156,7 @@ class TrustInvitationService:
             created_by_user_id=actor_user_id,
             expires_at=payload.expires_at,
             sent_at=None,
+            candidate_state=("available" if payload.mode == "send" else None),
         )
         await self._repo.create(invitation)
         await self._record_event(
@@ -170,8 +190,196 @@ class TrustInvitationService:
                 raise NotFoundError("Trust invitation not found")
 
         return TrustInvitationCreateResponse(
-            **self._to_response(refreshed).model_dump(),
+            **(await self._to_response_with_progress(refreshed)).model_dump(),
             invitation_url=self._build_invitation_url(refreshed.public_id),
+        )
+
+    async def update_draft(
+        self,
+        actor_user_id: UUID,
+        invitation_public_id: UUID,
+        payload: TrustInvitationDraftUpdateRequest,
+    ) -> TrustInvitationDetailResponse:
+        invitation = await self._require_member_visible_invitation(
+            actor_user_id, invitation_public_id, include_events=True
+        )
+        if invitation.status != TrustInvitationStatus.DRAFT:
+            raise ConflictError("Only draft trust invitations can be edited")
+        if payload.role_id is not None:
+            role = (
+                await self._session.execute(
+                    select(OrganizationJobRole).where(
+                        OrganizationJobRole.organization_id == invitation.organization_id,
+                        OrganizationJobRole.public_id == payload.role_id,
+                        OrganizationJobRole.status == "active",
+                    )
+                )
+            ).scalar_one_or_none()
+            if role is None:
+                raise NotFoundError("Active Hiring Role not found")
+            invitation.role_id = role.id
+        elif "role_id" in payload.model_fields_set:
+            invitation.role_id = None
+        for field in ("subject_name", "subject_phone", "purpose", "message", "expires_at"):
+            if field in payload.model_fields_set:
+                setattr(invitation, field, getattr(payload, field))
+        if payload.subject_email is not None:
+            invitation.subject_email = self._normalize_email(str(payload.subject_email))
+        if payload.requirements is not None:
+            invitation.requirements_snapshot = self._requirements_snapshot(payload.requirements, [])
+            invitation.requested_verification_types = [
+                item["type"] for item in invitation.requirements_snapshot
+            ]
+            invitation.requirements_version += 1
+        await self._record_event(
+            invitation, TrustInvitationEventType.UPDATED, actor_user_id=actor_user_id
+        )
+        await self._session.commit()
+        refreshed = await self._repo.get_by_public_id(invitation_public_id, include_events=True)
+        if refreshed is None:
+            raise NotFoundError("Trust invitation not found")
+        return await self._to_detail_response_with_progress(refreshed)
+
+    async def list_my(self, actor_user_id: UUID) -> list[CandidateTrustInvitationResponse]:
+        user = await UserRepository(self._session).get_by_id(actor_user_id)
+        if user is not None and user.email_verified_at is None:
+            raise ForbiddenError("Verify your email before accepting Trust Invitations")
+        invitations = await self._repo.list_for_verified_email(self._normalize_email(user.email))
+        changed = await self._expire_many(invitations)
+        if changed:
+            await self._session.commit()
+        return [
+            await self._to_candidate_response(invitation, user)
+            for invitation in invitations
+            if invitation.status != TrustInvitationStatus.DRAFT
+        ]
+
+    async def get_my(
+        self, actor_user_id: UUID, invitation_public_id: UUID
+    ) -> CandidateTrustInvitationResponse:
+        user, invitation = await self._require_candidate_invitation(
+            actor_user_id, invitation_public_id
+        )
+        return await self._to_candidate_response(invitation, user)
+
+    async def accept_my(
+        self, actor_user_id: UUID, invitation_public_id: UUID
+    ) -> CandidateTrustInvitationResponse:
+        user, invitation = await self._require_candidate_invitation(
+            actor_user_id, invitation_public_id
+        )
+        if invitation.status in {
+            TrustInvitationStatus.CANCELLED,
+            TrustInvitationStatus.EXPIRED,
+        }:
+            raise ConflictError("This invitation is no longer actionable")
+        if invitation.declined_at is not None:
+            raise ConflictError("Declined invitations are no longer actionable")
+        if invitation.accepted_by_user_id not in {None, user.id}:
+            raise ForbiddenError(
+                "This trust invitation is not assigned to the authenticated account"
+            )
+        if invitation.accepted_at is None:
+            now = datetime.now(tz=UTC)
+            invitation.status = TrustInvitationStatus.ACCEPTED
+            invitation.accepted_by_user_id = user.id
+            invitation.accepted_at = now
+            invitation.claimed_at = now
+            invitation.candidate_state = "accepted"
+            await self._record_event(
+                invitation, TrustInvitationEventType.ACCEPTED, actor_user_id=user.id
+            )
+            await self._session.commit()
+            await self._sync_person_link_best_effort(invitation.public_id, actor_user_id=user.id)
+            await self._notify_hr_lifecycle(invitation, "trust_invitation_accepted", user.id)
+            invitation = await self._repo.get_by_public_id(invitation.public_id) or invitation
+        return await self._to_candidate_response(invitation, user)
+
+    async def decline_my(
+        self, actor_user_id: UUID, invitation_public_id: UUID
+    ) -> CandidateTrustInvitationResponse:
+        user, invitation = await self._require_candidate_invitation(
+            actor_user_id, invitation_public_id
+        )
+        if invitation.status in {
+            TrustInvitationStatus.CANCELLED,
+            TrustInvitationStatus.EXPIRED,
+        }:
+            raise ConflictError("This invitation is no longer actionable")
+        if invitation.completed_at is not None:
+            raise ConflictError("Completed invitations cannot be declined")
+        if invitation.declined_at is None:
+            invitation.declined_at = datetime.now(tz=UTC)
+            invitation.candidate_state = "declined"
+            await self._record_event(
+                invitation, TrustInvitationEventType.DECLINED, actor_user_id=user.id
+            )
+            await self._session.commit()
+        return await self._to_candidate_response(invitation, user)
+
+    async def finalize_my(
+        self,
+        actor_user_id: UUID,
+        invitation_public_id: UUID,
+        payload: TrustInvitationFinalizeRequest,
+    ) -> CandidateTrustInvitationResponse:
+        user, invitation = await self._require_candidate_invitation(
+            actor_user_id, invitation_public_id
+        )
+        if invitation.accepted_at is None or invitation.declined_at is not None:
+            raise ConflictError("Accept the invitation before sharing a Passport")
+        if payload.consent_version != invitation.requirements_version:
+            raise ConflictError("Invitation requirements changed; review and consent again")
+        progress = await self._requirement_progress(invitation, user)
+        if any(item.mandatory and item.status != "completed" for item in progress):
+            raise ConflictError("Complete all mandatory invitation requirements first")
+        share = (
+            await self._session.execute(
+                select(PassportShareLink).where(
+                    PassportShareLink.id == payload.passport_share_id,
+                    PassportShareLink.owner_user_id == user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if (
+            share is None
+            or share.revoked_at is not None
+            or (share.expires_at is not None and share.expires_at <= datetime.now(tz=UTC))
+        ):
+            raise NotFoundError("Active Passport share not found")
+        self._assert_share_scope(invitation, share)
+        now = datetime.now(tz=UTC)
+        invitation.passport_share_link_id = share.id
+        invitation.consented_at = now
+        invitation.consent_version = payload.consent_version
+        invitation.completed_at = now
+        invitation.candidate_state = "completed"
+        await self._record_event(
+            invitation,
+            TrustInvitationEventType.COMPLETED,
+            actor_user_id=user.id,
+            metadata={"requirements_version": payload.consent_version},
+        )
+        await self._session.commit()
+        await self._notify_hr_lifecycle(invitation, "trust_invitation_completed", user.id)
+        return await self._to_candidate_response(invitation, user)
+
+    async def home_summary(self, actor_user_id: UUID) -> CandidateInvitationHomeSummary:
+        items = await self.list_my(actor_user_id)
+        actionable = [
+            item
+            for item in items
+            if item.lifecycle_state not in {"completed", "declined", "expired", "cancelled"}
+        ]
+        needs_action = [
+            item
+            for item in actionable
+            if any(req.status != "completed" for req in item.requirements)
+        ]
+        return CandidateInvitationHomeSummary(
+            pending_invitation_count=len(actionable),
+            action_required_invitation_count=len(needs_action),
+            latest_actionable_invitation=actionable[0] if actionable else None,
         )
 
     async def get_detail(
@@ -193,7 +401,7 @@ class TrustInvitationService:
             )
             if invitation is None:
                 raise NotFoundError("Trust invitation not found")
-        return self._to_detail_response(invitation)
+        return await self._to_detail_response_with_progress(invitation)
 
     async def get_summary(
         self,
@@ -214,6 +422,7 @@ class TrustInvitationService:
                 1
                 for invitation in invitations
                 if invitation.status == TrustInvitationStatus.PENDING
+                and getattr(invitation, "declined_at", None) is None
             ),
             accepted_count=sum(
                 1
@@ -248,7 +457,9 @@ class TrustInvitationService:
         if changed:
             await self._session.commit()
             invitations = await self._repo.list_for_organization(organization.id)
-        responses = [self._to_response(invitation) for invitation in invitations]
+        responses = [
+            await self._to_response_with_progress(invitation) for invitation in invitations
+        ]
         if params is None:
             return responses
         return filter_sort_paginate(
@@ -296,7 +507,7 @@ class TrustInvitationService:
         refreshed = await self._repo.get_by_public_id(invitation_public_id, include_events=True)
         if refreshed is None:
             raise NotFoundError("Trust invitation not found")
-        return self._to_detail_response(refreshed)
+        return await self._to_detail_response_with_progress(refreshed)
 
     async def resend(
         self,
@@ -328,7 +539,7 @@ class TrustInvitationService:
         refreshed = await self._repo.get_by_public_id(invitation_public_id, include_events=True)
         if refreshed is None:
             raise NotFoundError("Trust invitation not found")
-        return self._to_detail_response(refreshed)
+        return await self._to_detail_response_with_progress(refreshed)
 
     async def delete(self, actor_user_id: UUID, invitation_public_id: UUID) -> None:
         invitation = await self._require_member_visible_invitation(
@@ -373,6 +584,9 @@ class TrustInvitationService:
         actor_user_id: UUID,
         actor_email: str,
     ) -> TrustInvitationAcceptResponse:
+        user = await UserRepository(self._session).get_by_id(actor_user_id)
+        if user is not None and user.email_verified_at is None:
+            raise ForbiddenError("Verify your email before accepting Trust Invitations")
         invitation = await self._resolve_token_for_accept(raw_token)
         if self._normalize_email(actor_email) != invitation.subject_email:
             raise ForbiddenError(
@@ -417,6 +631,8 @@ class TrustInvitationService:
         invitation.status = TrustInvitationStatus.ACCEPTED
         invitation.accepted_by_user_id = actor_user_id
         invitation.accepted_at = now
+        invitation.claimed_at = now
+        invitation.candidate_state = "accepted"
         await self._record_event(
             invitation,
             TrustInvitationEventType.ACCEPTED,
@@ -427,6 +643,7 @@ class TrustInvitationService:
             invitation_public_id,
             actor_user_id=actor_user_id,
         )
+        await self._notify_hr_lifecycle(invitation, "trust_invitation_accepted", actor_user_id)
 
         refreshed = await self._repo.get_by_public_id(invitation_public_id)
         if refreshed is None or refreshed.accepted_at is None:
@@ -495,6 +712,7 @@ class TrustInvitationService:
 
     async def _resolve_active_token(self, raw_token: str) -> TrustInvitation:
         from app.services.organization_lifecycle import require_organization_open
+
         if not raw_token or len(raw_token) < 16:
             raise NotFoundError("Trust invitation not found")
 
@@ -522,6 +740,7 @@ class TrustInvitationService:
 
     async def _resolve_token_for_accept(self, raw_token: str) -> TrustInvitation:
         from app.services.organization_lifecycle import require_organization_open
+
         if not raw_token or len(raw_token) < 16:
             raise NotFoundError("Trust invitation not found")
 
@@ -559,6 +778,10 @@ class TrustInvitationService:
             raise ConflictError("Expired trust invitations are no longer actionable")
         if invitation.status == TrustInvitationStatus.CANCELLED:
             raise ConflictError("Cancelled trust invitations are no longer actionable")
+        if getattr(invitation, "declined_at", None) is not None:
+            raise ConflictError("Declined trust invitations are no longer actionable")
+        if getattr(invitation, "completed_at", None) is not None:
+            raise ConflictError("Completed trust invitations are no longer actionable")
 
     async def _expire_many(self, invitations: list[TrustInvitation]) -> bool:
         changed = False
@@ -572,6 +795,8 @@ class TrustInvitationService:
             TrustInvitationStatus.CANCELLED,
             TrustInvitationStatus.EXPIRED,
         }:
+            return False
+        if getattr(invitation, "declined_at", None) is not None:
             return False
         if invitation.expires_at > datetime.now(tz=UTC):
             return False
@@ -599,7 +824,7 @@ class TrustInvitationService:
             )
             await self._notifications.create_and_dispatch(
                 NotificationRequest(
-                    event_type="trust_invitation_created",
+                    event_type="trust_invitation_received",
                     recipient_user_id=(
                         recipient.id
                         if recipient is not None
@@ -610,7 +835,8 @@ class TrustInvitationService:
                     recipient_email=invitation.subject_email,
                     dedupe_key=(
                         f"trust-invitation:{invitation.public_id}:sent"
-                        if trigger_event == TrustInvitationEventType.SENT else None
+                        if trigger_event == TrustInvitationEventType.SENT
+                        else None
                     ),
                     payload={
                         "organization_name": invitation.organization.name,
@@ -618,6 +844,8 @@ class TrustInvitationService:
                         "invitation_url": invitation_url,
                         "expires_at_iso": invitation.expires_at.isoformat(),
                         "purpose": invitation.purpose,
+                        "role": getattr(getattr(invitation, "job_role", None), "name", None),
+                        "reminder": trigger_event == TrustInvitationEventType.RESENT,
                     },
                     metadata={
                         "trust_invitation_public_id": str(invitation.public_id),
@@ -694,8 +922,17 @@ class TrustInvitationService:
                 },
             )
 
-    def _to_response(self, invitation: TrustInvitation) -> TrustInvitationResponse:
+    def _to_response(
+        self,
+        invitation: TrustInvitation,
+        progress: list[TrustInvitationRequirementProgress] | None = None,
+    ) -> TrustInvitationResponse:
         job_role = getattr(invitation, "job_role", None)
+        progress = progress or []
+        required = sum(1 for item in progress if item.mandatory)
+        completed = sum(
+            1 for item in progress if item.mandatory and item.status == "completed"
+        )
         return TrustInvitationResponse(
             public_id=invitation.public_id,
             organization_public_id=invitation.organization.public_id,
@@ -727,11 +964,63 @@ class TrustInvitationService:
             verification_preferences_snapshot=dict(
                 getattr(invitation, "verification_preferences_snapshot", None) or {}
             ),
+            requirements_snapshot=self._snapshot(invitation),
+            requirements_version=getattr(invitation, "requirements_version", 1),
+            lifecycle_state=self._lifecycle_state(invitation),
+            declined_at=getattr(invitation, "declined_at", None),
+            completed_at=getattr(invitation, "completed_at", None),
+            completed_requirements=completed,
+            required_requirements=(
+                required
+                if progress
+                else sum(
+                    1 for item in self._snapshot(invitation) if item.get("mandatory", True)
+                )
+            ),
+            requirement_progress=progress,
         )
 
-    def _to_detail_response(self, invitation: TrustInvitation) -> TrustInvitationDetailResponse:
+    async def _to_response_with_progress(
+        self, invitation: TrustInvitation
+    ) -> TrustInvitationResponse:
+        progress: list[TrustInvitationRequirementProgress] = []
+        accepted_by_user_id = getattr(invitation, "accepted_by_user_id", None)
+        if accepted_by_user_id is not None:
+            candidate = await UserRepository(self._session).get_by_id(accepted_by_user_id)
+            if candidate is not None:
+                progress = await self._requirement_progress(invitation, candidate)
+        return self._to_response(invitation, progress)
+
+    def _to_detail_response(
+        self,
+        invitation: TrustInvitation,
+        progress: list[TrustInvitationRequirementProgress] | None = None,
+    ) -> TrustInvitationDetailResponse:
         return TrustInvitationDetailResponse(
-            **self._to_response(invitation).model_dump(),
+            **self._to_response(invitation, progress).model_dump(),
+            invitation_url=self._build_invitation_url(invitation.public_id),
+            timeline=[
+                TrustInvitationTimelineEventResponse(
+                    id=event.id,
+                    event_type=TrustInvitationEventType(event.event_type),
+                    occurred_at=event.occurred_at,
+                    actor_user_id=event.actor_user_id,
+                    actor_email=event.actor_user.email if event.actor_user is not None else None,
+                    actor_full_name=(
+                        event.actor_user.full_name if event.actor_user is not None else None
+                    ),
+                    metadata=event.metadata_payload,
+                )
+                for event in invitation.events
+            ],
+        )
+
+    async def _to_detail_response_with_progress(
+        self, invitation: TrustInvitation
+    ) -> TrustInvitationDetailResponse:
+        response = await self._to_response_with_progress(invitation)
+        return TrustInvitationDetailResponse(
+            **response.model_dump(),
             invitation_url=self._build_invitation_url(invitation.public_id),
             timeline=[
                 TrustInvitationTimelineEventResponse(
@@ -761,14 +1050,8 @@ class TrustInvitationService:
         return [TrustInvitationVerificationType(value) for value in values]
 
     def _build_invitation_url(self, invitation_public_id: UUID) -> str:
-        base = (self._settings.candidate_portal_base_url or "").strip().rstrip("/")
-        if not base:
-            raise ValidationAppError(
-                "CANDIDATE_PORTAL_BASE_URL must be configured for trust invitation delivery"
-            )
         token = self._build_signed_token(invitation_public_id)
-        # Public lookup and acceptance remain API endpoints behind this human-facing route.
-        return f"{base}/trust-invitations/{token}"
+        return f"https://kairoid.com/invite/{token}"
 
     def _build_signed_token(self, invitation_public_id: UUID) -> str:
         body = invitation_public_id.hex
@@ -834,3 +1117,256 @@ class TrustInvitationService:
             "references": TrustInvitationVerificationType.PROFESSIONAL_REFERENCE,
         }
         return [value for key, value in mapping.items() if checks.get(key) is True]
+
+    def _requirements_snapshot(self, supplied, requested_types) -> list[dict[str, object]]:  # noqa: ANN001
+        if supplied is not None:
+            return [
+                {
+                    "type": item.requirement_type.value,
+                    "mandatory": item.mandatory,
+                    "configuration": dict(item.configuration),
+                }
+                for item in supplied
+            ]
+        return [
+            {"type": item.value, "mandatory": True, "configuration": {}} for item in requested_types
+        ]
+
+    def _snapshot(self, invitation: TrustInvitation) -> list[dict[str, object]]:
+        snapshot = list(getattr(invitation, "requirements_snapshot", None) or [])
+        if snapshot:
+            return snapshot
+        return [
+            {"type": value, "mandatory": True, "configuration": {}}
+            for value in invitation.requested_verification_types
+        ]
+
+    async def _require_verified_candidate(self, actor_user_id: UUID) -> User:
+        user = await UserRepository(self._session).get_by_id(actor_user_id)
+        if user is None or not user.is_active:
+            raise NotFoundError("Candidate account not found")
+        if user.email_verified_at is None:
+            raise ForbiddenError("Verify your email before accessing Trust Invitations")
+        return user
+
+    async def _require_candidate_invitation(
+        self, actor_user_id: UUID, invitation_public_id: UUID
+    ) -> tuple[User, TrustInvitation]:
+        user = await self._require_verified_candidate(actor_user_id)
+        invitation = await self._repo.get_by_public_id(invitation_public_id)
+        if invitation is None or invitation.status == TrustInvitationStatus.DRAFT:
+            raise NotFoundError("Trust invitation not found")
+        if self._normalize_email(user.email) != self._normalize_email(invitation.subject_email):
+            raise NotFoundError("Trust invitation not found")
+        if invitation.accepted_by_user_id not in {None, user.id}:
+            raise NotFoundError("Trust invitation not found")
+        if await self._expire_if_needed(invitation):
+            await self._session.commit()
+        return user, invitation
+
+    async def _requirement_progress(
+        self, invitation: TrustInvitation, user: User
+    ) -> list[TrustInvitationRequirementProgress]:
+        statuses: dict[str, tuple[str, str | None]] = {}
+        identity_rows = list(
+            (
+                await self._session.scalars(
+                    select(DigiLockerIdentityVerification).where(
+                        DigiLockerIdentityVerification.user_id == user.id
+                    )
+                )
+            ).all()
+        )
+        identity_ok = any(
+            row.integrity_result == "verified"
+            and row.match_result == "VERIFIED_MATCH"
+            and row.verified_at is not None
+            and row.profile_revision_at == user.updated_at
+            and (
+                row.document_valid_until is None
+                or row.document_valid_until >= datetime.now(tz=UTC).date()
+            )
+            for row in identity_rows
+        )
+        statuses["identity"] = (
+            "completed" if identity_ok else "action_required",
+            None if identity_ok else "OPEN_IDENTITY",
+        )
+        model_specs = {
+            "employment": (Employment, Employment.created_by_user_id, "OPEN_EMPLOYMENT"),
+            "education": (Education, Education.user_id, "OPEN_EDUCATION"),
+            "certification": (Certification, Certification.user_id, "OPEN_CERTIFICATION"),
+        }
+        for key, (model, owner_column, action) in model_specs.items():
+            count = int(
+                (
+                    await self._session.scalar(
+                        select(func.count())
+                        .select_from(model)
+                        .where(
+                            owner_column == user.id,
+                            model.deleted_at.is_(None),
+                            model.verification_status.in_(("verified", "approved")),
+                        )
+                    )
+                )
+                or 0
+            )
+            statuses[key] = ("completed" if count else "action_required", None if count else action)
+        reference_count = int(
+            (
+                await self._session.scalar(
+                    select(func.count())
+                    .select_from(EmploymentReference)
+                    .join(Employment, Employment.id == EmploymentReference.employment_id)
+                    .where(
+                        Employment.created_by_user_id == user.id,
+                        EmploymentReference.active.is_(True),
+                        EmploymentReference.status == "completed",
+                    )
+                )
+            )
+            or 0
+        )
+        statuses["professional_reference"] = (
+            "completed" if reference_count else "action_required",
+            None if reference_count else "OPEN_REFERENCES",
+        )
+        address_complete = bool(
+            await self._session.scalar(
+                select(PermanentAddressVersion.id)
+                .where(
+                    PermanentAddressVersion.user_id == user.id,
+                    PermanentAddressVersion.completed_at.is_not(None),
+                    PermanentAddressVersion.invalidated_at.is_(None),
+                )
+                .limit(1)
+            )
+        )
+        statuses["permanent_address"] = (
+            "completed" if address_complete else "action_required",
+            None if address_complete else "OPEN_PERMANENT_ADDRESS",
+        )
+        progress: list[TrustInvitationRequirementProgress] = []
+        for item in self._snapshot(invitation):
+            requirement_type = str(item["type"])
+            status, action = statuses.get(requirement_type, ("not_started", None))
+            configuration = dict(item.get("configuration") or {})
+            if requirement_type == "professional_reference":
+                minimum = int(
+                    configuration.get("minimum_count", configuration.get("reference_count", 1))
+                )
+                status = "completed" if reference_count >= minimum else "action_required"
+                action = None if status == "completed" else "OPEN_REFERENCES"
+            progress.append(
+                TrustInvitationRequirementProgress(
+                    requirement_type=TrustInvitationVerificationType(requirement_type),
+                    mandatory=bool(item.get("mandatory", True)),
+                    status=status,
+                    action=action,
+                    configuration=configuration,
+                )
+            )
+        return progress
+
+    async def _to_candidate_response(
+        self, invitation: TrustInvitation, user: User
+    ) -> CandidateTrustInvitationResponse:
+        progress = await self._requirement_progress(invitation, user)
+        required = sum(1 for item in progress if item.mandatory)
+        completed = sum(1 for item in progress if item.mandatory and item.status == "completed")
+        state = self._lifecycle_state(invitation)
+        if state == "accepted" and completed < required:
+            state = "in_progress"
+        job_role = getattr(invitation, "job_role", None)
+        return CandidateTrustInvitationResponse(
+            public_id=invitation.public_id,
+            organization_public_id=invitation.organization.public_id,
+            organization_name=invitation.organization.name,
+            role=job_role.name if job_role is not None else None,
+            purpose=invitation.purpose,
+            message=invitation.message,
+            lifecycle_state=state,
+            requirements_version=getattr(invitation, "requirements_version", 1),
+            requirements=progress,
+            completed_requirements=completed,
+            required_requirements=required,
+            accepted_at=invitation.accepted_at,
+            declined_at=getattr(invitation, "declined_at", None),
+            completed_at=getattr(invitation, "completed_at", None),
+            expires_at=invitation.expires_at,
+            share_action=(
+                {
+                    "action": "OPEN_PASSPORT",
+                    "label": f"Share Passport with {invitation.organization.name}",
+                }
+                if invitation.accepted_at is not None
+                and completed == required
+                and state != "completed"
+                else None
+            ),
+        )
+
+    def _lifecycle_state(self, invitation: TrustInvitation) -> str:
+        if getattr(invitation, "completed_at", None) is not None:
+            return "completed"
+        if getattr(invitation, "declined_at", None) is not None:
+            return "declined"
+        if invitation.status == TrustInvitationStatus.DRAFT:
+            return "draft"
+        if invitation.status == TrustInvitationStatus.CANCELLED:
+            return "cancelled"
+        if invitation.status == TrustInvitationStatus.EXPIRED:
+            return "expired"
+        if invitation.accepted_at is not None:
+            return getattr(invitation, "candidate_state", None) or "accepted"
+        return "available"
+
+    def _assert_share_scope(self, invitation: TrustInvitation, share: PassportShareLink) -> None:
+        permissions = dict(share.permissions or {})
+        permission_by_type = {
+            "identity": "include_profile",
+            "employment": "include_employments",
+            "education": "include_educations",
+            "certification": "include_certifications",
+        }
+        missing = [
+            item["type"]
+            for item in self._snapshot(invitation)
+            if item.get("mandatory", True)
+            and item["type"] in permission_by_type
+            and not permissions.get(permission_by_type[str(item["type"])], False)
+        ]
+        if missing:
+            raise ConflictError("Passport share excludes mandatory invitation requirements")
+
+    async def _notify_hr_lifecycle(
+        self, invitation: TrustInvitation, event_type: str, actor_user_id: UUID
+    ) -> None:
+        try:
+            await self._notifications.create_and_dispatch(
+                NotificationRequest(
+                    event_type=event_type,
+                    channel="in_app",
+                    recipient_user_id=invitation.created_by_user_id,
+                    dedupe_key=f"trust-invitation:{invitation.public_id}:{event_type}",
+                    payload={
+                        "organization_name": invitation.organization.name,
+                        "invitation_public_id": str(invitation.public_id),
+                    },
+                    metadata={
+                        "trust_invitation_public_id": str(invitation.public_id),
+                        "organization_public_id": str(invitation.organization.public_id),
+                    },
+                ),
+                actor_user_id=actor_user_id,
+            )
+        except Exception:
+            logger.exception(
+                "trust_invitation_lifecycle_notification_failed",
+                extra={
+                    "event": "trust_invitation_lifecycle_notification_failed",
+                    "invitation_public_id": str(invitation.public_id),
+                    "notification_event_type": event_type,
+                },
+            )

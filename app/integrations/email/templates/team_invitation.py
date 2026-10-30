@@ -20,6 +20,8 @@ class TeamInvitationContext:
     invited_role_label: str
     invitation_url: str
     expires_at_iso: str
+    invitee_name: str | None = None
+    personal_message: str | None = None
 
 
 def render_team_invitation(context: TeamInvitationContext) -> TransactionalEmailContent:
@@ -28,12 +30,24 @@ def render_team_invitation(context: TeamInvitationContext) -> TransactionalEmail
     safe_inviter = html_escape(context.inviter_name)
     safe_role = html_escape(context.invited_role_label)
     safe_expiry = html_escape(context.expires_at_iso)
+    greeting = f"Hello {html_escape(context.invitee_name)}," if context.invitee_name else "Hello,"
+    message = (
+        '<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#5d6966;">'
+        f"{html_escape(context.personal_message)}</p>"
+        if context.personal_message
+        else ""
+    )
+    greeting_text = f"Hello {context.invitee_name},\n\n" if context.invitee_name else ""
+    message_text = f"{context.personal_message}\n\n" if context.personal_message else ""
     html_body = render_html(
         title=title,
         content=(
+            '<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
+            f"{greeting}</p>"
             f'<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
             f"{safe_inviter} invited you to join <strong>{safe_org}</strong> as "
             f"<strong>{safe_role}</strong>.</p>"
+            f"{message}"
             f"{action_link(label='Accept team invitation', url=context.invitation_url)}"
             f'<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#5d6966;">'
             f"This invitation expires at {safe_expiry} and can only be used once.</p>"
@@ -42,8 +56,10 @@ def render_team_invitation(context: TeamInvitationContext) -> TransactionalEmail
         ),
     )
     text_body = with_text_footer(
+        f"{greeting_text}"
         f"{context.inviter_name} invited you to join {context.organization_name} on Kairo "
         f"as {context.invited_role_label}.\n\n"
+        f"{message_text}"
         f"Accept team invitation: {context.invitation_url}\n\n"
         f"This invitation expires at {context.expires_at_iso} and can only be used once.\n\n"
         "If you did not expect this invitation, do not use or forward the link."

@@ -10,7 +10,7 @@ from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import get_hr_v2_service
 from app.config import get_settings
 from app.db.session import async_session_factory
-from app.exceptions import ValidationAppError
+from app.exceptions import ConflictError, ValidationAppError
 from app.main import app
 from app.models.organization import Organization
 from app.models.organization_job_role import OrganizationJobRole
@@ -18,7 +18,12 @@ from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
 from app.models.user import User
 from app.organization.enums import OrganizationRole, OrganizationType
-from app.schemas.hr_v2 import EmployeeLifecycleUpdateRequest, OrganizationRoleAssignmentRequest
+from app.schemas.hr_v2 import (
+    EmployeeLifecycleUpdateRequest,
+    FormerEmployeeCorrectionCreateRequest,
+    FormerEmployeeCorrectionDecisionRequest,
+    OrganizationRoleAssignmentRequest,
+)
 from app.services.hr_v2_service import HRV2Service
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -103,16 +108,26 @@ async def test_deactivate_role_returns_loaded_committed_response_and_repeat_is_s
 
 
 @pytest.mark.parametrize("joining", [date(2024, 12, 31), date(2025, 1, 31)])
-async def test_profile_joining_before_or_equal_to_exit_is_persisted(joining):
+async def test_audited_correction_allows_joining_before_or_equal_to_exit(joining):
     async with async_session_factory() as session:
         service, actor, org, person, _ = await _fixture(session)
-        result = await service.assign_role(
+        correction = await service.create_former_employee_correction(
             actor.id,
             org.public_id,
             person.public_id,
-            OrganizationRoleAssignmentRequest(joining_date=joining),
+            FormerEmployeeCorrectionCreateRequest(
+                proposed_changes={"joining_date": joining.isoformat()},
+                reason="Correct synthetic employment history",
+            ),
         )
-        assert result.joining_date == joining
+        await service.approve_former_employee_correction(
+            actor.id,
+            org.public_id,
+            correction.public_id,
+            FormerEmployeeCorrectionDecisionRequest(
+                decision_reason="Verified synthetic correction"
+            ),
+        )
         async with async_session_factory() as reader:
             persisted = await reader.get(OrganizationPerson, person.id)
             assert persisted.joining_date == joining
@@ -120,12 +135,9 @@ async def test_profile_joining_before_or_equal_to_exit_is_persisted(joining):
 
 
 @pytest.mark.parametrize("exit_day", [date(2024, 1, 1), date(2025, 1, 31)])
-@pytest.mark.parametrize("already_exited", [False, True])
-async def test_lifecycle_exit_equal_or_after_joining_preserves_same_day_rule(
-    exit_day, already_exited
-):
+async def test_lifecycle_exit_equal_or_after_joining_preserves_same_day_rule(exit_day):
     async with async_session_factory() as session:
-        service, actor, org, person, _ = await _fixture(session, exited=already_exited)
+        service, actor, org, person, _ = await _fixture(session, exited=False)
         result = await service.update_employee_lifecycle(
             actor.id,
             org.public_id,
@@ -141,20 +153,30 @@ async def test_lifecycle_exit_equal_or_after_joining_preserves_same_day_rule(
             assert persisted.joining_date == date(2024, 1, 1)
 
 
-async def test_invalid_profile_chronology_rejected_before_any_field_changes_or_commit():
+async def test_invalid_correction_chronology_rejected_before_any_field_changes_or_commit():
     async with async_session_factory() as session:
         service, actor, org, person, _ = await _fixture(session)
         before = _state(person)
+        correction = await service.create_former_employee_correction(
+            actor.id,
+            org.public_id,
+            person.public_id,
+            FormerEmployeeCorrectionCreateRequest(
+                proposed_changes={
+                    "department": "Must not persist",
+                    "joining_date": "2025-02-01",
+                },
+                reason="Invalid synthetic correction",
+            ),
+        )
         with pytest.raises(
             ValidationAppError, match="joining_date cannot be after last_working_day"
         ):
-            await service.assign_role(
+            await service.approve_former_employee_correction(
                 actor.id,
                 org.public_id,
-                person.public_id,
-                OrganizationRoleAssignmentRequest(
-                    role_id=None, department="Must not persist", joining_date=date(2025, 2, 1)
-                ),
+                correction.public_id,
+                FormerEmployeeCorrectionDecisionRequest(),
             )
         assert _state(person) == before
         assert not session.is_modified(person)
@@ -164,10 +186,9 @@ async def test_invalid_profile_chronology_rejected_before_any_field_changes_or_c
             assert _state(await reader.get(OrganizationPerson, person.id)) == before
 
 
-@pytest.mark.parametrize("already_exited", [False, True])
-async def test_invalid_exit_change_rejected_without_partial_mutation(already_exited):
+async def test_invalid_exit_change_rejected_without_partial_mutation():
     async with async_session_factory() as session:
-        service, actor, org, person, _ = await _fixture(session, exited=already_exited)
+        service, actor, org, person, _ = await _fixture(session, exited=False)
         before = _state(person)
         with pytest.raises(
             ValidationAppError, match="last_working_day cannot be before joining_date"
@@ -187,9 +208,27 @@ async def test_invalid_exit_change_rejected_without_partial_mutation(already_exi
             assert _state(await reader.get(OrganizationPerson, person.id)) == before
 
 
+async def test_lifecycle_cannot_rewrite_former_employee_exit_history():
+    async with async_session_factory() as session:
+        service, actor, org, person, _ = await _fixture(session)
+        before = _state(person)
+        with pytest.raises(ConflictError, match="Former-employee history is immutable"):
+            await service.update_employee_lifecycle(
+                actor.id,
+                org.public_id,
+                person.public_id,
+                EmployeeLifecycleUpdateRequest(
+                    employment_status="ex_employee",
+                    last_working_day=date(2025, 1, 30),
+                ),
+            )
+        assert _state(person) == before
+        assert not session.is_modified(person)
+
+
 async def test_unrelated_partial_edit_preserves_role_and_valid_chronology():
     async with async_session_factory() as session:
-        service, actor, org, person, role = await _fixture(session)
+        service, actor, org, person, role = await _fixture(session, exited=False)
         result = await service.assign_role(
             actor.id,
             org.public_id,
@@ -203,7 +242,7 @@ async def test_unrelated_partial_edit_preserves_role_and_valid_chronology():
             assert persisted.role_id == role.id
             assert persisted.department == "After"
             assert persisted.joining_date == date(2024, 1, 1)
-            assert persisted.last_working_day == date(2025, 1, 31)
+            assert persisted.last_working_day is None
 
 
 @pytest.mark.parametrize("joining", [None, date(2025, 2, 1)])
@@ -221,21 +260,22 @@ async def test_optional_dates_remain_optional_when_no_exit_exists(joining):
         assert person.last_working_day is None
 
 
-async def test_explicit_null_joining_date_with_existing_exit_remains_supported():
+async def test_normal_profile_edit_cannot_clear_former_employee_joining_date():
     async with async_session_factory() as session:
         service, actor, org, person, _ = await _fixture(session)
-        result = await service.assign_role(
-            actor.id,
-            org.public_id,
-            person.public_id,
-            OrganizationRoleAssignmentRequest(joining_date=None),
-        )
-        assert result.joining_date is None
+        with pytest.raises(ConflictError, match="Former-employee history is immutable"):
+            await service.assign_role(
+                actor.id,
+                org.public_id,
+                person.public_id,
+                OrganizationRoleAssignmentRequest(joining_date=None),
+            )
         await session.refresh(person)
+        assert person.joining_date == date(2024, 1, 1)
         assert person.last_working_day == date(2025, 1, 31)
 
 
-async def test_profile_chronology_uses_existing_http_validation_envelope():
+async def test_former_employee_edit_uses_existing_http_conflict_envelope():
     async with async_session_factory() as session:
         service, actor, org, person, _ = await _fixture(session)
         app.dependency_overrides[get_current_user] = lambda: CurrentUser(
@@ -250,10 +290,10 @@ async def test_profile_chronology_uses_existing_http_validation_envelope():
                     f"/api/v1/organizations/{org.public_id}/people/{person.public_id}/employment-profile",
                     json={"joining_date": "2025-02-01", "department": "Must not persist"},
                 )
-            assert response.status_code == 400
-            assert response.json()["error"]["code"] == "validation_error"
+            assert response.status_code == 409
+            assert response.json()["error"]["code"] == "conflict"
             assert (
-                "joining_date cannot be after last_working_day"
+                "Former-employee history is immutable"
                 in response.json()["error"]["message"]
             )
             await session.refresh(person)

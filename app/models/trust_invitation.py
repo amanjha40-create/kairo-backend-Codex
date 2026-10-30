@@ -37,7 +37,9 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "trust_invitations"
 
-    public_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True)
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True
+    )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -73,8 +75,18 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
     )
+    requirements_snapshot: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    requirements_version: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
+    candidate_state: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    status: Mapped[TrustInvitationStatus] = mapped_column(trust_invitation_status_enum, nullable=False)
+    status: Mapped[TrustInvitationStatus] = mapped_column(
+        trust_invitation_status_enum, nullable=False
+    )
     delivery_method: Mapped[TrustInvitationDeliveryMethod] = mapped_column(
         trust_invitation_delivery_method_enum,
         nullable=False,
@@ -99,19 +111,36 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    declined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    passport_share_link_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("passport_share_links.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_version: Mapped[int | None] = mapped_column(nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="trust_invitations")
+    organization: Mapped["Organization"] = relationship(
+        "Organization", back_populates="trust_invitations"
+    )
     organization_person: Mapped["OrganizationPerson | None"] = relationship(
         "OrganizationPerson",
         back_populates="trust_invitations",
     )
     created_by_user: Mapped["User"] = relationship("User", foreign_keys=[created_by_user_id])
-    accepted_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[accepted_by_user_id])
+    accepted_by_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[accepted_by_user_id]
+    )
     verification_requests: Mapped[list["VerificationRequest"]] = relationship(
         "VerificationRequest",
         back_populates="trust_invitation",
@@ -123,9 +152,11 @@ class TrustInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         order_by="TrustInvitationEvent.occurred_at",
     )
     job_role = relationship("OrganizationJobRole")
+    passport_share_link = relationship("PassportShareLink")
 
     def __repr__(self) -> str:
         return (
             "TrustInvitation("
-            f"id={self.id}, public_id={self.public_id}, organization_id={self.organization_id}, status={self.status})"
+            f"id={self.id}, public_id={self.public_id}, "
+            f"organization_id={self.organization_id}, status={self.status})"
         )

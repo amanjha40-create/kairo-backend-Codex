@@ -32,6 +32,7 @@ class UserPublic(BaseModel):
     avatar_url: str | None = None
     role: Role
     is_active: bool
+    has_password: bool = False
     phone_verified_at: datetime | None = None
     email_verified_at: datetime | None = None
     employment_onboarding_completed_at: datetime | None = None

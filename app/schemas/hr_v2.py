@@ -57,6 +57,10 @@ class OrganizationJobRoleCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1000)
+    department: str | None = Field(default=None, max_length=255)
+    location: str | None = Field(default=None, max_length=255)
+    work_mode: Literal["onsite", "hybrid", "remote"] | None = None
+    mode: Literal["draft", "submit"] = "submit"
 
 
 class OrganizationJobRoleUpdateRequest(BaseModel):
@@ -64,6 +68,9 @@ class OrganizationJobRoleUpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1000)
+    department: str | None = Field(default=None, max_length=255)
+    location: str | None = Field(default=None, max_length=255)
+    work_mode: Literal["onsite", "hybrid", "remote"] | None = None
     is_active: bool | None = None
 
     @model_validator(mode="after")
@@ -77,8 +84,73 @@ class OrganizationJobRoleResponse(BaseModel):
     public_id: UUID
     name: str
     description: str | None
+    department: str | None = None
+    location: str | None = None
+    work_mode: str | None = None
+    status: str = "active"
+    created_by_user_id: UUID | None = None
+    approved_by_user_id: UUID | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    archived_at: datetime | None = None
     is_active: bool
     assigned_people_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class HiringRoleDecisionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class FormerEmployeeCorrectionCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    proposed_changes: dict[str, Any]
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("proposed_changes")
+    @classmethod
+    def validate_changes(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"role_id", "department", "joining_date", "last_working_day"}
+        if not value or set(value) - allowed:
+            raise ValueError("Only historical employment fields may be corrected")
+        if value.get("role_id") is not None:
+            try:
+                UUID(str(value["role_id"]))
+            except ValueError as exc:
+                raise ValueError("role_id must be a valid Hiring Role ID") from exc
+        for field in ("joining_date", "last_working_day"):
+            raw = value.get(field)
+            if raw is None or isinstance(raw, date):
+                continue
+            try:
+                date.fromisoformat(str(raw))
+            except ValueError as exc:
+                raise ValueError(f"{field} must be an ISO date") from exc
+        return value
+
+
+class FormerEmployeeCorrectionDecisionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    decision_reason: str | None = Field(default=None, max_length=2000)
+
+
+class FormerEmployeeCorrectionResponse(BaseModel):
+    public_id: UUID
+    person_public_id: UUID
+    proposed_changes: dict[str, Any]
+    before_snapshot: dict[str, Any]
+    after_snapshot: dict[str, Any] | None
+    reason: str
+    status: str
+    requested_by_user_id: UUID
+    decided_by_user_id: UUID | None
+    decided_at: datetime | None
+    decision_reason: str | None
     created_at: datetime
     updated_at: datetime
 

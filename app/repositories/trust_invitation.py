@@ -54,7 +54,9 @@ class TrustInvitationRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def get_by_token_hash(self, token_hash: str, *, include_events: bool = False) -> TrustInvitation | None:
+    async def get_by_token_hash(
+        self, token_hash: str, *, include_events: bool = False
+    ) -> TrustInvitation | None:
         options = [
             joinedload(TrustInvitation.organization),
             joinedload(TrustInvitation.created_by_user),
@@ -88,3 +90,19 @@ class TrustInvitationRepository:
         )
         rows = await self._session.execute(stmt)
         return list(rows.scalars().all())
+
+    async def list_for_verified_email(self, email: str) -> list[TrustInvitation]:
+        stmt = (
+            select(TrustInvitation)
+            .options(
+                joinedload(TrustInvitation.organization),
+                joinedload(TrustInvitation.created_by_user),
+                joinedload(TrustInvitation.accepted_by_user),
+                joinedload(TrustInvitation.job_role),
+                joinedload(TrustInvitation.passport_share_link),
+                selectinload(TrustInvitation.verification_requests),
+            )
+            .where(TrustInvitation.subject_email == email.strip().lower())
+            .order_by(TrustInvitation.created_at.desc())
+        )
+        return list((await self._session.execute(stmt)).scalars().unique().all())

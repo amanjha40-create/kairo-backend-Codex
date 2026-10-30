@@ -165,6 +165,8 @@ class WorkspaceService:
         invitation = await self._resolve_team_token(raw_token)
         return TeamInvitationPublicResponse(
             organization_name=invitation.organization.name,
+            invitee_name=getattr(invitation, "invitee_name", None),
+            personal_message=getattr(invitation, "personal_message", None),
             invited_role=invitation.role,
             status=invitation.status,
             expires_at=invitation.token_expires_at or invitation.expires_at,
@@ -219,6 +221,7 @@ class WorkspaceService:
             membership_public_id=membership.public_id,
             role=membership.role,
             accepted_at=now,
+            requires_organization_setup=False,
         )
 
     async def decline_invitation(

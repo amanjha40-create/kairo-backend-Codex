@@ -58,6 +58,26 @@ class NotificationService:
             "Trust invitation",
             "You have received a Trust Passport verification invitation.",
         ),
+        "trust_invitation_received": (
+            "verification",
+            "Trust invitation received",
+            "An organization invited you to share a scoped Trust Passport.",
+        ),
+        "trust_invitation_accepted": (
+            "verification",
+            "Trust invitation accepted",
+            "Your Trust invitation was accepted.",
+        ),
+        "trust_invitation_updated": (
+            "verification",
+            "Trust invitation updated",
+            "A Trust invitation needs your attention.",
+        ),
+        "trust_invitation_completed": (
+            "verification",
+            "Trust invitation completed",
+            "Your scoped Trust Passport was shared.",
+        ),
         "password_reset_requested": (
             "security",
             "Password reset requested",
@@ -119,7 +139,11 @@ class NotificationService:
             requested_channel=request.channel,
         )
         selected_channel = preference.selected_channel
-        if request.channel == "in_app" and not request.recipient_email and selected_channel == "email":
+        if (
+            request.channel == "in_app"
+            and not request.recipient_email
+            and selected_channel == "email"
+        ):
             # Inbox-only events have no email delivery contract or destination.
             selected_channel = "in_app"
         notification = Notification(
@@ -167,9 +191,8 @@ class NotificationService:
             await self._session.commit()
             return await self.get_detail(notification.public_id)
 
-        if (
-            notification.scheduled_at is not None
-            and notification.scheduled_at > datetime.now(tz=UTC)
+        if notification.scheduled_at is not None and notification.scheduled_at > datetime.now(
+            tz=UTC
         ):
             await self._session.commit()
             return await self.get_detail(notification.public_id)
@@ -598,23 +621,22 @@ class NotificationService:
     ) -> list[AdminNotificationInboxResponse]:
         filtered = list(items)
         if params.unread is not None:
-            filtered = [
-                item for item in filtered
-                if (item.read_at is None) is params.unread
-            ]
+            filtered = [item for item in filtered if (item.read_at is None) is params.unread]
         for field_name in ("event_type", "category", "channel", "priority"):
             raw_value = getattr(params, field_name)
             if not raw_value:
                 continue
             accepted = {part.strip().lower() for part in raw_value.split(",") if part.strip()}
             filtered = [
-                item for item in filtered
+                item
+                for item in filtered
                 if getattr(item, field_name, "").strip().lower() in accepted
             ]
         if params.related_public_id:
             target = params.related_public_id
             filtered = [
-                item for item in filtered
+                item
+                for item in filtered
                 if any(
                     str(value).strip().lower() == target
                     for key, value in item.metadata.items()

@@ -13,6 +13,7 @@ from app.schemas.organization import (
     OrganizationCreateRequest,
     OrganizationInvitationCreateRequest,
     OrganizationInvitationResponse,
+    OrganizationInvitationUpdateRequest,
     OrganizationMemberCreateRequest,
     OrganizationMemberResponse,
     OrganizationMemberSuspendRequest,
@@ -114,6 +115,20 @@ async def list_organization_invitations(
     svc: Annotated[OrganizationService, Depends(get_organization_service)],
 ) -> Page[OrganizationInvitationResponse] | list[OrganizationInvitationResponse]:
     return await svc.list_invitations(current.id, org_public_id, params)
+
+
+@router.patch(
+    "/{org_public_id}/invitations/{invitation_public_id}",
+    response_model=OrganizationInvitationResponse,
+)
+async def update_organization_invitation(
+    org_public_id: UUID,
+    invitation_public_id: UUID,
+    payload: OrganizationInvitationUpdateRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[OrganizationService, Depends(get_organization_service)],
+) -> OrganizationInvitationResponse:
+    return await svc.update_invitation(current.id, org_public_id, invitation_public_id, payload)
 
 
 @router.post(

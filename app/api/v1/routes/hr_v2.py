@@ -12,6 +12,10 @@ from app.api.dependencies.services import get_hr_v2_service
 from app.schemas.hr_v2 import (
     EmployeeLifecycleResponse,
     EmployeeLifecycleUpdateRequest,
+    FormerEmployeeCorrectionCreateRequest,
+    FormerEmployeeCorrectionDecisionRequest,
+    FormerEmployeeCorrectionResponse,
+    HiringRoleDecisionRequest,
     OrganizationJobRoleCreateRequest,
     OrganizationJobRoleResponse,
     OrganizationJobRoleUpdateRequest,
@@ -89,6 +93,27 @@ async def update_job_role(
     return await svc.update_role(current.id, org_public_id, role_public_id, payload)
 
 
+@router.post("/job-roles/{role_public_id}/approve", response_model=OrganizationJobRoleResponse)
+async def approve_job_role(
+    org_public_id: UUID,
+    role_public_id: UUID,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> OrganizationJobRoleResponse:
+    return await svc.approve_role(current.id, org_public_id, role_public_id)
+
+
+@router.post("/job-roles/{role_public_id}/reject", response_model=OrganizationJobRoleResponse)
+async def reject_job_role(
+    org_public_id: UUID,
+    role_public_id: UUID,
+    payload: HiringRoleDecisionRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> OrganizationJobRoleResponse:
+    return await svc.reject_role(current.id, org_public_id, role_public_id, payload)
+
+
 @router.delete("/job-roles/{role_public_id}", response_model=OrganizationJobRoleResponse)
 async def deactivate_job_role(
     org_public_id: UUID,
@@ -97,6 +122,55 @@ async def deactivate_job_role(
     svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
 ) -> OrganizationJobRoleResponse:
     return await svc.deactivate_role(current.id, org_public_id, role_public_id)
+
+
+@router.post(
+    "/people/{person_public_id}/corrections",
+    response_model=FormerEmployeeCorrectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_former_employee_correction(
+    org_public_id: UUID,
+    person_public_id: UUID,
+    payload: FormerEmployeeCorrectionCreateRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> FormerEmployeeCorrectionResponse:
+    return await svc.create_former_employee_correction(
+        current.id, org_public_id, person_public_id, payload
+    )
+
+
+@router.post(
+    "/people/corrections/{correction_public_id}/approve",
+    response_model=FormerEmployeeCorrectionResponse,
+)
+async def approve_former_employee_correction(
+    org_public_id: UUID,
+    correction_public_id: UUID,
+    payload: FormerEmployeeCorrectionDecisionRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> FormerEmployeeCorrectionResponse:
+    return await svc.approve_former_employee_correction(
+        current.id, org_public_id, correction_public_id, payload
+    )
+
+
+@router.post(
+    "/people/corrections/{correction_public_id}/reject",
+    response_model=FormerEmployeeCorrectionResponse,
+)
+async def reject_former_employee_correction(
+    org_public_id: UUID,
+    correction_public_id: UUID,
+    payload: FormerEmployeeCorrectionDecisionRequest,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> FormerEmployeeCorrectionResponse:
+    return await svc.reject_former_employee_correction(
+        current.id, org_public_id, correction_public_id, payload
+    )
 
 
 @router.post(

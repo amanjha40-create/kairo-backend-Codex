@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,7 +33,9 @@ class OrganizationInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
     )
 
-    public_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True)
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True
+    )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -53,6 +55,7 @@ class OrganizationInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     invitee_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    personal_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     invitee_email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     role: Mapped[OrganizationRole] = mapped_column(organization_role_enum, nullable=False)
     status: Mapped[OrganizationInvitationStatus] = mapped_column(
@@ -66,14 +69,24 @@ class OrganizationInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     declined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    token_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     token_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    token_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    delivery_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="invitations")
+    organization: Mapped["Organization"] = relationship(
+        "Organization", back_populates="invitations"
+    )
     invited_by_user: Mapped["User"] = relationship("User", foreign_keys=[invited_by_user_id])
     invitee_user: Mapped["User | None"] = relationship("User", foreign_keys=[invitee_user_id])
 

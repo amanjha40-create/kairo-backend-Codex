@@ -63,7 +63,7 @@ def test_programmatic_config_keeps_script_location_and_url():
     config = build_migration_config(fields())
     assert config.config_file_name == "alembic.ini"
     assert config.get_main_option("script_location") == "alembic"
-    assert ScriptDirectory.from_config(config).get_heads() == ["094"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["097"]
     assert config.attributes["configure_logger"] is False
     assert (
         make_url(config.attributes["migration_database_url"]).password

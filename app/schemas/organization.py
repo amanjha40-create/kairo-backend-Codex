@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.organization.enums import (
     OrganizationInvitationStatus,
@@ -156,6 +156,8 @@ class OrganizationInvitationCreateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     invitee_email: EmailStr
+    invitee_name: str | None = Field(default=None, max_length=255)
+    personal_message: str | None = Field(default=None, max_length=2000)
     role: OrganizationRole = Field(default=OrganizationRole.MEMBER)
 
     @field_validator("role")
@@ -170,6 +172,8 @@ class OrganizationInvitationResponse(BaseModel):
     public_id: UUID
     organization_public_id: UUID
     invitee_email: EmailStr
+    invitee_name: str | None = None
+    personal_message: str | None = None
     invitee_user_id: UUID | None
     role: OrganizationRole
     status: OrganizationInvitationStatus
@@ -190,6 +194,8 @@ class OrganizationInvitationResponse(BaseModel):
 
 class TeamInvitationPublicResponse(BaseModel):
     organization_name: str
+    invitee_name: str | None = None
+    personal_message: str | None = None
     invited_role: OrganizationRole
     status: OrganizationInvitationStatus
     expires_at: datetime
@@ -200,6 +206,27 @@ class TeamInvitationAcceptResponse(BaseModel):
     membership_public_id: UUID
     role: OrganizationRole
     accepted_at: datetime
+    requires_organization_setup: bool = False
+
+
+class OrganizationInvitationUpdateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    invitee_name: str | None = Field(default=None, max_length=255)
+    personal_message: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("invitee_name", "personal_message")
+    @classmethod
+    def normalize_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one invitation field must be supplied")
+        return self
 
 
 class OrganizationMemberSuspendRequest(BaseModel):

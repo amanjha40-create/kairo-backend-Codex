@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy.exc import MissingGreenlet
 
 from app.config import Settings
-from app.exceptions import ValidationAppError
 from app.notifications.contracts import NotificationRequest
 from app.organization.enums import OrganizationRole
 from app.schemas.trust_invitation import TrustInvitationCreateRequest
@@ -180,8 +179,7 @@ class ExpiredInvitationState:
 
 
 @pytest.mark.asyncio
-async def test_create_trust_invitation_dispatches_notification_without_changing_response_shape(
-) -> None:
+async def test_create_invitation_dispatches_notification_without_response_regression() -> None:
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
@@ -209,7 +207,7 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
         ),
     )
 
-    assert response.invitation_url.startswith("https://candidate.example.com/trust-invitations/")
+    assert response.invitation_url.startswith("https://kairoid.com/invite/")
     assert "/api/v1/" not in response.invitation_url
     assert response.subject_email == "aman3@test.com"
     assert response.status == TrustInvitationStatus.PENDING
@@ -218,7 +216,7 @@ async def test_create_trust_invitation_dispatches_notification_without_changing_
     assert len(notifications.calls) == 1
     request = notifications.calls[0]["request"]
     assert isinstance(request, NotificationRequest)
-    assert request.event_type == "trust_invitation_created"
+    assert request.event_type == "trust_invitation_received"
     assert request.recipient_email == "aman3@test.com"
     assert request.payload["invitation_url"] == response.invitation_url
 
@@ -253,12 +251,12 @@ async def test_create_trust_invitation_survives_notification_delivery_failure() 
     )
 
     assert response.status == TrustInvitationStatus.PENDING
-    assert response.invitation_url.startswith("https://candidate.example.com/trust-invitations/")
+    assert response.invitation_url.startswith("https://kairoid.com/invite/")
     assert "/api/v1/" not in response.invitation_url
 
 
 @pytest.mark.asyncio
-async def test_create_trust_invitation_requires_candidate_portal_origin() -> None:
+async def test_create_trust_invitation_uses_canonical_public_origin() -> None:
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
@@ -275,16 +273,16 @@ async def test_create_trust_invitation_requires_candidate_portal_origin() -> Non
         people=FakeOrganizationPersonService(),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ValidationAppError, match="CANDIDATE_PORTAL_BASE_URL"):
-        await service.create(
-            UUID("00000000-0000-0000-0000-000000000111"),
-            organization.public_id,
-            TrustInvitationCreateRequest(
-                subject_name="Aman Jha",
-                subject_email="aman3@test.com",
-                expires_at=datetime.now(tz=UTC) + timedelta(days=3),
-            ),
-        )
+    response = await service.create(
+        UUID("00000000-0000-0000-0000-000000000111"),
+        organization.public_id,
+        TrustInvitationCreateRequest(
+            subject_name="Aman Jha",
+            subject_email="aman3@test.com",
+            expires_at=datetime.now(tz=UTC) + timedelta(days=3),
+        ),
+    )
+    assert response.invitation_url.startswith("https://kairoid.com/invite/")
 
 
 @pytest.mark.asyncio
@@ -360,7 +358,7 @@ async def test_create_trust_invitation_survives_people_sync_failure() -> None:
     )
 
     assert response.status == TrustInvitationStatus.PENDING
-    assert response.invitation_url.startswith("https://candidate.example.com/trust-invitations/")
+    assert response.invitation_url.startswith("https://kairoid.com/invite/")
     assert "/api/v1/" not in response.invitation_url
     assert session.commits >= 2
     assert session.rollbacks == 1
@@ -412,8 +410,9 @@ async def test_accept_trust_invitation_survives_people_sync_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_accept_trust_invitation_refetches_events_for_people_sync_after_primary_commit(
-) -> None:
+async def test_accept_trust_invitation_refetches_events_for_people_sync_after_primary_commit() -> (
+    None
+):
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
@@ -468,8 +467,9 @@ async def test_accept_trust_invitation_refetches_events_for_people_sync_after_pr
 
 
 @pytest.mark.asyncio
-async def test_accept_trust_invitation_retry_is_idempotent_after_primary_acceptance_persists(
-) -> None:
+async def test_accept_trust_invitation_retry_is_idempotent_after_primary_acceptance_persists() -> (
+    None
+):
     session = FakeSession()
     organization = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000100"),
