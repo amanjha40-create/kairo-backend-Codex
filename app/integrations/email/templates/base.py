@@ -9,7 +9,7 @@ BRAND_NAME = "KairoID"
 SUPPORT_EMAIL = "contact@kairoid.com"
 WEBSITE_URL = "https://kairoid.com"
 LOGO_URL = "https://app.kairoid.com/assets/kairoid-logo-primary-Di249jMg.png"
-TAGLINE = "Verify once. Trusted everywhere."
+TAGLINE = "Trust that travels."
 LEGAL_TEXT = "© 2026 Aletheon Innovations Private Limited. All rights reserved."
 FOOTER_TEXT = f"{BRAND_NAME} — {TAGLINE}"
 
