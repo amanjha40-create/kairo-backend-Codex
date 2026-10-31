@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.organization_people.enums import OrganizationPersonEmploymentStatus
+from app.schemas.pagination import Page, PageParams
 
 SUPPORTED_VERIFICATION_PREFERENCE_CHECKS = frozenset(
     {"identity", "employment", "education", "references", "address"}
@@ -80,6 +81,11 @@ class OrganizationJobRoleUpdateRequest(BaseModel):
         return self
 
 
+class HRUserSummary(BaseModel):
+    display_name: str
+    email: str
+
+
 class OrganizationJobRoleResponse(BaseModel):
     public_id: UUID
     name: str
@@ -90,6 +96,8 @@ class OrganizationJobRoleResponse(BaseModel):
     status: str = "active"
     created_by_user_id: UUID | None = None
     approved_by_user_id: UUID | None = None
+    created_by: HRUserSummary | None = None
+    approved_by: HRUserSummary | None = None
     approved_at: datetime | None = None
     rejected_at: datetime | None = None
     archived_at: datetime | None = None
@@ -153,6 +161,34 @@ class FormerEmployeeCorrectionResponse(BaseModel):
     decision_reason: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class FormerEmployeeCorrectionListQuery(PageParams):
+    status: Literal["pending", "approved", "rejected"] = "pending"
+
+
+class FormerEmployeeCorrectionPersonSummary(BaseModel):
+    public_id: UUID
+    display_name: str
+
+
+class FormerEmployeeCorrectionListItem(BaseModel):
+    public_id: UUID
+    person: FormerEmployeeCorrectionPersonSummary
+    current_values: dict[str, Any]
+    proposed_values: dict[str, Any]
+    reason: str
+    requester: HRUserSummary
+    submitted_at: datetime
+    status: Literal["pending", "approved", "rejected"]
+    reviewer: HRUserSummary | None = None
+    decided_at: datetime | None = None
+    decision_reason: str | None = None
+    updated_at: datetime
+
+
+class FormerEmployeeCorrectionPage(Page[FormerEmployeeCorrectionListItem]):
+    pass
 
 
 class OrganizationRoleAssignmentRequest(BaseModel):

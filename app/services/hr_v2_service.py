@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.config import Settings
 from app.core.permissions import Permission, has_permission
@@ -42,8 +42,13 @@ from app.schemas.hr_v2 import (
     EmployeeLifecycleUpdateRequest,
     FormerEmployeeCorrectionCreateRequest,
     FormerEmployeeCorrectionDecisionRequest,
+    FormerEmployeeCorrectionListItem,
+    FormerEmployeeCorrectionListQuery,
+    FormerEmployeeCorrectionPage,
+    FormerEmployeeCorrectionPersonSummary,
     FormerEmployeeCorrectionResponse,
     HiringRoleDecisionRequest,
+    HRUserSummary,
     OrganizationJobRoleCreateRequest,
     OrganizationJobRoleResponse,
     OrganizationJobRoleUpdateRequest,
@@ -162,7 +167,9 @@ class HRV2Service:
             .group_by(OrganizationJobRole.id)
             .order_by(OrganizationJobRole.name.asc())
         )
-        return [self._role_response(role, int(count)) for role, count in rows.all()]
+        role_rows = list(rows.all())
+        await self._enrich_role_actor_summaries([role for role, _ in role_rows])
+        return [self._role_response(role, int(count)) for role, count in role_rows]
 
     async def create_role(
         self,
@@ -211,6 +218,7 @@ class HRV2Service:
         )
         await self._session.commit()
         await self._session.refresh(role)
+        await self._enrich_role_actor_summaries([role])
         return self._role_response(role, 0)
 
     async def update_role(
@@ -249,6 +257,7 @@ class HRV2Service:
         )
         await self._session.commit()
         await self._session.refresh(role)
+        await self._enrich_role_actor_summaries([role])
         count = await self._role_assignment_count(role.id)
         return self._role_response(role, count)
 
@@ -276,6 +285,7 @@ class HRV2Service:
         )
         await self._session.commit()
         await self._session.refresh(role)
+        await self._enrich_role_actor_summaries([role])
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def reject_role(
@@ -304,6 +314,7 @@ class HRV2Service:
         )
         await self._session.commit()
         await self._session.refresh(role)
+        await self._enrich_role_actor_summaries([role])
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def deactivate_role(
@@ -325,6 +336,7 @@ class HRV2Service:
         )
         await self._session.commit()
         await self._session.refresh(role)
+        await self._enrich_role_actor_summaries([role])
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def assign_role(
@@ -410,9 +422,85 @@ class HRV2Service:
             requested_by_user_id=actor_user_id,
         )
         self._session.add(row)
+        await self._session.flush()
+        await self._record_event(
+            organization.id,
+            actor_user_id,
+            "former_employee_correction_requested",
+            "organization_person",
+            person.public_id,
+            {"correction_public_id": str(row.public_id)},
+        )
         await self._session.commit()
         await self._session.refresh(row)
         return self._correction_response(row, person.public_id)
+
+    async def list_former_employee_corrections(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        params: FormerEmployeeCorrectionListQuery,
+    ) -> FormerEmployeeCorrectionPage:
+        organization, _ = await self._organizations.require_org_manager(
+            actor_user_id, org_public_id
+        )
+        requester = aliased(User)
+        reviewer = aliased(User)
+        filters = (
+            OrganizationPersonCorrection.organization_id == organization.id,
+            OrganizationPersonCorrection.status == params.status,
+        )
+        total = int(
+            (
+                await self._session.execute(
+                    select(func.count()).select_from(OrganizationPersonCorrection).where(*filters)
+                )
+            ).scalar_one()
+        )
+        rows = (
+            await self._session.execute(
+                select(
+                    OrganizationPersonCorrection,
+                    OrganizationPerson,
+                    requester,
+                    reviewer,
+                )
+                .join(
+                    OrganizationPerson,
+                    OrganizationPerson.id == OrganizationPersonCorrection.organization_person_id,
+                )
+                .join(requester, requester.id == OrganizationPersonCorrection.requested_by_user_id)
+                .outerjoin(reviewer, reviewer.id == OrganizationPersonCorrection.decided_by_user_id)
+                .where(*filters)
+                .order_by(
+                    OrganizationPersonCorrection.created_at.desc(),
+                    OrganizationPersonCorrection.public_id.desc(),
+                )
+                .offset(params.offset or 0)
+                .limit(params.limit or 20)
+            )
+        ).all()
+        items = [
+            FormerEmployeeCorrectionListItem(
+                public_id=correction.public_id,
+                person=FormerEmployeeCorrectionPersonSummary(
+                    public_id=person.public_id,
+                    display_name=person.full_name,
+                ),
+                current_values=correction.before_snapshot,
+                proposed_values=correction.proposed_changes,
+                reason=correction.reason,
+                requester=self._safe_user_summary(requested_by),
+                submitted_at=correction.created_at,
+                status=correction.status,
+                reviewer=self._safe_user_summary(decided_by) if decided_by is not None else None,
+                decided_at=correction.decided_at,
+                decision_reason=correction.decision_reason,
+                updated_at=correction.updated_at,
+            )
+            for correction, person, requested_by, decided_by in rows
+        ]
+        return FormerEmployeeCorrectionPage.create(items=items, total=total, params=params)
 
     async def approve_former_employee_correction(
         self,
@@ -521,6 +609,14 @@ class HRV2Service:
         row.decided_by_user_id = actor_user_id
         row.decided_at = datetime.now(tz=UTC)
         row.decision_reason = payload.decision_reason
+        await self._record_event(
+            organization.id,
+            actor_user_id,
+            "former_employee_correction_rejected",
+            "organization_person",
+            person.public_id,
+            {"correction_public_id": str(row.public_id)},
+        )
         person_public_id = person.public_id
         await self._session.commit()
         await self._session.refresh(row)
@@ -855,6 +951,29 @@ class HRV2Service:
             ).scalar_one()
         )
 
+    async def _enrich_role_actor_summaries(self, roles: list[OrganizationJobRole]) -> None:
+        if not hasattr(self._session, "execute"):
+            return
+        user_ids = {
+            user_id
+            for role in roles
+            for user_id in (role.created_by_user_id, role.approved_by_user_id)
+            if user_id is not None
+        }
+        if not user_ids:
+            return
+        users = (
+            (await self._session.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        )
+        summaries = {user.id: self._safe_user_summary(user) for user in users}
+        for role in roles:
+            role._created_by_summary = summaries.get(role.created_by_user_id)  # type: ignore[attr-defined]
+            role._approved_by_summary = summaries.get(role.approved_by_user_id)  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _safe_user_summary(user: User) -> HRUserSummary:
+        return HRUserSummary(display_name=user.full_name or user.email, email=user.email)
+
     def _role_response(self, role: OrganizationJobRole, count: int) -> OrganizationJobRoleResponse:
         return OrganizationJobRoleResponse(
             public_id=role.public_id,
@@ -866,6 +985,8 @@ class HRV2Service:
             status=getattr(role, "status", "active" if role.is_active else "archived"),
             created_by_user_id=getattr(role, "created_by_user_id", None),
             approved_by_user_id=getattr(role, "approved_by_user_id", None),
+            created_by=getattr(role, "_created_by_summary", None),
+            approved_by=getattr(role, "_approved_by_summary", None),
             approved_at=getattr(role, "approved_at", None),
             rejected_at=getattr(role, "rejected_at", None),
             archived_at=getattr(role, "archived_at", None),

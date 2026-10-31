@@ -14,6 +14,8 @@ from app.schemas.hr_v2 import (
     EmployeeLifecycleUpdateRequest,
     FormerEmployeeCorrectionCreateRequest,
     FormerEmployeeCorrectionDecisionRequest,
+    FormerEmployeeCorrectionListQuery,
+    FormerEmployeeCorrectionPage,
     FormerEmployeeCorrectionResponse,
     HiringRoleDecisionRequest,
     OrganizationJobRoleCreateRequest,
@@ -139,6 +141,16 @@ async def create_former_employee_correction(
     return await svc.create_former_employee_correction(
         current.id, org_public_id, person_public_id, payload
     )
+
+
+@router.get("/people/corrections", response_model=FormerEmployeeCorrectionPage)
+async def list_former_employee_corrections(
+    org_public_id: UUID,
+    params: Annotated[FormerEmployeeCorrectionListQuery, Depends()],
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    svc: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> FormerEmployeeCorrectionPage:
+    return await svc.list_former_employee_corrections(current.id, org_public_id, params)
 
 
 @router.post(
