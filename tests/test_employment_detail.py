@@ -68,7 +68,7 @@ async def test_get_owned_employment_detail_eagerly_loads_documents() -> None:
             subject_email=user.email,
             employer_legal_name="Detail Test Company",
             job_title="Test Engineer",
-            employment_type="full_time",
+            employment_type=None,
             start_date=date(2024, 1, 1),
             work_location_country="IN",
             verification_method="document",
@@ -113,6 +113,7 @@ async def test_get_owned_employment_detail_eagerly_loads_documents() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["id"] == str(employment.id)
+    assert payload["employment_type"] is None
     assert len(payload["documents"]) == 1
     assert payload["documents"][0]["id"] == str(document.id)
     assert payload["documents"][0]["original_filename"] == "offer-letter.pdf"

@@ -68,7 +68,7 @@ class EmployerPortalCandidate(BaseModel):
 class EmployerPortalEmployment(BaseModel):
     employer_name: str
     job_title: str
-    employment_type: str
+    employment_type: str | None
     # Resume-imported legacy claims may not have complete chronology yet.
     start_date: str | None = None
     end_date: str | None = None

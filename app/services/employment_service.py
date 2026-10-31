@@ -15,8 +15,8 @@ from app.employment.enums import (
     VerificationStatus,
     WorkArrangement,
 )
-from app.employment.verification.state_machine import VerificationStatusManager
 from app.employment.validation import validate_period_after_patch
+from app.employment.verification.state_machine import VerificationStatusManager
 from app.exceptions import (
     ActiveVerificationPipelineConflictError,
     EmploymentCaseNotFoundError,
@@ -94,7 +94,7 @@ class EmploymentService:
             employer_legal_name=payload.employer_legal_name,
             employer_trade_name=payload.employer_trade_name,
             job_title=payload.job_title,
-            employment_type=payload.employment_type.value,
+            employment_type=payload.employment_type.value if payload.employment_type else None,
             start_date=payload.start_date,
             end_date=payload.end_date,
             work_location_city=payload.work_location_city,

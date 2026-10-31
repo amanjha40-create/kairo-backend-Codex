@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalogues.education_identity import FIELDS, education_identity
-from app.employment.enums import EmploymentType, VerificationMethod, VerificationStatus
+from app.employment.enums import VerificationMethod, VerificationStatus
+from app.employment.type_normalization import normalize_employment_type
 from app.exceptions import ConflictError, NotFoundError, ValidationAppError
 from app.models.certification import Certification
 from app.models.education import Education
@@ -546,11 +547,7 @@ class ResumeReviewService:
                 subject_email=user.email,
                 employer_legal_name=p["company_name"],
                 job_title=p["role_title"],
-                employment_type=(
-                    p.get("employment_type")
-                    if p.get("employment_type") in {value.value for value in EmploymentType}
-                    else EmploymentType.OTHER.value
-                ),
+                employment_type=normalize_employment_type(p.get("employment_type")),
                 start_date=self._employment_contract_date(p, "start_date"),
                 end_date=self._employment_contract_date(p, "end_date", is_end=True),
                 work_location_city=location.get("city"),
@@ -604,6 +601,8 @@ class ResumeReviewService:
             )
         if claim_type == "employment":
             p = dict(p)
+            if "employment_type" in p:
+                p["employment_type"] = normalize_employment_type(p["employment_type"])
             p["start_date"] = self._employment_contract_date(p, "start_date")
             p["end_date"] = self._employment_contract_date(p, "end_date", is_end=True)
             if "location" in p:

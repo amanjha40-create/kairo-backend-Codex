@@ -30,7 +30,7 @@ class CreateEmploymentRequest(BaseModel):
     employer_legal_name: str = Field(..., min_length=2, max_length=512)
     employer_trade_name: str | None = Field(None, max_length=512)
     job_title: str = Field(..., min_length=1, max_length=255)
-    employment_type: EmploymentType = EmploymentType.FULL_TIME
+    employment_type: EmploymentType | None = None
     verification_method: VerificationMethod = VerificationMethod.DOCUMENT
     start_date: date
     end_date: date | None = None

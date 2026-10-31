@@ -1071,7 +1071,7 @@ class OrganizationPersonService:
     ) -> OrganizationPersonRelationship:
         if employment is None:
             return OrganizationPersonRelationship.CANDIDATE
-        employment_type = str(employment.employment_type)
+        employment_type = employment.employment_type
         if employment.end_date is not None and employment.end_date < datetime.now(tz=UTC).date():
             return OrganizationPersonRelationship.FORMER_EMPLOYEE
         if employment_type in {"contract", "freelance", "gig"}:

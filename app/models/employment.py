@@ -14,7 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.db.mixins import SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from app.db.pg_enums import employment_type_enum, verification_status_enum
-from app.employment.enums import EmploymentType, VerificationMethod, VerificationStatus
+from app.employment.enums import VerificationMethod, VerificationStatus
 
 if TYPE_CHECKING:
     from app.models.employer_verification_request import EmployerVerificationRequest
@@ -56,10 +56,9 @@ class Employment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     employer_legal_name: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
     employer_trade_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     job_title: Mapped[str] = mapped_column(String(255), nullable=False)
-    employment_type: Mapped[str] = mapped_column(
+    employment_type: Mapped[str | None] = mapped_column(
         employment_type_enum,
-        nullable=False,
-        default=EmploymentType.FULL_TIME.value,
+        nullable=True,
         index=True,
     )
     # Imported resume claims may omit dates; candidates can complete drafts in Career.
