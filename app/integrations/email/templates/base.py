@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from html import escape
 
 BRAND_NAME = "KairoID"
-SUPPORT_EMAIL = "support@kairoid.com"
+SUPPORT_EMAIL = "contact@kairoid.com"
 WEBSITE_URL = "https://kairoid.com"
 LOGO_URL = "https://app.kairoid.com/assets/kairoid-logo-primary-Di249jMg.png"
 TAGLINE = "Verify once. Trusted everywhere."

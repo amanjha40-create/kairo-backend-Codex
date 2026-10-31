@@ -136,6 +136,7 @@ def test_every_template_has_complete_kairo_content(
     assert rendered_template.text_body.strip()
     assert SUPPORT_EMAIL in rendered_template.html_body
     assert SUPPORT_EMAIL in rendered_template.text_body
+    assert SUPPORT_EMAIL == "contact@kairoid.com"
     assert "KairoID" in rendered_template.html_body
     assert "Verify once. Trusted everywhere." in rendered_template.html_body
     assert "KairoID" in rendered_template.text_body
