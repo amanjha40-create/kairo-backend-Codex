@@ -11,11 +11,19 @@ from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.email_utils import mask_email, normalize_email
 from app.auth.oauth_transactions import OAuthHandoffStore, OAuthTransactionStore
+from app.auth.password_errors import (
+    InvalidCurrentPasswordError,
+    InvalidSetPasswordChallengeError,
+    PasswordAlreadySetError,
+    PasswordNotSetError,
+    SetPasswordNotEligibleError,
+)
 from app.auth.passwords import hash_password, password_needs_rehash, verify_password
 from app.auth.phone_utils import mask_phone, normalize_phone
 from app.auth.provider_registry import get_provider
@@ -39,7 +47,7 @@ from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
 from app.integrations.phone_otp.msg91 import Msg91PhoneOtpProvider
 from app.logging.auth_audit import auth_audit
-from app.models import PasswordResetToken, PendingSignup, RefreshToken, User
+from app.models import PasswordResetToken, PendingSignup, RefreshToken, User, UserAccountEvent
 from app.models.user_social_account import UserSocialAccount
 from app.organization.enums import OrganizationType
 from app.repositories import PasswordResetTokenRepository, RefreshTokenRepository, UserRepository
@@ -69,6 +77,7 @@ from app.schemas.auth import (
     ResetPasswordResponse,
     SetPasswordRequest,
     SetPasswordResponse,
+    SetPasswordVerificationResponse,
     SignupChannelRequest,
     SignupChannelSendResponse,
     SignupChannelVerifyResponse,
@@ -122,6 +131,7 @@ class AuthService:
         self._refresh = RefreshTokenRepository(session)
         self._social = UserSocialAccountRepository(session)
         self._otp = SignupOtpStore(redis, settings)
+        self._set_password_otp = SignupOtpStore(redis, settings, scope="set_password")
         self._oauth_transactions = OAuthTransactionStore(redis, RedisKeys(settings))
         self._oauth_handoffs = OAuthHandoffStore(redis, RedisKeys(settings))
         self._email = get_email_sender(settings, session=session)
@@ -901,35 +911,108 @@ class AuthService:
         await self._session.commit()
         return tokens
 
-    async def set_password(self, user_id: UUID, data: SetPasswordRequest) -> SetPasswordResponse:
-        """Allow a social-only user to add a password so they can also use email login."""
+    async def request_set_password(self, user_id: UUID) -> SetPasswordVerificationResponse:
+        """Send a purpose-bound challenge to the authenticated account's verified email."""
 
         user = await self._users.get_by_id(user_id)
-        if user is None:
-            raise NotFoundError("User not found")
-        if user.password_hash is not None:
-            raise ConflictError("A password is already set. Use change-password instead.")
+        await self._assert_first_password_eligible(user)
+        assert user is not None
+
+        await self._set_password_otp.claim_send_cooldown(user.id)
+        await self._set_password_otp.enforce_send_rate(user.id, "email")
+        code = generate_otp_code()
+        await self._set_password_otp.store_otp(user.id, "email", code)
+        ttl_minutes = max(1, self._settings.signup_otp_ttl_seconds // 60)
+        try:
+            await self._email.send_set_password_otp(
+                to_email=user.email,
+                code=code,
+                ttl_minutes=ttl_minutes,
+                audit_metadata={"purpose": "set_password"},
+            )
+        except Exception:
+            await self._set_password_otp.clear(user.id, "email")
+            raise
+        await self._session.commit()
+        return SetPasswordVerificationResponse(
+            email_masked=mask_email(user.email),
+            expires_in_seconds=self._settings.signup_otp_ttl_seconds,
+            resend_after_seconds=self._settings.signup_otp_resend_cooldown_seconds,
+        )
+
+    async def set_password(self, user_id: UUID, data: SetPasswordRequest) -> SetPasswordResponse:
+        """Add the first local password after an account-bound email challenge."""
+
+        user = (
+            await self._session.execute(
+                select(User)
+                .where(User.id == user_id, User.deleted_at.is_(None))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        await self._assert_first_password_eligible(user)
+        assert user is not None
+
+        await self._set_password_otp.enforce_verify_attempts(user.id)
+        if not await self._set_password_otp.verify_and_consume(user.id, "email", data.code):
+            raise InvalidSetPasswordChallengeError()
 
         user.password_hash = hash_password(data.password)
+        event = self._password_event(user, "password_set", "Local password added")
+        self._session.add(event)
+        await self._session.flush()
         await self._session.commit()
-        await self._notify_password_changed(user_id, uuid4())
+        auth_audit("AUTH_PASSWORD_SET", user_id=user.id)
+        await self._notify_password_changed(user.id, event.id)
         return SetPasswordResponse()
 
-    async def change_password(self, user_id: UUID, data: ChangePasswordRequest) -> ChangePasswordResponse:
+    async def change_password(
+        self,
+        user_id: UUID,
+        data: ChangePasswordRequest,
+    ) -> ChangePasswordResponse:
         """Change an existing password after verifying the current one."""
 
         user = await self._users.get_by_id(user_id)
         if user is None:
             raise NotFoundError("User not found")
-        if user.password_hash is None:
-            raise ConflictError("No password is set. Use set-password instead.")
+        if not user.password_hash:
+            raise PasswordNotSetError()
         if not verify_password(data.current_password, user.password_hash):
-            raise UnauthorizedError("Current password is incorrect")
+            raise InvalidCurrentPasswordError()
 
         user.password_hash = hash_password(data.new_password)
+        event = self._password_event(user, "password_changed", "Password changed")
+        self._session.add(event)
+        await self._session.flush()
         await self._session.commit()
-        await self._notify_password_changed(user_id, uuid4())
+        auth_audit("AUTH_PASSWORD_CHANGED", user_id=user.id)
+        await self._notify_password_changed(user_id, event.id)
         return ChangePasswordResponse()
+
+    async def _assert_first_password_eligible(self, user: User | None) -> None:
+        if user is None:
+            raise NotFoundError("User not found")
+        if user.password_hash:
+            raise PasswordAlreadySetError()
+        if not user.is_active or user.deleted_at is not None or user.email_verified_at is None:
+            raise SetPasswordNotEligibleError()
+        if not await self._social.list_for_user(user.id):
+            raise SetPasswordNotEligibleError()
+
+    @staticmethod
+    def _password_event(user: User, event_type: str, title: str) -> UserAccountEvent:
+        return UserAccountEvent(
+            user_id=user.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            actor_display_name=user.full_name or user.email,
+            event_type=event_type,
+            title=title,
+            detail=None,
+            metadata_payload=None,
+        )
 
     async def link_provider(self, user_id: UUID, provider_name: str, data: LinkProviderRequest) -> LinkProviderResponse:
         """Link any OAuth provider to an existing account."""

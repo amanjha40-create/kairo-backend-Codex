@@ -79,6 +79,15 @@ class FakeEmailDeliveryLogRepository:
             "verification code",
         ),
         (
+            lambda sender: sender.send_set_password_otp(
+                to_email="recipient@example.com",
+                code="123456",
+                ttl_minutes=10,
+            ),
+            "set_password_otp",
+            "add a local password",
+        ),
+        (
             lambda sender: sender.send_password_reset(
                 to_email="recipient@example.com",
                 reset_token="reset-token",

@@ -54,6 +54,34 @@ def events(stream):
     return [json.loads(line) for line in stream.getvalue().splitlines()]
 
 
+@pytest.mark.parametrize("event", ["AUTH_PASSWORD_SET", "AUTH_PASSWORD_CHANGED"])
+def test_password_events_are_allowlisted_without_credentials(captured, event):
+    user_id = uuid4()
+    audit.auth_audit(event, user_id=user_id)
+    record = events(captured)[0]
+
+    assert events(captured) == [
+        {
+            "timestamp": record["timestamp"],
+            "event": event,
+            "environment": "test",
+            "endpoint": None,
+            "http_status": None,
+            "client_class": "other",
+            "user_id": str(user_id),
+            "actor_user_id": None,
+            "session_id": None,
+            "family_id": None,
+            "successor_session_id": None,
+            "excluded_family_id": None,
+            "request_id": None,
+            "correlation_id": None,
+        }
+    ]
+    assert "password_hash" not in record
+    assert "otp" not in record
+
+
 def service():
     db = Session()
     user = SimpleNamespace(

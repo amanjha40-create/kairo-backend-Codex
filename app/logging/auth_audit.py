@@ -20,6 +20,8 @@ EVENTS = frozenset(
         "AUTH_LOGOUT_SESSION_REVOKED",
         "AUTH_SESSION_REVOKE",
         "AUTH_SESSION_REVOKE_ALL",
+        "AUTH_PASSWORD_SET",
+        "AUTH_PASSWORD_CHANGED",
     }
 )
 CLIENTS = frozenset({"android_webview", "android_browser", "ios_browser", "browser", "other"})

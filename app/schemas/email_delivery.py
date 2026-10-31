@@ -46,6 +46,13 @@ class SignupOtpEmailTemplateData(BaseModel):
     ttl_minutes: int = Field(ge=1, le=1440)
 
 
+class SetPasswordOtpEmailTemplateData(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    code: str = Field(min_length=6, max_length=6)
+    ttl_minutes: int = Field(ge=1, le=60)
+
+
 class PasswordResetEmailTemplateData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

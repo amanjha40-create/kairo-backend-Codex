@@ -42,6 +42,7 @@ from app.schemas.auth import (
     ResetPasswordResponse,
     SetPasswordRequest,
     SetPasswordResponse,
+    SetPasswordVerificationResponse,
     SignupChannelRequest,
     SignupChannelSendResponse,
     SignupChannelVerifyResponse,
@@ -481,9 +482,23 @@ async def unlink_provider(
 # ---------------------------------------------------------------------------
 
 @router.post(
+    "/set-password/request",
+    response_model=SetPasswordVerificationResponse,
+    summary="Request verification before setting the first local password",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def request_set_password(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    auth: AuthService = Depends(get_auth_service),
+) -> SetPasswordVerificationResponse:
+    return await auth.request_set_password(current.id)
+
+
+@router.post(
     "/set-password",
     response_model=SetPasswordResponse,
-    summary="Set password — enables email/password login for social-only accounts",
+    summary="Set first password using the verified email challenge",
+    dependencies=[Depends(otp_verify_rate_limit)],
 )
 async def set_password(
     payload: SetPasswordRequest,

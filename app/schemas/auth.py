@@ -267,10 +267,11 @@ class GoogleHandoffExchangeResponse(BaseModel):
 
 
 class SetPasswordRequest(BaseModel):
-    """Allow a social-only user to add email/password login to their account."""
+    """Confirm first-password creation using the account-bound email challenge."""
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^[0-9]{6}$", repr=False)
     password: str = Field(..., min_length=12, max_length=128)
     confirm_password: str = Field(..., min_length=12, max_length=128)
 
@@ -284,6 +285,13 @@ class SetPasswordRequest(BaseModel):
 
 class SetPasswordResponse(BaseModel):
     message: str = "Password set successfully. You can now also log in with email and password."
+
+
+class SetPasswordVerificationResponse(BaseModel):
+    email_masked: str
+    expires_in_seconds: int
+    resend_after_seconds: int
+    message: str = "Verification code sent"
 
 
 class ChangePasswordRequest(BaseModel):

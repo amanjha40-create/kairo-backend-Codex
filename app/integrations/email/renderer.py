@@ -26,6 +26,10 @@ from app.integrations.email.templates.password_reset import (
     PasswordResetContext,
     render_password_reset,
 )
+from app.integrations.email.templates.set_password_otp import (
+    SetPasswordOtpContext,
+    render_set_password_otp,
+)
 from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
 from app.integrations.email.templates.team_invitation import (
     TeamInvitationContext,
@@ -46,6 +50,7 @@ from app.schemas.email_delivery import (
     InstitutionVerificationEmailTemplateData,
     PasswordResetEmailTemplateData,
     RenderedEmailMessage,
+    SetPasswordOtpEmailTemplateData,
     SignupOtpEmailTemplateData,
     TeamInvitationEmailTemplateData,
     TrustInvitationEmailTemplateData,
@@ -123,6 +128,22 @@ def _render_signup_otp(to_email: str, data: dict[str, Any]) -> RenderedEmailMess
         audit_payload={
             "ttl_minutes": payload.ttl_minutes,
         },
+    )
+
+
+def _render_set_password_otp(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
+    payload = SetPasswordOtpEmailTemplateData.model_validate(data)
+    content = render_set_password_otp(
+        SetPasswordOtpContext(code=payload.code, ttl_minutes=payload.ttl_minutes)
+    )
+    return RenderedEmailMessage(
+        template_key=EmailTemplateKey.SET_PASSWORD_OTP.value,
+        template_version=DEFAULT_TEMPLATE_VERSION,
+        to_email=to_email,
+        subject=content.subject,
+        text_body=content.text_body,
+        html_body=content.html_body,
+        audit_payload={"ttl_minutes": payload.ttl_minutes, "purpose": "set_password"},
     )
 
 
@@ -297,6 +318,7 @@ class EmailTemplateRenderer:
                 _render_candidate_account_activation
             ),
             EmailTemplateKey.SIGNUP_OTP.value: _render_signup_otp,
+            EmailTemplateKey.SET_PASSWORD_OTP.value: _render_set_password_otp,
             EmailTemplateKey.PASSWORD_RESET.value: _render_password_reset,
             EmailTemplateKey.ADMIN_INVITATION.value: _render_admin_invitation,
             EmailTemplateKey.EMPLOYER_VERIFICATION.value: _render_employer_verification,

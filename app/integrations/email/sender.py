@@ -28,6 +28,15 @@ class EmailSender(Protocol):
         audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
+    async def send_set_password_otp(
+        self,
+        *,
+        to_email: str,
+        code: str,
+        ttl_minutes: int,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None: ...
+
     async def send_password_reset(
         self,
         *,
@@ -157,6 +166,27 @@ class ProviderEmailSender:
                     data={"code": code, "ttl_minutes": ttl_minutes},
                 ),
                 failure_message="Unable to send verification email",
+                audit_metadata=audit_metadata,
+            )
+        except ServiceUnavailableError:
+            raise
+
+    async def send_set_password_otp(
+        self,
+        *,
+        to_email: str,
+        code: str,
+        ttl_minutes: int,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None:
+        try:
+            await self._send_rendered(
+                message=self._renderer.render(
+                    template_key=EmailTemplateKey.SET_PASSWORD_OTP.value,
+                    to_email=to_email,
+                    data={"code": code, "ttl_minutes": ttl_minutes},
+                ),
+                failure_message="Unable to send password verification email",
                 audit_metadata=audit_metadata,
             )
         except ServiceUnavailableError:

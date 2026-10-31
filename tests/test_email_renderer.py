@@ -99,6 +99,23 @@ def test_render_password_reset_keeps_reset_url_out_of_audit_payload() -> None:
     assert "single-use-reset-token" not in str(message.audit_payload)
 
 
+def test_render_set_password_otp_keeps_code_out_of_audit_payload() -> None:
+    renderer = EmailTemplateRenderer()
+    code = "654321"
+
+    message = renderer.render(
+        template_key=EmailTemplateKey.SET_PASSWORD_OTP.value,
+        to_email="federated@example.com",
+        data={"code": code, "ttl_minutes": 10},
+    )
+
+    assert message.template_key == EmailTemplateKey.SET_PASSWORD_OTP.value
+    assert code in message.text_body
+    assert code in (message.html_body or "")
+    assert code not in str(message.audit_payload)
+    assert message.audit_payload == {"ttl_minutes": 10, "purpose": "set_password"}
+
+
 @pytest.mark.parametrize(
     ("template_key", "data", "expected_phrase"),
     [
