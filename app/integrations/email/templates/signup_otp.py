@@ -25,25 +25,25 @@ def render_signup_otp(context: SignupOtpContext) -> TransactionalEmailContent:
         title=title,
         content=(
             '<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
-            "Use this one-time code to continue creating your Kairo account.</p>"
+            "Use this one-time code to continue creating your KairoID account.</p>"
             f'<p style="margin:20px 0;padding:18px;text-align:center;background:#eef6f4;'
             f'border-radius:10px;font-size:30px;font-weight:700;letter-spacing:.18em;color:#174f4a;">{safe_code}</p>'
             f'<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#5d6966;">'
             f"This code expires in {context.ttl_minutes} minutes.</p>"
             '<p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#697572;">'
-            "For your security, Kairo will never ask you to share this code. "
+            "For your security, KairoID will never ask you to share this code. "
             "If you did not request it, you can ignore this email.</p>"
         ),
     )
     text_body = with_text_footer(
-        "Use this one-time code to continue creating your Kairo account.\n\n"
+        "Use this one-time code to continue creating your KairoID account.\n\n"
         f"Verification code: {context.code}\n\n"
         f"This code expires in {context.ttl_minutes} minutes.\n\n"
-        "For your security, Kairo will never ask you to share this code. "
+        "For your security, KairoID will never ask you to share this code. "
         "If you did not request it, you can ignore this email."
     )
     return TransactionalEmailContent(
-        subject="Kairo — verify your email",
+        subject="KairoID — verify your email",
         html_body=html_body,
         text_body=text_body,
     )

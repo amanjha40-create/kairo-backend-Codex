@@ -122,6 +122,23 @@ def _unique_slug(base: str) -> str:
     return f"{base}-{suffix}"
 
 
+def _safe_email_first_name(full_name: str | None) -> str | None:
+    """Return a conservative greeting name without falling back to an email address."""
+
+    if not full_name:
+        return None
+    first_name = full_name.strip().split(maxsplit=1)[0].strip(".,")
+    if (
+        not first_name
+        or len(first_name) > 100
+        or "@" in first_name
+        or any(character.isdigit() for character in first_name)
+        or not any(character.isalpha() for character in first_name)
+    ):
+        return None
+    return first_name
+
+
 class AuthService:
     """Coordinates credential verification, signup OTP, and token lifecycle."""
 
@@ -985,6 +1002,7 @@ class AuthService:
                 to_email=user.email,
                 code=code,
                 ttl_minutes=ttl_minutes,
+                first_name=_safe_email_first_name(user.full_name),
                 audit_metadata={"purpose": "set_password"},
             )
         except Exception:

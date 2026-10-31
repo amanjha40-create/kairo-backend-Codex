@@ -35,7 +35,7 @@ def render_verification_completed(
             f'<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">Hello <strong>{safe_subject}</strong>,</p>'
             f'<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#34413e;">'
             f"Your {safe_request_type} verification with <strong>{safe_organization}</strong> "
-            "has been completed on Kairo.</p>"
+            "has been completed on KairoID.</p>"
             f'<p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#697572;">'
             f"Completed at: {safe_completed_at}</p>"
         ),
@@ -43,7 +43,7 @@ def render_verification_completed(
     text_body = with_text_footer(
         f"Hello {context.subject_name},\n\n"
         f"Your {request_type.lower()} verification with {context.organization_name} "
-        "has been completed on Kairo.\n\n"
+        "has been completed on KairoID.\n\n"
         f"Completed at: {context.completed_at_iso}"
     )
     return TransactionalEmailContent(

@@ -51,6 +51,7 @@ class SetPasswordOtpEmailTemplateData(BaseModel):
 
     code: str = Field(min_length=6, max_length=6)
     ttl_minutes: int = Field(ge=1, le=60)
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class PasswordResetEmailTemplateData(BaseModel):

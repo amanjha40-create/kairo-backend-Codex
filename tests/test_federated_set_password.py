@@ -195,6 +195,7 @@ async def test_google_only_account_securely_sets_first_password_and_keeps_link(
         requested = await auth.request_set_password(user_id)
         assert requested.email_masked != user_email
         assert email.deliveries[0]["to_email"] == user_email
+        assert email.deliveries[0]["first_name"] == "Federated"
         code = str(email.deliveries[0]["code"])
         assert code not in requested.model_dump_json()
 

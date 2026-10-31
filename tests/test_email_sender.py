@@ -83,9 +83,10 @@ class FakeEmailDeliveryLogRepository:
                 to_email="recipient@example.com",
                 code="123456",
                 ttl_minutes=10,
+                first_name="Aman",
             ),
             "set_password_otp",
-            "add a local password",
+            "set a password",
         ),
         (
             lambda sender: sender.send_password_reset(

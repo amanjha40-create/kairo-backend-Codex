@@ -377,11 +377,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PASSWORD_RESET_TOKEN_TTL_MINUTES"),
     )
     email_from: str = Field(
-        default="noreply@kairo.app",
+        default="verify@kairoid.com",
         validation_alias=AliasChoices("EMAIL_FROM_ADDRESS", "EMAIL_FROM"),
     )
     email_from_name: str = Field(
-        default="Kairo",
+        default="KairoID",
         validation_alias=AliasChoices("EMAIL_FROM_NAME"),
     )
     email_reply_to: str = Field(

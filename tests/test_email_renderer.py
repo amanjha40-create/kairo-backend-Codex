@@ -106,7 +106,7 @@ def test_render_set_password_otp_keeps_code_out_of_audit_payload() -> None:
     message = renderer.render(
         template_key=EmailTemplateKey.SET_PASSWORD_OTP.value,
         to_email="federated@example.com",
-        data={"code": code, "ttl_minutes": 10},
+        data={"code": code, "ttl_minutes": 10, "first_name": "Aman"},
     )
 
     assert message.template_key == EmailTemplateKey.SET_PASSWORD_OTP.value
@@ -114,6 +114,9 @@ def test_render_set_password_otp_keeps_code_out_of_audit_payload() -> None:
     assert code in (message.html_body or "")
     assert code not in str(message.audit_payload)
     assert message.audit_payload == {"ttl_minutes": 10, "purpose": "set_password"}
+    assert message.subject == "Your KairoID verification code"
+    assert "Hi Aman," in message.text_body
+    assert "first_name" not in message.audit_payload
 
 
 @pytest.mark.parametrize(

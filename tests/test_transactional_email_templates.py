@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.integrations.email.templates.admin_invitation import (
@@ -9,19 +11,36 @@ from app.integrations.email.templates.admin_invitation import (
     render_admin_invitation,
 )
 from app.integrations.email.templates.base import (
-    FOOTER_TEXT,
+    LEGAL_TEXT,
+    LOGO_URL,
     SUPPORT_EMAIL,
     TransactionalEmailContent,
+)
+from app.integrations.email.templates.candidate_account_activation import (
+    CandidateAccountActivationContext,
+    render_candidate_account_activation,
 )
 from app.integrations.email.templates.employer_verification import (
     EmployerVerificationContext,
     render_employer_verification,
 )
+from app.integrations.email.templates.institution_verification import (
+    InstitutionVerificationContext,
+    render_institution_verification,
+)
 from app.integrations.email.templates.password_reset import (
     PasswordResetContext,
     render_password_reset,
 )
+from app.integrations.email.templates.set_password_otp import (
+    SetPasswordOtpContext,
+    render_set_password_otp,
+)
 from app.integrations.email.templates.signup_otp import SignupOtpContext, render_signup_otp
+from app.integrations.email.templates.team_invitation import (
+    TeamInvitationContext,
+    render_team_invitation,
+)
 from app.integrations.email.templates.trust_invitation import (
     TrustInvitationContext,
     render_trust_invitation,
@@ -35,6 +54,9 @@ from app.integrations.email.templates.verification_completed import (
 @pytest.fixture(
     params=(
         lambda: render_signup_otp(SignupOtpContext(code="123456", ttl_minutes=10)),
+        lambda: render_set_password_otp(
+            SetPasswordOtpContext(code="123456", ttl_minutes=10, first_name="Aman")
+        ),
         lambda: render_password_reset(
             PasswordResetContext(reset_token="reset-token", ttl_minutes=30)
         ),
@@ -42,6 +64,13 @@ from app.integrations.email.templates.verification_completed import (
             AdminInvitationContext(
                 invited_role_label="Support",
                 invitation_url="https://admin.example.com/admin/accept-invitation#token=single-use-token",
+                expires_at_iso="2026-08-30T10:00:00+00:00",
+            )
+        ),
+        lambda: render_candidate_account_activation(
+            CandidateAccountActivationContext(
+                candidate_name="Candidate",
+                activation_url="https://app.example.com/activate/token",
                 expires_at_iso="2026-08-30T10:00:00+00:00",
             )
         ),
@@ -56,11 +85,31 @@ from app.integrations.email.templates.verification_completed import (
                 expires_hours=72,
             )
         ),
+        lambda: render_institution_verification(
+            InstitutionVerificationContext(
+                contact_name="Registrar",
+                subject_name="Candidate",
+                institution_name="Example University",
+                degree="BSc",
+                programme="Computer Science",
+                review_url="https://app.example.com/education/token",
+                expires_hours=72,
+            )
+        ),
         lambda: render_trust_invitation(
             TrustInvitationContext(
                 organization_name="Example Company",
                 subject_name="Candidate",
                 invitation_url="https://app.example.com/invitation/token",
+                expires_at_iso="2026-07-20T10:00:00+00:00",
+            )
+        ),
+        lambda: render_team_invitation(
+            TeamInvitationContext(
+                organization_name="Example Company",
+                inviter_name="Hiring Manager",
+                invited_role_label="Recruiter",
+                invitation_url="https://app.example.com/team/token",
                 expires_at_iso="2026-07-20T10:00:00+00:00",
             )
         ),
@@ -87,8 +136,17 @@ def test_every_template_has_complete_kairo_content(
     assert rendered_template.text_body.strip()
     assert SUPPORT_EMAIL in rendered_template.html_body
     assert SUPPORT_EMAIL in rendered_template.text_body
-    assert FOOTER_TEXT in rendered_template.html_body
-    assert FOOTER_TEXT in rendered_template.text_body
+    assert "KairoID" in rendered_template.html_body
+    assert "Verify once. Trusted everywhere." in rendered_template.html_body
+    assert "KairoID" in rendered_template.text_body
+    assert "Verify once. Trusted everywhere." in rendered_template.text_body
+    assert LOGO_URL in rendered_template.html_body
+    assert 'alt="KairoID"' in rendered_template.html_body
+    assert LEGAL_TEXT in rendered_template.html_body
+    assert LEGAL_TEXT in rendered_template.text_body
+    assert re.search(r"\bKairo\b", rendered_template.subject) is None
+    assert re.search(r"\bKairo\b", rendered_template.html_body) is None
+    assert re.search(r"\bKairo\b", rendered_template.text_body) is None
 
 
 def test_signup_otp_contains_code_expiry_and_security_notice() -> None:
@@ -99,6 +157,34 @@ def test_signup_otp_contains_code_expiry_and_security_notice() -> None:
     assert "12 minutes" in content.html_body
     assert "12 minutes" in content.text_body
     assert "never ask you to share this code" in content.text_body
+
+
+def test_set_password_otp_uses_branded_copy_preheader_and_personalization() -> None:
+    content = render_set_password_otp(
+        SetPasswordOtpContext(code="654321", ttl_minutes=10, first_name="Aman")
+    )
+
+    assert content.subject == "Your KairoID verification code"
+    assert "Hi Aman," in content.html_body
+    assert "Hi Aman," in content.text_body
+    assert (
+        "Use this code to set your KairoID password. It expires in 10 minutes."
+        in content.html_body
+    )
+    assert "654321" in content.html_body
+    assert "654321" in content.text_body
+    assert "email, phone, or chat" in content.text_body
+
+
+def test_set_password_otp_uses_safe_greeting_fallback() -> None:
+    content = render_set_password_otp(
+        SetPasswordOtpContext(code="654321", ttl_minutes=10)
+    )
+
+    assert "Hi there," in content.html_body
+    assert "Hi there," in content.text_body
+    assert "undefined" not in content.html_body
+    assert "null" not in content.html_body
 
 
 def test_password_reset_contains_token_expiry_and_security_notice() -> None:

@@ -92,8 +92,6 @@ def _render_admin_invitation(to_email: str, data: dict[str, Any]) -> RenderedEma
             invited_role_label=payload.invited_role_label,
             invitation_url=payload.invitation_url,
             expires_at_iso=payload.expires_at_iso,
-            invitee_name=payload.invitee_name,
-            personal_message=payload.personal_message,
         )
     )
     return RenderedEmailMessage(
@@ -134,7 +132,11 @@ def _render_signup_otp(to_email: str, data: dict[str, Any]) -> RenderedEmailMess
 def _render_set_password_otp(to_email: str, data: dict[str, Any]) -> RenderedEmailMessage:
     payload = SetPasswordOtpEmailTemplateData.model_validate(data)
     content = render_set_password_otp(
-        SetPasswordOtpContext(code=payload.code, ttl_minutes=payload.ttl_minutes)
+        SetPasswordOtpContext(
+            code=payload.code,
+            ttl_minutes=payload.ttl_minutes,
+            first_name=payload.first_name,
+        )
     )
     return RenderedEmailMessage(
         template_key=EmailTemplateKey.SET_PASSWORD_OTP.value,

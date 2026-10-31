@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
@@ -179,8 +180,8 @@ def _brevo_settings(**overrides: object) -> Settings:
         "email_backend": "brevo",
         "email_send_enabled": True,
         "brevo_api_key": "brevo-secret",
-        "email_from": "noreply@kairoid.com",
-        "email_from_name": "Kairo",
+        "email_from": "verify@kairoid.com",
+        "email_from_name": "KairoID",
         "email_reply_to": "support@kairoid.com",
     }
     base.update(overrides)
@@ -203,9 +204,13 @@ async def test_brevo_provider_sends_message_and_captures_provider_message_id() -
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url == httpx.URL("https://api.brevo.com/v3/smtp/email")
         assert request.headers["api-key"] == "brevo-secret"
-        payload = request.read().decode("utf-8")
-        assert "recipient@example.com" in payload
-        assert "Plain text fallback" in payload
+        payload = json.loads(request.read())
+        assert payload["sender"] == {
+            "email": "verify@kairoid.com",
+            "name": "KairoID",
+        }
+        assert payload["to"] == [{"email": "recipient@example.com"}]
+        assert payload["textContent"] == "Plain text fallback"
         return httpx.Response(201, json={"messageId": "brevo-message-id"})
 
     provider = BrevoEmailProvider(

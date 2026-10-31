@@ -34,6 +34,7 @@ class EmailSender(Protocol):
         to_email: str,
         code: str,
         ttl_minutes: int,
+        first_name: str | None = None,
         audit_metadata: dict[str, object] | None = None,
     ) -> None: ...
 
@@ -177,6 +178,7 @@ class ProviderEmailSender:
         to_email: str,
         code: str,
         ttl_minutes: int,
+        first_name: str | None = None,
         audit_metadata: dict[str, object] | None = None,
     ) -> None:
         try:
@@ -184,7 +186,11 @@ class ProviderEmailSender:
                 message=self._renderer.render(
                     template_key=EmailTemplateKey.SET_PASSWORD_OTP.value,
                     to_email=to_email,
-                    data={"code": code, "ttl_minutes": ttl_minutes},
+                    data={
+                        "code": code,
+                        "ttl_minutes": ttl_minutes,
+                        "first_name": first_name,
+                    },
                 ),
                 failure_message="Unable to send password verification email",
                 audit_metadata=audit_metadata,

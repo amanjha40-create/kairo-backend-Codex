@@ -25,7 +25,7 @@ class TeamInvitationContext:
 
 
 def render_team_invitation(context: TeamInvitationContext) -> TransactionalEmailContent:
-    title = f"Join {context.organization_name} on Kairo"
+    title = f"Join {context.organization_name} on KairoID"
     safe_org = html_escape(context.organization_name)
     safe_inviter = html_escape(context.inviter_name)
     safe_role = html_escape(context.invited_role_label)
@@ -57,7 +57,7 @@ def render_team_invitation(context: TeamInvitationContext) -> TransactionalEmail
     )
     text_body = with_text_footer(
         f"{greeting_text}"
-        f"{context.inviter_name} invited you to join {context.organization_name} on Kairo "
+        f"{context.inviter_name} invited you to join {context.organization_name} on KairoID "
         f"as {context.invited_role_label}.\n\n"
         f"{message_text}"
         f"Accept team invitation: {context.invitation_url}\n\n"
@@ -65,7 +65,7 @@ def render_team_invitation(context: TeamInvitationContext) -> TransactionalEmail
         "If you did not expect this invitation, do not use or forward the link."
     )
     return TransactionalEmailContent(
-        subject=f"Kairo — join {context.organization_name}",
+        subject=f"KairoID — join {context.organization_name}",
         html_body=html_body,
         text_body=text_body,
     )
