@@ -6,7 +6,12 @@ import json
 
 import pytest
 
-from app.auth.oauth_transactions import OAuthHandoffStore, OAuthTransactionStore
+from app.auth.oauth_transactions import (
+    ANDROID_PRODUCTION_CLIENT,
+    ANDROID_QA_CLIENT,
+    OAuthHandoffStore,
+    OAuthTransactionStore,
+)
 from app.config import Settings
 from app.infrastructure.redis.keys import RedisKeys
 
@@ -43,12 +48,28 @@ async def test_google_state_is_random_pkce_bound_and_single_use() -> None:
 
     assert first.state != second.state
     assert first.code_verifier != second.code_verifier
+    assert first.client_target == ANDROID_PRODUCTION_CLIENT
     assert OAuthTransactionStore.code_challenge(first.code_verifier)
     key = next(key for key in redis.values if first.state in key)
     assert redis.ttls[key] == 300
     assert (await store.consume(first.state)).code_verifier == first.code_verifier
     with pytest.raises(ValueError, match="invalid or expired"):
         await store.consume(first.state)
+
+
+@pytest.mark.asyncio
+async def test_google_state_binds_qa_target_and_rejects_arbitrary_target() -> None:
+    redis = _MemoryRedis()
+    store = OAuthTransactionStore(redis, RedisKeys(_settings()))
+
+    transaction = await store.create(client_target=ANDROID_QA_CLIENT)
+    stored = json.loads(
+        next(value for key, value in redis.values.items() if transaction.state in key)
+    )
+    assert stored == {"v": transaction.code_verifier, "t": ANDROID_QA_CLIENT}
+    assert (await store.consume(transaction.state)).client_target == ANDROID_QA_CLIENT
+    with pytest.raises(ValueError, match="client target is invalid"):
+        await store.create(client_target="https://attacker.example")
 
 
 @pytest.mark.asyncio
@@ -66,3 +87,38 @@ async def test_google_handoff_is_opaque_and_replay_safe() -> None:
     assert (await store.consume(code))["outcome"] == "PHONE_VERIFICATION_REQUIRED"
     with pytest.raises(ValueError, match="invalid or expired"):
         await store.consume(code)
+
+
+@pytest.mark.asyncio
+async def test_google_handoff_is_bound_to_client_and_wrong_client_consumes_it() -> None:
+    redis = _MemoryRedis()
+    store = OAuthHandoffStore(redis, RedisKeys(_settings()))
+    code = await store.create(
+        {
+            "outcome": "LOGIN_COMPLETE",
+            "client_target": ANDROID_QA_CLIENT,
+        }
+    )
+
+    with pytest.raises(ValueError, match="invalid or expired"):
+        await store.consume(code, expected_client_target=ANDROID_PRODUCTION_CLIENT)
+    with pytest.raises(ValueError, match="invalid or expired"):
+        await store.consume(code, expected_client_target=ANDROID_QA_CLIENT)
+
+
+@pytest.mark.asyncio
+async def test_expired_google_handoff_fails_closed() -> None:
+    redis = _MemoryRedis()
+    store = OAuthHandoffStore(redis, RedisKeys(_settings()))
+    code = await store.create(
+        {
+            "outcome": "LOGIN_COMPLETE",
+            "client_target": ANDROID_QA_CLIENT,
+        }
+    )
+    key = next(key for key in redis.values if code in key)
+    redis.values.pop(key)
+    redis.ttls.pop(key)
+
+    with pytest.raises(ValueError, match="invalid or expired"):
+        await store.consume(code, expected_client_target=ANDROID_QA_CLIENT)

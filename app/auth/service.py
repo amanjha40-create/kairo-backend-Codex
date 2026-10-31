@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote, urlparse
@@ -61,6 +62,7 @@ from app.schemas.auth import (
     ForgotPasswordResponse,
     GoogleAuthOutcome,
     GoogleHandoffExchangeResponse,
+    GoogleOAuthClientTarget,
     GooglePhoneStartRequest,
     LinkProviderRequest,
     LinkProviderResponse,
@@ -95,6 +97,13 @@ from app.schemas.auth import (
 
 logger = logging.getLogger(__name__)
 SignupChannel = Literal["email", "phone"]
+_ANDROID_QA_GOOGLE_CALLBACK_URI = "com.kairoid.app.qa://oauth/google/callback"
+
+
+@dataclass(frozen=True)
+class GoogleCallbackHandoff:
+    code: str
+    client_target: GoogleOAuthClientTarget
 
 
 def _make_slug(name: str | None, email: str) -> str:
@@ -709,10 +718,18 @@ class AuthService:
     def google_app_handoff_uri(self) -> str | None:
         return self._settings.google_app_handoff_uri
 
-    async def start_google_oauth(self) -> OAuthAuthUrlResponse:
+    def google_handoff_uri_for(self, client_target: GoogleOAuthClientTarget) -> str | None:
+        if client_target is GoogleOAuthClientTarget.ANDROID_QA:
+            return _ANDROID_QA_GOOGLE_CALLBACK_URI
+        return self.google_app_handoff_uri
+
+    async def start_google_oauth(
+        self,
+        client_target: GoogleOAuthClientTarget = GoogleOAuthClientTarget.ANDROID_PRODUCTION,
+    ) -> OAuthAuthUrlResponse:
         """Create the server-owned state/PKCE transaction before redirecting to Google."""
 
-        transaction = await self._oauth_transactions.create()
+        transaction = await self._oauth_transactions.create(client_target=client_target.value)
         provider = get_provider("google")
         auth_url = provider.get_auth_url(
             self._settings,
@@ -723,13 +740,23 @@ class AuthService:
 
     async def complete_google_callback(
         self, *, code: str | None, state: str | None, error: str | None = None
-    ) -> str:
+    ) -> GoogleCallbackHandoff | None:
         """Resolve Google result server-side and return an opaque App Link handoff code."""
 
-        if error or not code or not state:
-            return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
+        if not state:
+            return None
         try:
             transaction = await self._oauth_transactions.consume(state)
+            client_target = GoogleOAuthClientTarget(transaction.client_target)
+        except Exception:
+            return None
+        if error or not code:
+            handoff = await self._create_google_handoff(
+                GoogleAuthOutcome.AUTH_FAILED,
+                client_target=client_target,
+            )
+            return GoogleCallbackHandoff(handoff, client_target)
+        try:
             profile = await get_provider("google").exchange_code(
                 code, self._settings, code_verifier=transaction.code_verifier
             )
@@ -742,31 +769,57 @@ class AuthService:
                     "failure_reason": getattr(exc, "safe_reason", type(exc).__name__),
                 },
             )
-            return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
+            handoff = await self._create_google_handoff(
+                GoogleAuthOutcome.AUTH_FAILED,
+                client_target=client_target,
+            )
+            return GoogleCallbackHandoff(handoff, client_target)
 
         email = normalize_email(profile.email)
         social = await self._social.get_by_provider("google", profile.provider_user_id)
         if social is not None:
             user = await self._users.get_by_id(social.user_id)
             if user is None or not user.is_active or user.deleted_at is not None:
-                return await self._create_google_handoff(GoogleAuthOutcome.AUTH_FAILED)
+                handoff = await self._create_google_handoff(
+                    GoogleAuthOutcome.AUTH_FAILED,
+                    client_target=client_target,
+                )
+                return GoogleCallbackHandoff(handoff, client_target)
             tokens = await self._issue_tokens(user)
             await self._session.commit()
-            return await self._create_google_handoff(GoogleAuthOutcome.LOGIN_COMPLETE, tokens=tokens)
+            handoff = await self._create_google_handoff(
+                GoogleAuthOutcome.LOGIN_COMPLETE,
+                client_target=client_target,
+                tokens=tokens,
+            )
+            return GoogleCallbackHandoff(handoff, client_target)
 
         if await self._users.get_by_email(email) is not None:
-            return await self._create_google_handoff(GoogleAuthOutcome.ACCOUNT_LINKING_REQUIRED)
+            handoff = await self._create_google_handoff(
+                GoogleAuthOutcome.ACCOUNT_LINKING_REQUIRED,
+                client_target=client_target,
+            )
+            return GoogleCallbackHandoff(handoff, client_target)
 
         pending = await self._get_or_prepare_google_pending_signup(profile, email)
         await self._session.commit()
-        return await self._create_google_handoff(
+        handoff = await self._create_google_handoff(
             GoogleAuthOutcome.PHONE_VERIFICATION_REQUIRED,
+            client_target=client_target,
             pending=self._build_signup_start_response(pending, message="Phone verification required"),
         )
+        return GoogleCallbackHandoff(handoff, client_target)
 
-    async def exchange_google_handoff(self, code: str) -> GoogleHandoffExchangeResponse:
+    async def exchange_google_handoff(
+        self,
+        code: str,
+        client_target: GoogleOAuthClientTarget = GoogleOAuthClientTarget.ANDROID_PRODUCTION,
+    ) -> GoogleHandoffExchangeResponse:
         try:
-            payload = await self._oauth_handoffs.consume(code)
+            payload = await self._oauth_handoffs.consume(
+                code,
+                expected_client_target=client_target.value,
+            )
             outcome = GoogleAuthOutcome(str(payload["outcome"]))
         except Exception:
             return GoogleHandoffExchangeResponse(
@@ -786,10 +839,14 @@ class AuthService:
         self,
         outcome: GoogleAuthOutcome,
         *,
+        client_target: GoogleOAuthClientTarget,
         tokens: TokenResponse | None = None,
         pending: SignupStartResponse | None = None,
     ) -> str:
-        payload: dict[str, object] = {"outcome": outcome.value}
+        payload: dict[str, object] = {
+            "outcome": outcome.value,
+            "client_target": client_target.value,
+        }
         if tokens is not None:
             payload["tokens"] = tokens.model_dump()
         if pending is not None:

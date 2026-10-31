@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
-from urllib.parse import urlencode
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.rate_limit import (
@@ -17,21 +17,22 @@ from app.api.dependencies.rate_limit import (
 )
 from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
-    MobileVerificationRequest,
-    MobileVerificationVerifyRequest,
-    MobileVerificationResponse,
     ChangePasswordRequest,
     ChangePasswordResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleHandoffExchangeRequest,
+    GoogleHandoffExchangeResponse,
+    GoogleOAuthClientTarget,
+    GooglePhoneStartRequest,
     LinkProviderRequest,
     LinkProviderResponse,
     LoginRequest,
+    MobileVerificationRequest,
+    MobileVerificationResponse,
+    MobileVerificationVerifyRequest,
     OAuthAuthUrlResponse,
     OAuthCallbackRequest,
-    GoogleHandoffExchangeRequest,
-    GoogleHandoffExchangeResponse,
-    GooglePhoneStartRequest,
     OrganizationSignupEmailSendResponse,
     OrganizationSignupEmailVerifyResponse,
     OrganizationSignupStartRequest,
@@ -377,6 +378,20 @@ async def reset_password(
 # Google OAuth — state/PKCE is mandatory and its callback is browser-only.
 # ---------------------------------------------------------------------------
 
+@router.get(
+    "/google/url",
+    response_model=OAuthAuthUrlResponse,
+    summary="Start state-bound Google OAuth for an allowlisted mobile client",
+)
+async def google_oauth_url(
+    client_target: GoogleOAuthClientTarget = Query(
+        default=GoogleOAuthClientTarget.ANDROID_PRODUCTION
+    ),
+    auth: AuthService = Depends(get_auth_service),
+) -> OAuthAuthUrlResponse:
+    return await auth.start_google_oauth(client_target)
+
+
 @router.get("/google/callback", include_in_schema=False)
 async def google_callback(
     auth: AuthService = Depends(get_auth_service),
@@ -384,13 +399,15 @@ async def google_callback(
     state_value: str | None = Query(default=None, alias="state"),
     error: str | None = Query(default=None),
 ) -> RedirectResponse:
-    handoff_code = await auth.complete_google_callback(code=code, state=state_value, error=error)
-    handoff_uri = auth.google_app_handoff_uri
+    handoff = await auth.complete_google_callback(code=code, state=state_value, error=error)
+    if handoff is None:
+        return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+    handoff_uri = auth.google_handoff_uri_for(handoff.client_target)
     if not handoff_uri:
         # A generic failure avoids revealing deployment configuration to the browser.
         return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse(
-        f"{handoff_uri}?{urlencode({'code': handoff_code})}",
+        f"{handoff_uri}?{urlencode({'code': handoff.code})}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -405,7 +422,7 @@ async def google_handoff_exchange(
     payload: GoogleHandoffExchangeRequest,
     auth: AuthService = Depends(get_auth_service),
 ) -> GoogleHandoffExchangeResponse:
-    return await auth.exchange_google_handoff(payload.code)
+    return await auth.exchange_google_handoff(payload.code, payload.client_target)
 
 
 # OAuth providers — generic /{provider}/ routes (linkedin, github, ...).

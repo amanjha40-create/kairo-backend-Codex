@@ -11,8 +11,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-import app.models  # noqa: F401
 import app.auth.service as auth_service_module
+import app.models  # noqa: F401
 from app.auth.providers.base import OAuthProfile
 from app.auth.service import AuthService
 from app.config import Settings
@@ -20,6 +20,7 @@ from app.exceptions.base import ConflictError, UnauthorizedError
 from app.models import PendingSignup, RefreshToken, User, UserSocialAccount
 from app.schemas.auth import (
     GoogleAuthOutcome,
+    GoogleOAuthClientTarget,
     GooglePhoneStartRequest,
     SignupChannelRequest,
     SignupCompleteRequest,
@@ -155,13 +156,21 @@ async def _make_service(
     return service, phone, provider
 
 
-async def _complete_google_callback(service: AuthService) -> tuple[str, Any]:
-    transaction = await service._oauth_transactions.create()
-    handoff_code = await service.complete_google_callback(
+async def _complete_google_callback(
+    service: AuthService,
+    client_target: GoogleOAuthClientTarget = GoogleOAuthClientTarget.ANDROID_PRODUCTION,
+) -> tuple[str, Any]:
+    transaction = await service._oauth_transactions.create(client_target=client_target.value)
+    handoff = await service.complete_google_callback(
         code="external-google-authorization-code",
         state=transaction.state,
     )
-    return handoff_code, await service.exchange_google_handoff(handoff_code)
+    assert handoff is not None
+    assert handoff.client_target is client_target
+    return handoff.code, await service.exchange_google_handoff(
+        handoff.code,
+        client_target,
+    )
 
 
 async def _create_user(session: AsyncSession, *, email: str, phone: str = "+919876540000") -> User:
@@ -181,8 +190,17 @@ async def _create_user(session: AsyncSession, *, email: str, phone: str = "+9198
     return user
 
 
+@pytest.mark.parametrize(
+    "client_target",
+    [
+        GoogleOAuthClientTarget.ANDROID_PRODUCTION,
+        GoogleOAuthClientTarget.ANDROID_QA,
+    ],
+)
 async def test_linked_google_identity_issues_session_without_mutating_identity(
-    session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    client_target: GoogleOAuthClientTarget,
 ) -> None:
     profile = OAuthProfile(
         provider_user_id="lifecycle-linked-sub",
@@ -203,7 +221,7 @@ async def test_linked_google_identity_issues_session_without_mutating_identity(
         await session.commit()
 
         service, _phone, provider = await _make_service(session, monkeypatch, profile)
-        _handoff, result = await _complete_google_callback(service)
+        _handoff, result = await _complete_google_callback(service, client_target)
 
         assert provider.exchanged_codes == ["external-google-authorization-code"]
         assert result.outcome is GoogleAuthOutcome.LOGIN_COMPLETE

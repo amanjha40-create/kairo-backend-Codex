@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-from typing import Literal
 
 
 class MobileVerificationRequest(BaseModel):
@@ -237,10 +237,18 @@ class OAuthCallbackRequest(BaseModel):
     code: str = Field(..., min_length=1, description="Authorization code returned by the provider redirect")
 
 
+class GoogleOAuthClientTarget(StrEnum):
+    """Allowlisted mobile clients for the state-bound Google OAuth return."""
+
+    ANDROID_PRODUCTION = "android_production"
+    ANDROID_QA = "android_qa"
+
+
 class GoogleHandoffExchangeRequest(BaseModel):
     """Opaque, one-time code delivered to the Android App Link."""
 
     code: str = Field(..., min_length=20, max_length=512)
+    client_target: GoogleOAuthClientTarget = GoogleOAuthClientTarget.ANDROID_PRODUCTION
 
 
 class GooglePhoneStartRequest(BaseModel):
