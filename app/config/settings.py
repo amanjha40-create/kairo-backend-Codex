@@ -596,6 +596,11 @@ class Settings(BaseSettings):
     resume_processing_enabled: bool = Field(
         default=False, validation_alias=AliasChoices("RESUME_PROCESSING_ENABLED")
     )
+    enable_nullable_employment_type_writes: bool = Field(
+        default=False,
+        description="Phase-gated canonical nullable Employment type writes",
+        validation_alias=AliasChoices("ENABLE_NULLABLE_EMPLOYMENT_TYPE_WRITES"),
+    )
     resume_max_upload_bytes: int = Field(
         default=10_000_000,
         ge=1024,

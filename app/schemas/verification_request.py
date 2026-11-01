@@ -6,12 +6,13 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, model_validator
 
 from app.admin_review.enums import (
     VerificationRequestEvidenceStatus,
     VerificationReviewCorrectionStatus,
 )
+from app.employment.client_compatibility import employment_type_for_response
 from app.organization.enums import OrganizationType, OrganizationVerificationState
 from app.verification_requests.enums import (
     VerificationContactReviewStatus,
@@ -230,6 +231,10 @@ class VerificationRequestEmploymentClaimResponse(BaseModel):
     employment_type: str | None = None
     work_location_country: str | None = None
     work_location_region: str | None = None
+
+    @field_serializer("employment_type", when_used="json")
+    def serialize_employment_type(self, value: str | None) -> str | None:
+        return employment_type_for_response(value)
 
 
 class VerificationRequestEducationClaimResponse(BaseModel):

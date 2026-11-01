@@ -106,6 +106,12 @@ async def test_get_owned_employment_detail_eagerly_loads_documents() -> None:
                 base_url="http://test",
             ) as client:
                 response = await client.get(f"/api/v1/employments/{employment.id}")
+                capable_response = await client.get(
+                    f"/api/v1/employments/{employment.id}",
+                    headers={
+                        "X-KairoID-Capabilities": "nullable-employment-type-v1",
+                    },
+                )
         finally:
             app.dependency_overrides.clear()
             await transaction.rollback()
@@ -113,7 +119,10 @@ async def test_get_owned_employment_detail_eagerly_loads_documents() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["id"] == str(employment.id)
-    assert payload["employment_type"] is None
+    assert payload["employment_type"] == "other"
+    assert capable_response.status_code == 200
+    assert capable_response.json()["employment_type"] is None
+    assert employment.employment_type is None
     assert len(payload["documents"]) == 1
     assert payload["documents"][0]["id"] == str(document.id)
     assert payload["documents"][0]["original_filename"] == "offer-letter.pdf"

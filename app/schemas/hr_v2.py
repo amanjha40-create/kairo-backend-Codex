@@ -7,8 +7,16 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
+from app.employment.client_compatibility import employment_type_for_response
 from app.organization_people.enums import OrganizationPersonEmploymentStatus
 from app.schemas.pagination import Page, PageParams
 
@@ -334,6 +342,10 @@ class VerificationReportEmploymentItem(BaseModel):
     reviewer: str | None = None
     remarks: str | None = None
     status: VerificationReportCheckStatus
+
+    @field_serializer("employment_type", when_used="json")
+    def serialize_employment_type(self, value: str | None) -> str | None:
+        return employment_type_for_response(value)
 
 
 class VerificationReportEducationItem(BaseModel):

@@ -19,6 +19,7 @@ from app.exceptions.employment_domain import (
     DuplicateEmploymentDocumentError,
     EmploymentAccessDeniedError,
     EmploymentCaseNotFoundError,
+    EmploymentClientUpgradeRequiredError,
     EmploymentDateValidationError,
     EmploymentWorkflowError,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "DuplicateEmploymentDocumentError",
     "EmploymentAccessDeniedError",
     "EmploymentCaseNotFoundError",
+    "EmploymentClientUpgradeRequiredError",
     "EmploymentDateValidationError",
     "EmploymentWorkflowError",
     "ExpiredLinkError",

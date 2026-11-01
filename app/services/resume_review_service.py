@@ -11,6 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalogues.education_identity import FIELDS, education_identity
+from app.config import Settings, get_settings
+from app.employment.client_compatibility import LEGACY_EMPLOYMENT_TYPE_FALLBACK
 from app.employment.enums import VerificationMethod, VerificationStatus
 from app.employment.type_normalization import normalize_employment_type
 from app.exceptions import ConflictError, NotFoundError, ValidationAppError
@@ -71,9 +73,26 @@ SUGGESTION_ONLY_TYPES = {"profile"}
 
 
 class ResumeReviewService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self.session = session
+        self._settings = settings or get_settings()
         self.duplicates = ResumeDuplicateService(session)
+
+    @property
+    def _nullable_writes_enabled(self) -> bool:
+        return bool(
+            getattr(
+                getattr(self, "_settings", None),
+                "enable_nullable_employment_type_writes",
+                False,
+            )
+        )
+
+    def _resume_employment_type(self, value: object) -> str | None:
+        normalized = normalize_employment_type(value)
+        if normalized is not None or self._nullable_writes_enabled:
+            return normalized
+        return LEGACY_EMPLOYMENT_TYPE_FALLBACK
 
     async def create(self, user_id: UUID, resume_id: UUID) -> ReviewSessionResponse:
         document = await self._owned_resume(user_id, resume_id, for_update=True)
@@ -547,7 +566,7 @@ class ResumeReviewService:
                 subject_email=user.email,
                 employer_legal_name=p["company_name"],
                 job_title=p["role_title"],
-                employment_type=normalize_employment_type(p.get("employment_type")),
+                employment_type=self._resume_employment_type(p.get("employment_type")),
                 start_date=self._employment_contract_date(p, "start_date"),
                 end_date=self._employment_contract_date(p, "end_date", is_end=True),
                 work_location_city=location.get("city"),
@@ -602,7 +621,7 @@ class ResumeReviewService:
         if claim_type == "employment":
             p = dict(p)
             if "employment_type" in p:
-                p["employment_type"] = normalize_employment_type(p["employment_type"])
+                p["employment_type"] = self._resume_employment_type(p["employment_type"])
             p["start_date"] = self._employment_contract_date(p, "start_date")
             p["end_date"] = self._employment_contract_date(p, "end_date", is_end=True)
             if "location" in p:

@@ -92,8 +92,11 @@ def get_user_service(
     return UserService(session, settings)
 
 
-def get_employment_service(session: AsyncSession = Depends(get_session)) -> EmploymentService:
-    return EmploymentService(session)
+def get_employment_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> EmploymentService:
+    return EmploymentService(session, settings)
 
 
 def get_resume_service(
@@ -105,8 +108,9 @@ def get_resume_service(
 
 def get_resume_review_service(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> ResumeReviewService:
-    return ResumeReviewService(session)
+    return ResumeReviewService(session, settings)
 
 
 def get_employer_verification_service(

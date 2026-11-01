@@ -33,6 +33,17 @@ class EmploymentDateValidationError(ValidationAppError):
         super().__init__(message, code="employment_date_invalid")
 
 
+class EmploymentClientUpgradeRequiredError(ConflictError):
+    """A legacy client cannot safely mutate a canonical-null Employment."""
+
+    def __init__(
+        self,
+        message: str = "Update KairoID before editing this employment record",
+    ) -> None:
+        super().__init__(message)
+        self.code = "client_upgrade_required"
+
+
 class DuplicateEmploymentDocumentError(ConflictError):
     """Duplicate upload intent or identical finalized digest under the same case."""
 

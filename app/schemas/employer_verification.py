@@ -6,8 +6,9 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer
 
+from app.employment.client_compatibility import employment_type_for_response
 from app.employment.enums import EmployerVerificationDecision
 from app.schemas.employment_reference import HRReference, ManagerValidation
 
@@ -74,6 +75,10 @@ class EmployerPortalEmployment(BaseModel):
     end_date: str | None = None
     country: str | None
     region: str | None = None
+
+    @field_serializer("employment_type", when_used="json")
+    def serialize_employment_type(self, value: str | None) -> str | None:
+        return employment_type_for_response(value)
 
 
 class EmployerPortalEvidence(BaseModel):

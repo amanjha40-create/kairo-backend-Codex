@@ -11,6 +11,12 @@ from starlette.responses import Response
 
 from app.config import get_settings
 from app.core.constants import HttpHeader
+from app.employment.client_compatibility import (
+    bind_client_metadata,
+    observe_client_request,
+    parse_client_metadata,
+    reset_client_metadata,
+)
 from app.logging import get_logger
 from app.logging.auth_audit import begin_auth_audit, finish_auth_audit
 from app.logging.context import bind_request_context, reset_request_context
@@ -26,10 +32,17 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         settings = get_settings()
         request_id = request.headers.get(HttpHeader.REQUEST_ID) or str(uuid.uuid4())
         correlation_id = request.headers.get(HttpHeader.CORRELATION_ID) or request_id
+        client_metadata = parse_client_metadata(request.headers)
+        client_metadata_token = bind_client_metadata(client_metadata)
 
         bind_request_context(request_id=request_id, correlation_id=correlation_id)
         request.state.request_id = request_id
         request.state.correlation_id = correlation_id
+        request.state.client_metadata = client_metadata
+        if request.method != "OPTIONS":
+            observe_client_request(
+                nullable_writes_enabled=settings.enable_nullable_employment_type_writes,
+            )
         audit_token = begin_auth_audit(
             request_id, correlation_id, request.headers.get("user-agent", ""),
         )
@@ -68,6 +81,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 )
 
             reset_request_context()
+            reset_client_metadata(client_metadata_token)
 
             if response is not None:
                 response.headers[HttpHeader.REQUEST_ID] = request_id

@@ -8,6 +8,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, get_settings
+from app.employment.client_compatibility import (
+    LEGACY_EMPLOYMENT_TYPE_FALLBACK,
+    nullable_employment_type_capable,
+    observe_legacy_mutation_blocked,
+)
 from app.employment.enums import (
     EmploymentType,
     VerificationAuditAction,
@@ -20,6 +26,7 @@ from app.employment.verification.state_machine import VerificationStatusManager
 from app.exceptions import (
     ActiveVerificationPipelineConflictError,
     EmploymentCaseNotFoundError,
+    EmploymentClientUpgradeRequiredError,
     EmploymentWorkflowError,
 )
 from app.models.employment import Employment
@@ -58,8 +65,10 @@ class EmploymentService:
     def __init__(
         self,
         session: AsyncSession,
+        settings: Settings | None = None,
     ) -> None:
         self._session = session
+        self._settings = settings or get_settings()
         self._employment = EmploymentRepository(session)
         self._documents = EmploymentDocumentRepository(session)
         self._audit = VerificationAuditRepository(session)
@@ -87,6 +96,11 @@ class EmploymentService:
         )
 
     async def create(self, owner_user_id: UUID, payload: EmploymentCreate) -> EmploymentPublic:
+        employment_type = payload.employment_type.value if payload.employment_type else None
+        if employment_type is None and not self._nullable_writes_enabled:
+            employment_type = LEGACY_EMPLOYMENT_TYPE_FALLBACK
+        elif employment_type is None and not nullable_employment_type_capable():
+            employment_type = LEGACY_EMPLOYMENT_TYPE_FALLBACK
         row = Employment(
             created_by_user_id=owner_user_id,
             subject_full_name=payload.subject_full_name,
@@ -94,7 +108,7 @@ class EmploymentService:
             employer_legal_name=payload.employer_legal_name,
             employer_trade_name=payload.employer_trade_name,
             job_title=payload.job_title,
-            employment_type=payload.employment_type.value if payload.employment_type else None,
+            employment_type=employment_type,
             start_date=payload.start_date,
             end_date=payload.end_date,
             work_location_city=payload.work_location_city,
@@ -125,6 +139,9 @@ class EmploymentService:
         row = await self._employment.get_owned_active(employment_id, owner_user_id)
         if row is None:
             raise EmploymentCaseNotFoundError()
+        if row.employment_type is None and not nullable_employment_type_capable():
+            observe_legacy_mutation_blocked()
+            raise EmploymentClientUpgradeRequiredError()
         latest_request = None
         if row.verification_status != VerificationStatus.REJECTED.value:
             latest_request = await self._verification_requests.get_latest_for_subject_employment(
@@ -148,8 +165,16 @@ class EmploymentService:
         previous_status = row.verification_status
         data = payload.model_dump(exclude_unset=True)
         for field, value in data.items():
-            if field == "employment_type" and value is not None:
-                value = value.value if isinstance(value, EmploymentType) else EmploymentType(str(value)).value
+            if field == "employment_type":
+                if value is None:
+                    value = (
+                        None
+                        if self._nullable_writes_enabled
+                        and nullable_employment_type_capable()
+                        else LEGACY_EMPLOYMENT_TYPE_FALLBACK
+                    )
+                else:
+                    value = value.value if isinstance(value, EmploymentType) else EmploymentType(str(value)).value
             if field == "work_arrangement" and value is not None:
                 value = value.value if isinstance(value, WorkArrangement) else WorkArrangement(str(value)).value
             if field == "subject_email" and value is not None:
@@ -190,6 +215,16 @@ class EmploymentService:
             extra={"employment_id": str(employment_id), "owner_user_id": str(owner_user_id)},
         )
         return EmploymentPublic.model_validate(row)
+
+    @property
+    def _nullable_writes_enabled(self) -> bool:
+        return bool(
+            getattr(
+                getattr(self, "_settings", None),
+                "enable_nullable_employment_type_writes",
+                False,
+            )
+        )
 
     async def delete_owned(self, owner_user_id: UUID, employment_id: UUID) -> None:
         """Soft-delete draft / additional-info cases and cascade to evidence rows."""

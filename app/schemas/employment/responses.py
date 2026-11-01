@@ -6,8 +6,9 @@ import uuid
 from datetime import date, datetime
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+from app.employment.client_compatibility import employment_type_for_response
 from app.employment.enums import (
     DocumentExtractionStatus,
     DocumentVerificationStatus,
@@ -54,6 +55,11 @@ class EmploymentResponse(BaseModel):
     assigned_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_serializer("employment_type", when_used="json")
+    def serialize_employment_type(self, value: EmploymentType | None) -> str | None:
+        canonical = value.value if isinstance(value, EmploymentType) else value
+        return employment_type_for_response(canonical)
 
 
 class VerificationResponse(EmploymentResponse):

@@ -82,6 +82,7 @@ async def test_rejected_employment_edit_resets_current_record_only(monkeypatch) 
     row = SimpleNamespace(
         id=uuid4(),
         verification_status=VerificationStatus.REJECTED.value,
+        employment_type="full_time",
         job_title="Old title",
         start_date=date(2020, 1, 1),
         end_date=None,
@@ -133,6 +134,7 @@ async def test_legacy_rejected_employment_edit_is_detected_from_request(
     row = SimpleNamespace(
         id=uuid4(),
         verification_status=VerificationStatus.DRAFT.value,
+        employment_type="full_time",
         job_title="Old title",
         start_date=date(2020, 1, 1),
         end_date=None,

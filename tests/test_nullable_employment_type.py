@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,12 @@ from uuid import uuid4
 
 import pytest
 
+from app.employment.client_compatibility import (
+    NULLABLE_EMPLOYMENT_TYPE_CAPABILITY,
+    ClientMetadata,
+    bind_client_metadata,
+    reset_client_metadata,
+)
 from app.employment.enums import EmploymentType
 from app.employment.type_normalization import normalize_employment_type
 from app.models.employment import Employment
@@ -22,6 +29,17 @@ from app.schemas.employment.requests import CreateEmploymentRequest, UpdateEmplo
 from app.services.employment_service import EmploymentService
 from app.services.organization_person_service import OrganizationPersonService
 from app.services.resume_review_service import ResumeReviewService
+
+
+@contextmanager
+def capable_client():
+    token = bind_client_metadata(
+        ClientMetadata(capabilities=frozenset({NULLABLE_EMPLOYMENT_TYPE_CAPABILITY}))
+    )
+    try:
+        yield
+    finally:
+        reset_client_metadata(token)
 
 
 @pytest.mark.parametrize(
@@ -138,19 +156,21 @@ async def test_manual_create_without_type_persists_null() -> None:
             return row
 
     service._employment = Repository()
+    service._settings = SimpleNamespace(enable_nullable_employment_type_writes=True)
     service._emit_audit = AsyncMock()
     service._users = SimpleNamespace(mark_employment_onboarding_completed_if_needed=AsyncMock())
     service._session = SimpleNamespace(commit=AsyncMock())
 
-    response = await service.create(
-        uuid4(),
-        CreateEmploymentRequest(
-            subject_full_name="Synthetic Candidate",
-            employer_legal_name="Synthetic Employer",
-            job_title="Engineer",
-            start_date=date(2024, 1, 1),
-        ),
-    )
+    with capable_client():
+        response = await service.create(
+            uuid4(),
+            CreateEmploymentRequest(
+                subject_full_name="Synthetic Candidate",
+                employer_legal_name="Synthetic Employer",
+                job_title="Engineer",
+                start_date=date(2024, 1, 1),
+            ),
+        )
 
     assert captured[0].employment_type is None
     assert response.employment_type is None
@@ -177,6 +197,7 @@ def _employment(employment_type: str | None = "full_time") -> Employment:
 def _update_service(row: Employment) -> EmploymentService:
     service = EmploymentService.__new__(EmploymentService)
     service._employment = SimpleNamespace(get_owned_active=AsyncMock(return_value=row))
+    service._settings = SimpleNamespace(enable_nullable_employment_type_writes=True)
     service._verification_requests = SimpleNamespace(
         get_latest_for_subject_employment=AsyncMock(return_value=None),
         get_active_for_employment=AsyncMock(return_value=None),
@@ -192,22 +213,27 @@ async def test_update_distinguishes_omitted_type_from_explicit_null() -> None:
     row = _employment("contract")
     service = _update_service(row)
 
-    await service.update(row.created_by_user_id, row.id, UpdateEmploymentRequest(job_title="Lead"))
-    assert row.employment_type == "contract"
+    with capable_client():
+        await service.update(
+            row.created_by_user_id,
+            row.id,
+            UpdateEmploymentRequest(job_title="Lead"),
+        )
+        assert row.employment_type == "contract"
 
-    await service.update(
-        row.created_by_user_id,
-        row.id,
-        UpdateEmploymentRequest(employment_type=None),
-    )
-    assert row.employment_type is None
+        await service.update(
+            row.created_by_user_id,
+            row.id,
+            UpdateEmploymentRequest(employment_type=None),
+        )
+        assert row.employment_type is None
 
-    await service.update(
-        row.created_by_user_id,
-        row.id,
-        UpdateEmploymentRequest(employment_type=EmploymentType.PART_TIME),
-    )
-    assert row.employment_type == "part_time"
+        await service.update(
+            row.created_by_user_id,
+            row.id,
+            UpdateEmploymentRequest(employment_type=EmploymentType.PART_TIME),
+        )
+        assert row.employment_type == "part_time"
 
 
 @pytest.mark.asyncio
@@ -231,7 +257,10 @@ async def test_resume_import_persists_normalized_or_null_type(
                 email="candidate@example.invalid",
             )
 
-    record = await ResumeReviewService(Session())._create_record(
+    record = await ResumeReviewService(
+        Session(),
+        SimpleNamespace(enable_nullable_employment_type_writes=True),
+    )._create_record(
         uuid4(),
         "employment",
         {
