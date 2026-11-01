@@ -7,7 +7,7 @@ import re
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Mapping
+from typing import Literal, Mapping
 
 NULLABLE_EMPLOYMENT_TYPE_CAPABILITY = "nullable-employment-type-v1"
 LEGACY_EMPLOYMENT_TYPE_FALLBACK = "other"
@@ -93,6 +93,12 @@ def nullable_employment_type_capable() -> bool:
     )
 
 
+def nullable_employment_type_write_enabled(*, feature_enabled: bool) -> bool:
+    """Allow canonical null writes only for explicitly capable clients."""
+
+    return feature_enabled and nullable_employment_type_capable()
+
+
 def employment_type_for_response(value: str | None) -> str | None:
     """Apply the response-only legacy shim without changing canonical state."""
 
@@ -110,6 +116,33 @@ def observe_client_request(*, nullable_writes_enabled: bool) -> None:
             "count": 1,
             "client_class": current_client_metadata().client_class.value,
             "nullable_writes_enabled": nullable_writes_enabled,
+        },
+    )
+
+
+EmploymentTypeWriteSource = Literal["manual_create", "manual_update", "resume_import"]
+
+
+def observe_capable_nullable_write(*, source: EmploymentTypeWriteSource) -> None:
+    logger.info(
+        "employment_capable_nullable_write",
+        extra={
+            "event": "employment_capable_nullable_write",
+            "count": 1,
+            "client_class": EmploymentClientClass.NULLABLE_EMPLOYMENT_CAPABLE.value,
+            "write_source": source,
+        },
+    )
+
+
+def observe_employment_type_fallback_write(*, source: EmploymentTypeWriteSource) -> None:
+    logger.info(
+        "employment_type_fallback_write",
+        extra={
+            "event": "employment_type_fallback_write",
+            "count": 1,
+            "client_class": current_client_metadata().client_class.value,
+            "write_source": source,
         },
     )
 

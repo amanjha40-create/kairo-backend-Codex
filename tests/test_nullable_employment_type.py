@@ -257,18 +257,19 @@ async def test_resume_import_persists_normalized_or_null_type(
                 email="candidate@example.invalid",
             )
 
-    record = await ResumeReviewService(
-        Session(),
-        SimpleNamespace(enable_nullable_employment_type_writes=True),
-    )._create_record(
-        uuid4(),
-        "employment",
-        {
-            "company_name": "Synthetic Employer",
-            "role_title": "Engineer",
-            "employment_type": source,
-        },
-    )
+    with capable_client():
+        record = await ResumeReviewService(
+            Session(),
+            SimpleNamespace(enable_nullable_employment_type_writes=True),
+        )._create_record(
+            uuid4(),
+            "employment",
+            {
+                "company_name": "Synthetic Employer",
+                "role_title": "Engineer",
+                "employment_type": source,
+            },
+        )
 
     assert record.employment_type == expected
 

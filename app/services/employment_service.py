@@ -12,6 +12,9 @@ from app.config import Settings, get_settings
 from app.employment.client_compatibility import (
     LEGACY_EMPLOYMENT_TYPE_FALLBACK,
     nullable_employment_type_capable,
+    nullable_employment_type_write_enabled,
+    observe_capable_nullable_write,
+    observe_employment_type_fallback_write,
     observe_legacy_mutation_blocked,
 )
 from app.employment.enums import (
@@ -97,10 +100,14 @@ class EmploymentService:
 
     async def create(self, owner_user_id: UUID, payload: EmploymentCreate) -> EmploymentPublic:
         employment_type = payload.employment_type.value if payload.employment_type else None
-        if employment_type is None and not self._nullable_writes_enabled:
-            employment_type = LEGACY_EMPLOYMENT_TYPE_FALLBACK
-        elif employment_type is None and not nullable_employment_type_capable():
-            employment_type = LEGACY_EMPLOYMENT_TYPE_FALLBACK
+        if employment_type is None:
+            if nullable_employment_type_write_enabled(
+                feature_enabled=self._nullable_writes_enabled,
+            ):
+                observe_capable_nullable_write(source="manual_create")
+            else:
+                employment_type = LEGACY_EMPLOYMENT_TYPE_FALLBACK
+                observe_employment_type_fallback_write(source="manual_create")
         row = Employment(
             created_by_user_id=owner_user_id,
             subject_full_name=payload.subject_full_name,
@@ -167,12 +174,15 @@ class EmploymentService:
         for field, value in data.items():
             if field == "employment_type":
                 if value is None:
-                    value = (
-                        None
-                        if self._nullable_writes_enabled
-                        and nullable_employment_type_capable()
-                        else LEGACY_EMPLOYMENT_TYPE_FALLBACK
-                    )
+                    if nullable_employment_type_write_enabled(
+                        feature_enabled=self._nullable_writes_enabled,
+                    ):
+                        observe_capable_nullable_write(source="manual_update")
+                    else:
+                        value = LEGACY_EMPLOYMENT_TYPE_FALLBACK
+                        observe_employment_type_fallback_write(
+                            source="manual_update",
+                        )
                 else:
                     value = value.value if isinstance(value, EmploymentType) else EmploymentType(str(value)).value
             if field == "work_arrangement" and value is not None:

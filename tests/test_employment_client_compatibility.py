@@ -247,9 +247,21 @@ async def test_phase1_explicit_clear_is_coerced_to_other_without_creating_null()
 
 
 @pytest.mark.asyncio
-async def test_phase1_manual_missing_type_uses_temporary_other() -> None:
+@pytest.mark.parametrize(
+    ("enabled", "capable", "expected"),
+    [
+        (False, True, "other"),
+        (True, False, "other"),
+        (True, True, None),
+    ],
+)
+async def test_manual_missing_type_is_flag_and_capability_gated(
+    enabled: bool,
+    capable: bool,
+    expected: str | None,
+) -> None:
     service = EmploymentService.__new__(EmploymentService)
-    service._settings = SimpleNamespace(enable_nullable_employment_type_writes=False)
+    service._settings = SimpleNamespace(enable_nullable_employment_type_writes=enabled)
     captured: list[Employment] = []
 
     async def create(row: Employment) -> Employment:
@@ -266,7 +278,7 @@ async def test_phase1_manual_missing_type_uses_temporary_other() -> None:
     )
     service._session = SimpleNamespace(commit=AsyncMock())
 
-    with client(capable=True):
+    with client(capable=capable):
         await service.create(
             uuid4(),
             CreateEmploymentRequest(
@@ -276,23 +288,30 @@ async def test_phase1_manual_missing_type_uses_temporary_other() -> None:
                 start_date=date(2024, 1, 1),
             ),
         )
-    assert captured[0].employment_type == "other"
+    assert captured[0].employment_type == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("enabled", "source", "expected"),
+    ("enabled", "capable", "source", "expected"),
     [
-        (False, None, "other"),
-        (False, "seasonal", "other"),
-        (False, "other", "other"),
-        (False, "Full-time", "full_time"),
-        (True, None, None),
-        (True, "seasonal", None),
+        (False, True, None, "other"),
+        (False, True, "seasonal", "other"),
+        (False, True, "other", "other"),
+        (False, True, "Full-time", "full_time"),
+        (True, True, None, None),
+        (True, True, "seasonal", None),
+        (True, True, "other", "other"),
+        (True, True, "Full-time", "full_time"),
+        (True, False, None, "other"),
+        (True, False, "seasonal", "other"),
+        (True, False, "other", "other"),
+        (True, False, "Full-time", "full_time"),
     ],
 )
 async def test_resume_write_behavior_is_feature_gated(
     enabled: bool,
+    capable: bool,
     source: str | None,
     expected: str | None,
 ) -> None:
@@ -307,34 +326,46 @@ async def test_resume_write_behavior_is_feature_gated(
         Session(),
         SimpleNamespace(enable_nullable_employment_type_writes=enabled),
     )
-    record = await service._create_record(
-        uuid4(),
-        "employment",
-        {
-            "company_name": "Synthetic Employer",
-            "role_title": "Engineer",
-            "employment_type": source,
-        },
-    )
+    with client(capable=capable):
+        record = await service._create_record(
+            uuid4(),
+            "employment",
+            {
+                "company_name": "Synthetic Employer",
+                "role_title": "Engineer",
+                "employment_type": source,
+            },
+        )
     assert record.employment_type == expected
 
 
 def test_telemetry_contains_only_aggregate_compatibility_dimensions(caplog) -> None:
     from app.employment.client_compatibility import (
+        observe_capable_nullable_write,
         observe_client_request,
+        observe_employment_type_fallback_write,
         observe_legacy_mutation_blocked,
         observe_legacy_response_shim,
     )
 
     with caplog.at_level(logging.INFO), client(capable=False):
         observe_client_request(nullable_writes_enabled=False)
+        observe_capable_nullable_write(source="manual_create")
+        observe_employment_type_fallback_write(source="resume_import")
         observe_legacy_response_shim()
         observe_legacy_mutation_blocked()
 
-    records = [record for record in caplog.records if record.name.endswith("client_compatibility")]
-    assert len(records) == 3
+    records = [
+        record
+        for record in caplog.records
+        if record.name.endswith("client_compatibility")
+    ]
+    assert len(records) == 5
     for record in records:
         assert record.count == 1
-        assert record.client_class == "legacy_or_unknown"
+        assert record.client_class in {
+            "legacy_or_unknown",
+            "nullable_employment_capable",
+        }
         for forbidden in ("email", "candidate_id", "employment_id", "company", "token"):
             assert not hasattr(record, forbidden)
