@@ -4,7 +4,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from app.integrations.digilocker.browser_return import completion_page
+from app.integrations.digilocker.browser_return import (
+    RETURN_COOKIE,
+    browser_redirect,
+    completion_page,
+    read_return_cookie,
+)
 
 
 @pytest.mark.parametrize(
@@ -51,7 +56,8 @@ def test_iphone_return_is_environment_isolated_and_preserves_other_actions(outco
     assert parse_qs(target.query) == {"result": [expected]}
     package = "com.kairo.app.staging" if environment == "staging" else "com.kairoid.app"
     assert f"package={package};end" not in html
-    android_html = completion_page(settings, outcome, user_agent="Mozilla/5.0 Android").body.decode()
+    android_response = completion_page(settings, outcome, user_agent="Mozilla/5.0 Android")
+    android_html = android_response.body.decode()
     assert android_html.count('class="action"') == 1
     assert scheme + ":" not in android_html
     assert (
@@ -88,6 +94,45 @@ class CompletionLinks(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "a":
             self.hrefs.extend(value for name, value in attrs if name == "href")
+
+
+@pytest.mark.parametrize("outcome", ["connected", "failed"])
+@pytest.mark.parametrize("client_target", ["ios", "android", "web"])
+def test_state_bound_return_cookie_is_signed_bounded_and_not_in_location(
+    outcome, client_target
+):
+    settings = SimpleNamespace(jwt_secret_key="x" * 64)
+    response = browser_redirect(settings, outcome, client_target)
+    assert response.headers["location"] == (
+        "/api/v1/integrations/digilocker/complete?digilocker_result=" + outcome
+    )
+    assert client_target not in response.headers["location"]
+    cookie = response.headers["set-cookie"]
+    assert cookie.startswith(RETURN_COOKIE + "=")
+    value = cookie.split(";", 1)[0].split("=", 1)[1]
+    assert read_return_cookie(settings, value) == (outcome, client_target)
+    assert read_return_cookie(settings, value + "tampered") is None
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
+    for forbidden in ("access_token", "refresh_token", "code=", "state=", "candidate"):
+        assert forbidden not in cookie + response.headers["location"]
+
+
+def test_state_bound_target_overrides_callback_user_agent():
+    settings = SimpleNamespace(
+        app_env=SimpleNamespace(value="production"),
+        digilocker_redirect_uri=(
+            "https://api.kairoid.com/api/v1/integrations/digilocker/callback"
+        ),
+        digilocker_connection_return_url=None,
+    )
+    html = completion_page(
+        settings,
+        "connected",
+        client_target="ios",
+        user_agent="Mozilla/5.0 Android",
+    ).body.decode()
+    assert "com.kairoid.digilocker://complete?result=connected" in html
+    assert "intent://" not in html
 
 
 @pytest.mark.parametrize("environment", ["development", "test", "unknown", "PRODUCTION", ""])

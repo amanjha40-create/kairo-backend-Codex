@@ -1,24 +1,67 @@
 """Credential-free browser completion. Outcomes never confer verification or access."""
 
-from html import escape
+import base64
+import hashlib
+import hmac
 import json
 import secrets
+from html import escape
 from urllib.parse import urlsplit
 
 from starlette.responses import HTMLResponse, RedirectResponse
 
 COMPLETE_PATH = "/api/v1/integrations/digilocker/complete"
 HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+RETURN_COOKIE = "__Host-kairoid-digilocker-return"
+CLIENT_TARGETS = frozenset({"ios", "android", "web"})
 
 
-def browser_redirect(outcome: str) -> RedirectResponse:
+def _return_cookie(settings, outcome: str, client_target: str) -> str:
+    if outcome not in {"connected", "failed"} or client_target not in CLIENT_TARGETS:
+        raise ValueError("Invalid DigiLocker return metadata")
+    payload = f"v1.{outcome}.{client_target}"
+    signature = hmac.new(
+        settings.jwt_secret_key.encode("utf-8"), payload.encode("ascii"), hashlib.sha256
+    ).digest()
+    encoded = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return payload + "." + encoded
+
+
+def read_return_cookie(settings, value: str | None) -> tuple[str, str] | None:
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    parts = value.split(".")
+    if len(parts) != 4 or parts[0] != "v1":
+        return None
+    outcome, client_target = parts[1], parts[2]
+    if outcome not in {"connected", "failed"} or client_target not in CLIENT_TARGETS:
+        return None
+    expected = _return_cookie(settings, outcome, client_target)
+    if not hmac.compare_digest(value, expected):
+        return None
+    return outcome, client_target
+
+
+def browser_redirect(settings, outcome: str, client_target: str) -> RedirectResponse:
     assert outcome in {"connected", "failed"}
-    return RedirectResponse(
+    response = RedirectResponse(
         COMPLETE_PATH + "?digilocker_result=" + outcome, status_code=303, headers=HEADERS
     )
+    response.set_cookie(
+        RETURN_COOKIE,
+        _return_cookie(settings, outcome, client_target),
+        max_age=60,
+        secure=True,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
-def completion_page(settings, outcome: str, *, user_agent: str = "") -> HTMLResponse:
+def completion_page(
+    settings, outcome: str, *, client_target: str | None = None, user_agent: str = ""
+) -> HTMLResponse:
     outcome = "connected" if outcome == "connected" else "failed"
     origin = urlsplit(settings.digilocker_redirect_uri or "")
     # The destination comes only from validated server configuration, never Host or input.
@@ -47,10 +90,14 @@ def completion_page(settings, outcome: str, *, user_agent: str = "") -> HTMLResp
         "staging": "com.kairoid.staging.digilocker",
         "production": "com.kairoid.digilocker",
     }.get(settings.app_env.value)
-    # UA selects presentation only; it never confers identity or connection status.
+    # Callback traffic supplies the state-bound target. UA is retained only for the
+    # credential-free direct completion fixture and never selects an arbitrary URL.
     ua = user_agent[:2048].lower()
     ios = any(device in ua for device in ("iphone", "ipad", "ipod"))
     android = "android" in ua and not ios
+    if client_target in CLIENT_TARGETS:
+        ios = client_target == "ios"
+        android = client_target == "android"
     destination = None
     if ios and iphone_scheme:
         destination = f"{iphone_scheme}://complete?result={outcome}"

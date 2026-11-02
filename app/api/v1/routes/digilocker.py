@@ -14,7 +14,12 @@ from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.exceptions import AppException, ServiceUnavailableError
 from app.infrastructure.redis.deps import get_redis
-from app.integrations.digilocker.browser_return import browser_redirect, completion_page
+from app.integrations.digilocker.browser_return import (
+    RETURN_COOKIE,
+    browser_redirect,
+    completion_page,
+    read_return_cookie,
+)
 from app.schemas.digilocker_discovery import (
     AvailableRecordsResponse,
     ImportRecordsRequest,
@@ -39,6 +44,25 @@ class ConnectResponse(BaseModel):
     authorization_url: str
     expires_at: datetime
     connection_state: Literal["pending"]
+
+
+def _client_target(request: Request, settings: Settings) -> str:
+    platform = request.headers.get("x-kairoid-platform", "").strip().lower()
+    package = request.headers.get("x-kairoid-package", "").strip()
+    allowed = {
+        "production": {
+            ("ios", "com.kairoid.Kairo"): "ios",
+            ("android", "com.kairoid.app"): "android",
+        },
+        "staging": {
+            ("ios", "com.kairoid.Kairo"): "ios",
+            ("android", "com.kairo.app.staging"): "android",
+        },
+    }
+    target = allowed.get(settings.app_env.value, {}).get((platform, package))
+    if target is not None:
+        return target
+    return "web"
 
 
 class StatusResponse(BaseModel):
@@ -284,7 +308,9 @@ async def connect(
     if request.query_params:
         raise flow_error("callback_invalid")
     response.headers.update(PRIVATE_HEADERS)
-    return await service.connect(user.id)
+    return await service.connect(
+        user.id, client_target=_client_target(request, service.settings)
+    )
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -315,7 +341,11 @@ async def callback(request: Request, service: Service):
         )
     except AppException as exc:
         if "text/html" in request.headers.get("accept", "").lower():
-            return browser_redirect("failed")
+            return browser_redirect(
+                service.settings,
+                "failed",
+                getattr(service, "callback_client_target", "web"),
+            )
         status_code = 503 if isinstance(exc, ServiceUnavailableError) else 400
         return JSONResponse(
             {"error": {"code": exc.code, "message": exc.message}},
@@ -323,7 +353,11 @@ async def callback(request: Request, service: Service):
             headers=PRIVATE_HEADERS,
         )
     if "text/html" in request.headers.get("accept", "").lower():
-        return browser_redirect("connected")
+        return browser_redirect(
+            service.settings,
+            "connected",
+            getattr(service, "callback_client_target", "web"),
+        )
     destination = service.settings.digilocker_connection_return_url
     if destination:
         return RedirectResponse(
@@ -341,4 +375,20 @@ async def complete(request: Request, settings: Annotated[Settings, Depends(get_s
         and params.getlist("digilocker_result") == ["connected"]
         else "failed"
     )
-    return completion_page(settings, outcome, user_agent=request.headers.get("user-agent", ""))
+    raw_cookie = request.cookies.get(RETURN_COOKIE)
+    trusted = read_return_cookie(settings, raw_cookie)
+    client_target = None
+    if raw_cookie is not None:
+        # A supplied but invalid/mismatched cookie fails closed to the web fallback;
+        # only an absent cookie may use the credential-free direct-page UA fallback.
+        client_target = (
+            trusted[1] if trusted is not None and trusted[0] == outcome else "web"
+        )
+    response = completion_page(
+        settings,
+        outcome,
+        client_target=client_target,
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    response.delete_cookie(RETURN_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+    return response

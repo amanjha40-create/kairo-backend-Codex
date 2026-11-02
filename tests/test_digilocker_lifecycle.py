@@ -152,6 +152,25 @@ async def test_pkce_state_hash_ttl_single_use_and_supersession(harness):
     assert consumed.verifier == second.verifier
 
 
+async def test_pkce_transaction_round_trips_only_allowlisted_client_target(harness):
+    h = harness
+    store = TransactionStore(h.redis, h.config)
+    now = datetime.now(UTC)
+    transaction = await store.create(
+        h.ids[0], uuid4(), uuid4(), now, client_target="ios"
+    )
+    consumed = await store.consume(transaction.state.get_secret_value(), now)
+    assert consumed.client_target == "ios"
+    with pytest.raises(ValueError, match="client target"):
+        await store.create(
+            h.ids[0],
+            uuid4(),
+            uuid4(),
+            now,
+            client_target="https://attacker.invalid",
+        )
+
+
 async def test_synthetic_stored_pkce_and_exact_staging_token_wire_contract(harness):
     h = harness
     callback = "https://staging-api.kairoid.com/api/v1/integrations/digilocker/callback"

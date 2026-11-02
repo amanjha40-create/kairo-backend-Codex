@@ -64,6 +64,9 @@ class DigiLockerService:
         self.store = TransactionStore(redis, settings)
         self.provider = provider or DigiLockerProvider(settings)
         self.now = clock or (lambda: datetime.now(UTC))
+        # This service is request-scoped. The route reads this only after callback
+        # state has been consumed and validated.
+        self.callback_client_target = "web"
 
     def _enabled(self):
         if not self.settings.digilocker_enabled:
@@ -127,7 +130,7 @@ class DigiLockerService:
             )
 
     @transaction
-    async def connect(self, user_id):
+    async def connect(self, user_id, *, client_target="web"):
         self._enabled()
         await self._owner(user_id)
         await _check_rate(
@@ -145,7 +148,9 @@ class DigiLockerService:
             self.session.add(connection)
         self._erase(connection, "pending")
         attempt = uuid4()
-        tx = await self.store.create(user_id, connection.id, attempt, self.now())
+        tx = await self.store.create(
+            user_id, connection.id, attempt, self.now(), client_target=client_target
+        )
         connection.pending_attempt_id = attempt
         connection.pending_expires_at = tx.expires_at
         await self.session.commit()
@@ -171,11 +176,13 @@ class DigiLockerService:
     @transaction
     async def callback(self, *, state, code=None, error=None):
         self._enabled()
+        self.callback_client_target = "web"
         try:
             tx = await self.store.consume(state, self.now())
         except StateError as exc:
             logger.info("digilocker_connect_failed", extra={"category": exc.category})
             raise flow_error(exc.category) from None
+        self.callback_client_target = tx.client_target
         try:
             await self._owner(tx.user_id)
         except (NotFoundError, ForbiddenError):

@@ -10,6 +10,8 @@ from digilocker_helpers import settings
 from app.api.v1.routes.digilocker import get_digilocker_service
 from app.auth.deps import CurrentUser, get_current_user
 from app.config import get_settings
+from app.config.settings import AppEnvironment
+from app.integrations.digilocker.browser_return import RETURN_COOKIE
 from app.main import app
 from app.services.digilocker_service import flow_error, unavailable
 
@@ -20,6 +22,7 @@ BASE = "/api/v1/integrations/digilocker"
 async def client_service():
     service = SimpleNamespace(
         settings=settings(),
+        callback_client_target="web",
         connect=AsyncMock(
             return_value={
                 "authorization_url": "https://provider.example.invalid/auth",
@@ -75,7 +78,7 @@ async def test_authenticated_safe_contracts_and_no_public_refresh(client_service
     assert response.status_code == 200
     assert set(response.json()) == {"authorization_url", "expires_at", "connection_state"}
     assert response.headers["cache-control"] == "no-store"
-    service.connect.assert_awaited_once_with(user.id)
+    service.connect.assert_awaited_once_with(user.id, client_target="web")
     response = await client.get(BASE + "/status")
     assert response.status_code == 200
     assert set(response.json()) == {
@@ -105,6 +108,63 @@ async def test_connect_does_not_accept_return_url_or_owner_override(client_servi
     response = await client.post(BASE + "/connect" + query, json=body)
     assert response.status_code in {400, 422}
     service.connect.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"X-KairoID-Platform": "ios", "X-KairoID-Package": "com.kairoid.Kairo"},
+        {"X-KairoID-Platform": "android", "X-KairoID-Package": "com.kairoid.app"},
+        {"X-KairoID-Platform": "ios", "X-KairoID-Package": "attacker.invalid"},
+        {"X-KairoID-Platform": "https://attacker.invalid", "X-KairoID-Package": "x"},
+    ],
+)
+async def test_unknown_environment_binds_all_client_metadata_to_web(client_service, headers):
+    client, service = client_service
+    user = authenticated()
+    response = await client.post(BASE + "/connect", json={}, headers=headers)
+    assert response.status_code == 200
+    service.connect.assert_awaited_once_with(user.id, client_target="web")
+
+
+@pytest.mark.parametrize(
+    "headers,expected",
+    [
+        (
+            {"X-KairoID-Platform": "ios", "X-KairoID-Package": "com.kairoid.Kairo"},
+            "ios",
+        ),
+        (
+            {"X-KairoID-Platform": "android", "X-KairoID-Package": "com.kairoid.app"},
+            "android",
+        ),
+        (
+            {"X-KairoID-Platform": "ios", "X-KairoID-Package": "attacker.invalid"},
+            "web",
+        ),
+    ],
+)
+async def test_production_connect_binds_only_allowlisted_client_metadata(
+    client_service, headers, expected
+):
+    client, service = client_service
+    service.settings = settings().model_copy(update={"app_env": AppEnvironment.PRODUCTION})
+    user = authenticated()
+    response = await client.post(BASE + "/connect", json={}, headers=headers)
+    assert response.status_code == 200
+    service.connect.assert_awaited_once_with(user.id, client_target=expected)
+
+
+async def test_staging_connect_accepts_only_staging_android_package(client_service):
+    client, service = client_service
+    service.settings = settings().model_copy(update={"app_env": AppEnvironment.STAGING})
+    user = authenticated()
+    headers = {
+        "X-KairoID-Platform": "android",
+        "X-KairoID-Package": "com.kairo.app.staging",
+    }
+    assert (await client.post(BASE + "/connect", json={}, headers=headers)).status_code == 200
+    service.connect.assert_awaited_once_with(user.id, client_target="android")
 
 
 async def test_callback_is_public_no_credentials_in_completion(client_service):
@@ -245,6 +305,11 @@ async def test_browser_callback_uses_credential_free_app_link(client_service, er
     assert response.status_code == 303
     expected = "failed" if error else "connected"
     assert response.headers["location"] == BASE + "/complete?digilocker_result=" + expected
+    assert "client_target" not in response.headers["location"]
+    assert "return_url" not in response.headers["location"]
+    assert "httponly" in response.headers["set-cookie"].lower()
+    assert "secure" in response.headers["set-cookie"].lower()
+    assert "samesite=lax" in response.headers["set-cookie"].lower()
     assert response.headers["referrer-policy"] == "no-referrer"
     assert response.headers["cache-control"] == "no-store"
     assert "synthetic-" not in response.text + response.headers["location"]
@@ -261,6 +326,58 @@ async def test_browser_invalid_query_also_returns_safely(client_service):
     assert response.status_code == 303
     assert response.headers["location"].endswith("digilocker_result=failed")
     service.callback.assert_not_awaited()
+
+
+async def test_browser_callback_completion_uses_state_bound_ios_target_not_user_agent(
+    client_service,
+):
+    client, service = client_service
+    service.settings = settings().model_copy(
+        update={
+            "app_env": AppEnvironment.PRODUCTION,
+            "digilocker_redirect_uri": (
+                "https://api.kairoid.com/api/v1/integrations/digilocker/callback"
+            ),
+        }
+    )
+    service.callback_client_target = "ios"
+    callback_response = await client.get(
+        BASE + "/callback?code=synthetic-code&state=synthetic-state",
+        headers={"Accept": "text/html", "User-Agent": "Mozilla/5.0 Android"},
+    )
+    cookie = callback_response.headers["set-cookie"].split(";", 1)[0]
+    completion = await client.get(
+        callback_response.headers["location"],
+        headers={"Cookie": cookie, "User-Agent": "Mozilla/5.0 Android"},
+    )
+    assert completion.status_code == 200
+    assert "com.kairoid.digilocker://complete?result=connected" in completion.text
+    assert "intent://" not in completion.text
+    assert RETURN_COOKIE in completion.headers["set-cookie"]
+    assert "Max-Age=0" in completion.headers["set-cookie"]
+
+
+async def test_tampered_return_cookie_fails_closed_without_mobile_action(client_service):
+    client, service = client_service
+    service.settings = settings().model_copy(
+        update={
+            "app_env": AppEnvironment.PRODUCTION,
+            "digilocker_redirect_uri": (
+                "https://api.kairoid.com/api/v1/integrations/digilocker/callback"
+            ),
+        }
+    )
+    response = await client.get(
+        BASE + "/complete?digilocker_result=connected",
+        headers={
+            "Cookie": RETURN_COOKIE + "=tampered",
+            "User-Agent": "Mozilla/5.0 (iPhone)",
+        },
+    )
+    assert response.status_code == 200
+    assert 'class="action"' not in response.text
+    assert "com.kairoid.digilocker:" not in response.text
+    assert "intent://" not in response.text
 
 
 @pytest.mark.parametrize(

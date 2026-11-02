@@ -15,6 +15,7 @@ from redis.exceptions import RedisError
 from app.infrastructure.redis.keys import RedisKeys
 
 TTL_SECONDS = 600
+CLIENT_TARGETS = frozenset({"ios", "android", "web"})
 _CREATE = """
 if #ARGV ~= 4 or (#KEYS ~= 2 and #KEYS ~= 3) then return 0 end
 if (ARGV[1] == '' and #KEYS ~= 2) or (ARGV[1] ~= '' and #KEYS ~= 3) then
@@ -60,6 +61,7 @@ class Transaction:
     attempt_id: UUID
     created_at: datetime
     expires_at: datetime
+    client_target: str = "web"
 
     @property
     def challenge(self):
@@ -114,7 +116,9 @@ class TransactionStore:
         except ValueError:
             raise RedisError("Invalid DigiLocker owner pointer") from None
 
-    async def create(self, user_id, connection_id, attempt_id, now):
+    async def create(self, user_id, connection_id, attempt_id, now, *, client_target="web"):
+        if client_target not in CLIENT_TARGETS:
+            raise ValueError("Invalid DigiLocker client target")
         state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(64)
         fingerprint = self._fingerprint(state)
         routing_tag = self._routing_tag(user_id)
@@ -127,6 +131,7 @@ class TransactionStore:
                 "verifier": verifier,
                 "created_at": now.timestamp(),
                 "expires_at": expires.timestamp(),
+                "client_target": client_target,
             }
         )
         # Locator-first failure leaves only bounded routing metadata, never authorization.
@@ -151,7 +156,8 @@ class TransactionStore:
         if result != 1:
             raise RedisError("DigiLocker owner pointer changed")
         return Transaction(
-            SecretStr(state), SecretStr(verifier), user_id, connection_id, attempt_id, now, expires
+            SecretStr(state), SecretStr(verifier), user_id, connection_id, attempt_id, now, expires,
+            client_target,
         )
 
     async def consume(self, state, now):
@@ -178,6 +184,9 @@ class TransactionStore:
             if created > now or expires - created != timedelta(seconds=TTL_SECONDS):
                 raise ValueError()
             user_id = UUID(data["user_id"])
+            client_target = data.get("client_target", "web")
+            if client_target not in CLIENT_TARGETS:
+                raise ValueError()
             if self._routing_tag(user_id) != routing_tag:
                 raise ValueError()
             return Transaction(
@@ -188,6 +197,7 @@ class TransactionStore:
                 UUID(data["attempt_id"]),
                 created,
                 expires,
+                client_target,
             )
         except (ValueError, TypeError, KeyError, OverflowError, AttributeError, OSError):
             raise StateError() from None

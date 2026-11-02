@@ -53,15 +53,19 @@ def test_android_fallback_package_is_environment_isolated(
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert "default-src 'none'" in response.headers["content-security-policy"]
-    assert completion_page(settings, outcome, user_agent="Mozilla/5.0 Android").body == response.body
+    repeated = completion_page(settings, outcome, user_agent="Mozilla/5.0 Android")
+    assert repeated.body == response.body
 
 
 @pytest.mark.parametrize("outcome", ["connected", "failed"])
 def test_android_completion_redirect_path_is_unchanged(outcome):
-    response = browser_redirect(outcome)
+    settings = SimpleNamespace(jwt_secret_key="x" * 64)
+    response = browser_redirect(settings, outcome, "android")
     assert response.status_code == 303
     assert response.headers["location"] == (
         "/api/v1/integrations/digilocker/complete?digilocker_result=" + outcome
     )
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["referrer-policy"] == "no-referrer"
+    assert "client_target" not in response.headers["location"]
+    assert "return_url" not in response.headers["location"]
