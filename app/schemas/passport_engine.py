@@ -118,7 +118,7 @@ class DashboardDigiLockerSummary(BaseModel):
     needs_review_count: int | None = Field(default=None, ge=0)
     last_synced_at: datetime | None = None
     discovery_status: Literal[
-        "fresh", "not_connected", "reconnect_required", "unavailable"
+        "fresh", "partial_success", "not_connected", "reconnect_required", "unavailable"
     ]
 
 

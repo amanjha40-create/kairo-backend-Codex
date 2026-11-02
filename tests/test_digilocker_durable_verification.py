@@ -130,6 +130,7 @@ async def test_home_summary_counts_canonical_records_and_live_groups(
             ],
             "address_candidates": [],
             "counts": {},
+            "discovery_status": "partial_success",
             "discovered_at": discovered_at,
         }
     )
@@ -145,7 +146,7 @@ async def test_home_summary_counts_canonical_records_and_live_groups(
     assert summary.new_records_available_count == 1
     assert summary.needs_review_count == 1
     assert summary.last_synced_at == discovered_at
-    assert summary.discovery_status == "fresh"
+    assert summary.discovery_status == "partial_success"
 
 
 async def test_reconnect_required_preserves_verified_count(

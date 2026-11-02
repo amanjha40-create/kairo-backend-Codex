@@ -12,6 +12,8 @@ from app.schemas.permanent_address import PermanentAddressInput
 
 MatchState = Literal["CLEAR_MATCH", "NO_MATCH", "AMBIGUOUS", "CONFLICT", "ALREADY_ADDED"]
 ReviewState = Literal["ready", "already_added", "needs_review", "parse_failed"]
+DiscoveryStatus = Literal["success", "partial_success", "unavailable"]
+FailureReason = Literal["provider_unavailable", "document_unavailable", "parse_failed"]
 AddressDiscoveryState = Literal[
     "NO_ADDRESS_AVAILABLE",
     "STRUCTURED_ADDRESS_CANDIDATE",
@@ -36,6 +38,7 @@ class AvailableRecord(BaseModel):
     import_status: Literal["available", "already_added", "needs_review"]
     possible_existing_record_match: MatchState
     review_state: ReviewState
+    failure_reason: FailureReason | None = None
 
 
 class EducationEvidence(AvailableRecord):
@@ -94,6 +97,7 @@ class DiscoveryCounts(BaseModel):
     xml_available: int
     pdf_only: int
     parse_failures: int
+    provider_failures: int = 0
     malformed: int
 
 
@@ -103,6 +107,7 @@ class AvailableRecordsResponse(BaseModel):
     address_candidates: list[AddressCandidate]
     address_prefill_candidates: list[AddressPrefillCandidate] = Field(default_factory=list)
     address_discovery_state: AddressDiscoveryState = "NO_ADDRESS_AVAILABLE"
+    discovery_status: DiscoveryStatus = "success"
     counts: DiscoveryCounts
     discovered_at: datetime
 

@@ -21,6 +21,7 @@ from app.integrations.digilocker.education import (
     parse_driving_licence_address,
     parse_education_xml,
 )
+from app.integrations.digilocker.provider import ProviderError
 from app.integrations.digilocker.registry import DOCUMENT_ROUTES, SUPPORTED_DOCTYPES
 from app.main import app
 from app.models import (
@@ -132,23 +133,29 @@ def spcer_sscer_variant_xml(
 
 
 class FakeDocuments:
-    def __init__(self, rows, payloads=None, failures=None):
+    def __init__(self, rows, payloads=None, failures=None, issued_failure=None):
         self.rows = rows
         self.payloads = payloads or {}
-        self.failures = failures or set()
+        self.failures = failures or {}
+        self.issued_failure = issued_failure
         self.issued_calls = 0
         self.retrieve_calls = []
 
     async def issued(self, _token):
         self.issued_calls += 1
+        if self.issued_failure:
+            raise ProviderError(self.issued_failure)
         return normalize_items({"items": self.rows})
 
     async def retrieve(self, _token, uri, *, xml=False):
         self.retrieve_calls.append((uri, xml))
         if uri in self.failures:
-            from app.integrations.digilocker.provider import ProviderError
-
-            raise ProviderError("invalid_response")
+            category = (
+                self.failures[uri]
+                if isinstance(self.failures, dict)
+                else "invalid_response"
+            )
+            raise ProviderError(category)
         content = self.payloads[uri]
         mime = "application/xml" if xml else "application/pdf"
         return RetrievedDocument(content, mime)
@@ -263,6 +270,8 @@ async def test_all_supported_doctypes_discover_in_one_isolated_sync(harness):
     assert result["counts"]["unsupported"] == 0
     assert result["counts"]["identity"] == 2
     assert result["counts"]["parse_failures"] == 0
+    assert result["counts"]["provider_failures"] == 0
+    assert result["discovery_status"] == "success"
 
 
 async def test_pdf_only_remains_available_without_retrieval(harness):
@@ -326,6 +335,156 @@ async def test_malformed_xml_and_one_failure_are_isolated(harness):
     assert result["counts"]["parse_failures"] == 1
     assert any(group["review_state"] == "ready" for group in result["education"])
     assert any(group["review_state"] == "parse_failed" for group in result["education"])
+
+
+async def test_provider_failure_is_partial_and_preserves_pan(harness):
+    await prepare_user(harness)
+    pan, spcer = issued("PANCR"), issued("SPCER")
+    docs = FakeDocuments(
+        [pan, spcer],
+        {pan["uri"]: identity_xml("PANCR")},
+        failures={spcer["uri"]: "provider_unavailable"},
+    )
+    session, discovery = await service(harness, docs)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+    assert result["discovery_status"] == "partial_success"
+    assert [item["doctype"] for item in result["identity"]] == ["PANCR"]
+    failed = result["education"][0]["evidence"][0]
+    assert failed["review_state"] == "parse_failed"
+    assert failed["failure_reason"] == "provider_unavailable"
+    assert result["counts"]["provider_failures"] == 1
+    assert "DigiLocker provider request failed" not in repr(result)
+
+
+async def test_provider_failure_preserves_driving_licence_address(harness):
+    await prepare_user(harness)
+    driving, spcer = issued("DRVLC"), issued("SPCER")
+    docs = FakeDocuments(
+        [driving, spcer],
+        {driving["uri"]: identity_xml("DRVLC")},
+        failures={spcer["uri"]: "provider_unavailable"},
+    )
+    session, discovery = await service(harness, docs)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+    assert result["discovery_status"] == "partial_success"
+    assert [item["doctype"] for item in result["identity"]] == ["DRVLC"]
+    assert result["address_discovery_state"] == "STRUCTURED_ADDRESS_CANDIDATE"
+    assert len(result["address_candidates"]) == 1
+
+
+async def test_provider_failure_preserves_pan_driving_licence_and_address(harness):
+    await prepare_user(harness)
+    pan, driving, spcer = issued("PANCR"), issued("DRVLC"), issued("SPCER")
+    docs = FakeDocuments(
+        [pan, driving, spcer],
+        {
+            pan["uri"]: identity_xml("PANCR"),
+            driving["uri"]: identity_xml("DRVLC"),
+        },
+        failures={spcer["uri"]: "provider_unavailable"},
+    )
+    session, discovery = await service(harness, docs)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+    assert result["discovery_status"] == "partial_success"
+    assert {item["doctype"] for item in result["identity"]} == {"PANCR", "DRVLC"}
+    assert result["counts"] | {
+        "identity": 2,
+        "education": 1,
+        "address_candidates": 1,
+        "provider_failures": 1,
+    } == result["counts"]
+
+
+async def test_successful_education_survives_other_education_provider_failure(harness):
+    await prepare_user(harness)
+    degree, spcer = issued("DGCER"), issued("SPCER")
+    docs = FakeDocuments(
+        [degree, spcer],
+        {degree["uri"]: education_xml("DGCER")},
+        failures={spcer["uri"]: "provider_unavailable"},
+    )
+    session, discovery = await service(harness, docs)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+    assert result["discovery_status"] == "partial_success"
+    assert {group["review_state"] for group in result["education"]} == {
+        "ready",
+        "parse_failed",
+    }
+
+
+async def test_every_document_failure_is_unavailable_and_cannot_be_imported(harness):
+    await prepare_user(harness)
+    pan, spcer = issued("PANCR"), issued("SPCER")
+    docs = FakeDocuments(
+        [pan, spcer],
+        failures={
+            pan["uri"]: "provider_unavailable",
+            spcer["uri"]: "provider_unavailable",
+        },
+    )
+    session, discovery = await service(harness, docs)
+    try:
+        result = await discovery.available_records(harness.ids[0])
+        assert result["discovery_status"] == "unavailable"
+        candidates = [
+            result["identity"][0]["candidate_id"],
+            result["education"][0]["candidate_id"],
+        ]
+        with pytest.raises(ValidationAppError, match="no longer available"):
+            await discovery.import_records(
+                harness.ids[0], candidates, consent=True, consent_version="v1"
+            )
+    finally:
+        await session.close()
+
+
+async def test_global_issued_listing_failure_remains_global(harness):
+    await prepare_user(harness)
+    docs = FakeDocuments([], issued_failure="provider_unavailable")
+    session, discovery = await service(harness, docs)
+    try:
+        with pytest.raises(ProviderError):
+            await discovery.available_records(harness.ids[0])
+    finally:
+        await session.close()
+
+
+async def test_unaffected_education_can_import_when_other_document_failed(harness):
+    await prepare_user(harness)
+    degree, spcer = issued("DGCER"), issued("SPCER")
+    storage = FakeStorage()
+    docs = FakeDocuments(
+        [degree, spcer],
+        {degree["uri"]: education_xml("DGCER")},
+        failures={spcer["uri"]: "provider_unavailable"},
+    )
+    session, discovery = await service(harness, docs, storage=storage)
+    try:
+        available = await discovery.available_records(harness.ids[0])
+        selected = next(
+            group["candidate_id"]
+            for group in available["education"]
+            if group["review_state"] == "ready"
+        )
+        result = await discovery.import_records(
+            harness.ids[0], [selected], consent=False, consent_version="v1"
+        )
+    finally:
+        await session.close()
+    assert result["outcomes"][0]["status"] == "imported"
+    assert len(storage.objects) == 1
 
 
 @pytest.mark.parametrize("address", [True, False])

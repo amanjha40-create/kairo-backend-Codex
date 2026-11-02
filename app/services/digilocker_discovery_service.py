@@ -55,6 +55,7 @@ class DiscoveredItem:
     pdf_available: bool
     document: Any | None = None
     parser_status: str = "not_available"
+    failure_reason: str | None = None
     parsed_education: ParsedEducation | None = None
     match_result: str | None = None
     existing_evidence_id: UUID | None = None
@@ -293,8 +294,15 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                             issuer_name=raw["issuer"],
                         )
                         item.parser_status = item.parsed_education.parser_status
-                except ProviderError:
+                except ProviderError as exc:
                     item.parser_status = "parse_failed"
+                    item.failure_reason = (
+                        "provider_unavailable"
+                        if exc.category in {"provider_unavailable", "transport_error"}
+                        else "document_unavailable"
+                    )
+            if item.parser_status == "parse_failed" and item.failure_reason is None:
+                item.failure_reason = "parse_failed"
             if item.parser_status == "parse_failed":
                 parse_failures += 1
             logger.info(
@@ -303,6 +311,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                     "doctype": raw["doctype"],
                     "domain": route.domain,
                     "parser_status": item.parser_status,
+                    "failure_category": item.failure_reason,
                     "xml_available": item.xml_available,
                 },
             )
@@ -332,7 +341,8 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             identity_public.append(
                 self._public_record(item, review, "ALREADY_ADDED" if current else "NO_MATCH")
             )
-            identity_internal[item.candidate_id] = item
+            if item.parser_status != "parse_failed":
+                identity_internal[item.candidate_id] = item
             if item.item["doctype"] == "DRVLC" and item.document is not None:
                 parsed_address = parse_driving_licence_address_result(item.document.content)
                 logger.info(
@@ -435,7 +445,8 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                 education_id=education_id,
                 review_state=review,
             )
-            education_internal[group_id] = state
+            if not all(item.parser_status == "parse_failed" for item in items):
+                education_internal[group_id] = state
             education_public.append(self._public_group(state))
 
         counts = {
@@ -449,8 +460,24 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             "xml_available": sum(item.xml_available for item in discovered),
             "pdf_only": sum(item.pdf_available and not item.xml_available for item in discovered),
             "parse_failures": parse_failures,
+            "provider_failures": sum(
+                item.failure_reason == "provider_unavailable" for item in discovered
+            ),
             "malformed": malformed,
         }
+        usable_records = [
+            record
+            for record in [*identity_public, *education_public]
+            if record["import_status"] in {"available", "already_added"}
+        ]
+        has_failures = parse_failures > 0 or malformed > 0
+        discovery_status = (
+            "partial_success"
+            if has_failures and (usable_records or address_public or address_prefill_public)
+            else "unavailable"
+            if has_failures
+            else "success"
+        )
         return {
             "public": {
                 "identity": identity_public,
@@ -458,6 +485,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
                 "address_candidates": address_public,
                 "address_prefill_candidates": address_prefill_public,
                 "address_discovery_state": address_discovery_state,
+                "discovery_status": discovery_status,
                 "counts": counts,
                 "discovered_at": self.now(),
             },
@@ -488,6 +516,7 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
             else "available",
             "possible_existing_record_match": resolution,
             "review_state": review,
+            "failure_reason": item.failure_reason,
         }
 
     def _public_group(self, group: EducationGroupState) -> dict[str, Any]:
@@ -539,6 +568,8 @@ class DigiLockerDiscoveryService(DigiLockerDocumentService):
     ) -> dict[str, Any]:
         if group.review_state == "already_added":
             return self._outcome(group.candidate_id, "education", "already_added", group)
+        if all(item.parser_status == "parse_failed" for item in group.items):
+            return self._outcome(group.candidate_id, "education", "needs_review", group)
         if target_education_id is None and (
             group.review_state != "ready" or group.resolution in {"AMBIGUOUS", "CONFLICT"}
         ):

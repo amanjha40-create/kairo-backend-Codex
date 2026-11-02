@@ -286,7 +286,13 @@ def test_openapi_exposes_connection_and_document_routes():
     response_fields = schema["components"]["schemas"]["AvailableRecordsResponse"][
         "properties"
     ]
-    assert {"address_prefill_candidates", "address_discovery_state"} <= set(response_fields)
+    assert {
+        "address_prefill_candidates",
+        "address_discovery_state",
+        "discovery_status",
+    } <= set(response_fields)
+    record_fields = schema["components"]["schemas"]["AvailableRecord"]["properties"]
+    assert "failure_reason" in record_fields
     assert "google_place_id" not in repr(prefill_fields)
     for path, method in [("/connect", "post"), ("/status", "get"), ("/connection", "delete")]:
         assert schema["paths"][BASE + path][method]["security"]

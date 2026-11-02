@@ -70,7 +70,13 @@ class DigiLockerHomeSummaryService:
                     record["import_status"] == "needs_review" for record in records
                 ),
                 "last_synced_at": discovery["discovered_at"],
-                "discovery_status": "fresh",
+                "discovery_status": (
+                    "partial_success"
+                    if discovery.get("discovery_status") == "partial_success"
+                    else "unavailable"
+                    if discovery.get("discovery_status") == "unavailable"
+                    else "fresh"
+                ),
             }
         )
 
