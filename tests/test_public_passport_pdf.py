@@ -174,6 +174,9 @@ def test_pdf_branded_permission_limited_and_no_identifiers():
     reader = PdfReader(BytesIO(content))
     assert len(reader.pages[0].images) == 1
     rendered = text(content)
+    assert "Trust that travels." in rendered
+    assert "CONSENT-BASED PROFESSIONAL IDENTITY" in rendered
+    assert "PASSPORT OWNER" in rendered
     for expected in ("KairoID", "Synthetic University", "Education", "2020", "Jun 2023"):
         assert expected in rendered
     for hidden in (

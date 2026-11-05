@@ -16,7 +16,7 @@ from app.services.passport_pdf_layout import (
     branded_footer,
     branded_header,
     branded_record,
-    branded_trust_score,
+    branded_verification_summary,
 )
 from app.services.passport_pdf_service import _register_fonts, _safe, _styles
 
@@ -132,8 +132,17 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
         for value in (passport.profile.headline, passport.profile.location):
             if value:
                 profile_lines.append(value)
+    trust_score = None
+    if permissions.show_trust_score and passport.trust_score is not None:
+        score = passport.trust_score
+        if score.overall is not None and score.status != "consent_required":
+            trust_score = (
+                score.overall,
+                None,
+                "Derived account-wide aggregate; not verification of each shared record.",
+            )
     story = branded_header(
-        title="Shared Trust Passport",
+        title="KairoID Trust Passport",
         # Owner attribution is part of the existing public contract without profile sharing.
         candidate_name=passport.profile.full_name,
         profile_lines=profile_lines,
@@ -144,20 +153,9 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
         ),
         styles=styles,
         safe=_safe,
+        trust_score=trust_score,
     )
-    if permissions.show_trust_score and passport.trust_score is not None:
-        score = passport.trust_score
-        if score.overall is not None and score.status != "consent_required":
-            story.extend(
-                branded_trust_score(
-                    overall=score.overall,
-                    caption=(
-                        "Derived account-wide aggregate; not verification of each shared record."
-                    ),
-                    styles=styles,
-                    safe=_safe,
-                )
-            )
+    story.extend(branded_verification_summary(metrics=_public_metrics(passport), styles=styles))
     for section, fields in _FIELDS.items():
         if not getattr(permissions, f"include_{section}"):
             continue
@@ -211,3 +209,41 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
 
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return output.getvalue()
+
+
+def _public_metrics(passport: PublicPassportResponse) -> list[tuple[str, int]]:
+    permissions = passport.share.permissions
+    records = []
+    for section in (
+        "employments",
+        "educations",
+        "certifications",
+        "internships",
+        "freelance",
+        "gig_platforms",
+        "projects",
+        "portfolio",
+        "skills",
+    ):
+        if getattr(permissions, f"include_{section}"):
+            records.extend(getattr(passport.vault, section))
+    statuses = [getattr(record, "verification_status", "") for record in records]
+    verified = sum(status.strip().lower() == "verified" for status in statuses)
+    pending = sum(
+        status.strip().lower()
+        in {
+            "pending",
+            "submitted",
+            "under_review",
+            "additional_info_requested",
+            "pending_admin_review",
+        }
+        for status in statuses
+    )
+    metrics: list[tuple[str, int]] = []
+    if permissions.include_employments:
+        metrics.append(("Employment", len(passport.vault.employments)))
+    if permissions.include_educations:
+        metrics.append(("Education", len(passport.vault.educations)))
+    metrics.extend([("Verified", verified), ("Pending", pending)])
+    return metrics

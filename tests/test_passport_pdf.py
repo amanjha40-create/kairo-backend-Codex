@@ -309,6 +309,9 @@ def test_owner_pdf_uses_branded_layout_with_stable_section_order() -> None:
     assert reader.metadata.author == "KairoID"
     assert "KairoID" in rendered
     assert "Trust Passport" in rendered
+    assert "Trust that travels." in rendered
+    assert "CONSENT-BASED PROFESSIONAL IDENTITY" in rendered
+    assert "PASSPORT OWNER" in rendered
     assert "82 / 100" in rendered
     assert "Calculated" in rendered
     assert "Verified" in rendered
