@@ -298,6 +298,46 @@ def test_pdf_contains_supported_sections_and_omits_empty_optional_sections() -> 
     assert "Skills" not in empty_text
 
 
+def test_owner_pdf_uses_branded_layout_with_stable_section_order() -> None:
+    projection = build_passport_pdf_projection(_owner_passport(), generated_at=GENERATED_AT)
+    pdf = render_passport_pdf(projection)
+    reader = PdfReader(BytesIO(pdf))
+    rendered = _pdf_text(pdf)
+
+    assert len(reader.pages[0].images) == 1
+    assert reader.metadata.title == "KairoID Trust Passport"
+    assert reader.metadata.author == "KairoID"
+    assert "KairoID" in rendered
+    assert "Trust Passport" in rendered
+    assert "82 / 100" in rendered
+    assert "Calculated" in rendered
+    assert "Verified" in rendered
+    assert "Self-declared / Not Verified" in rendered
+    assert [rendered.index(section) for section in (
+        "Employment",
+        "Education",
+        "Certifications",
+        "Projects",
+        "Skills",
+    )] == sorted(
+        rendered.index(section)
+        for section in ("Employment", "Education", "Certifications", "Projects", "Skills")
+    )
+    assert all(
+        "KairoID | Private owner Trust Passport" in (page.extract_text() or "")
+        for page in reader.pages
+    )
+    page_text = [page.extract_text() or "" for page in reader.pages]
+    for section, first_record in (
+        ("Employment", "Platform Engineer 1"),
+        ("Education", "Example Institute of Technology"),
+        ("Certifications", "Cloud Security"),
+        ("Projects", "Trust Platform"),
+        ("Skills", "Swift"),
+    ):
+        assert any(section in page and first_record in page for page in page_text)
+
+
 def test_long_unicode_content_renders_across_multiple_pages_without_loss() -> None:
     projection = build_passport_pdf_projection(_owner_passport(), generated_at=GENERATED_AT)
     long_description = (

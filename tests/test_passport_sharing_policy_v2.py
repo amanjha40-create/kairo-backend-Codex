@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.exceptions import ConflictError, NotFoundError, ValidationAppError
 from app.main import app
-from app.models import Employment, Education, Certification, Project
+from app.models import Certification, Education, Employment, Project
 from app.repositories.passport_share import PassportShareRepository
 from app.schemas.passport_share import (
     PassportShareCreateRequest,
@@ -21,8 +21,8 @@ from app.schemas.passport_share import (
     PassportShareUpdateRequest,
 )
 from app.schemas.public_passport import PublicPassportTrustScore
-from app.services.passport_sharing_policy import narrow_policy, resolve_policy, stored_v2
 from app.services.passport_share_service import PassportShareService
+from app.services.passport_sharing_policy import narrow_policy, resolve_policy, stored_v2
 from app.services.public_passport_service import PublicPassportService, safe_recipient_url
 
 
@@ -258,6 +258,7 @@ class Records:
                     end_date_precision=None,
                     is_currently_studying=False,
                     verification_status=status,
+                    verified_at=None,
                 )
                 for status in ["verified", "pending", "draft", "rejected"]
             ],
@@ -354,7 +355,8 @@ async def test_verified_queries_filter_before_projection_and_documents_do_not_qu
         full_name="QA Owner", headline=None, location=None, avatar_url=None, profile_slug=None
     )
     assert result.vault.employments[0].documents == []
-    assert len(records.queries) == 2
+    # Employment, Education, and accepted Education evidence are each scoped queries.
+    assert len(records.queries) == 3
     service._trust.calculate_trust_score.assert_not_called()
     assert result.share.policy_version == 2 and result.share.sharing_mode == "verified_only"
 

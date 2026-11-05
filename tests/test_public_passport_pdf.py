@@ -208,6 +208,30 @@ def test_employer_and_document_flags_remain_independent():
     assert "HIDDEN_METHOD" not in result
 
 
+def test_restricted_share_excludes_unselected_records_documents_and_contact_details():
+    data = passport()
+    data.profile.headline = "private-contact@example.test"
+    data.profile.location = "+91-9000000000"
+    data.share.permissions = PassportSharePermissions(
+        **{
+            field: field == "include_employments"
+            for field in PassportSharePermissions.model_fields
+        }
+    )
+
+    result = text(render_public_passport_pdf(data))
+
+    assert "HIDDEN_JOB" in result
+    for hidden in (
+        "Synthetic University",
+        "HIDDEN_EMPLOYER",
+        "HIDDEN_DOC.pdf",
+        "private-contact@example.test",
+        "+91-9000000000",
+    ):
+        assert hidden not in result
+
+
 def test_no_markup_execution_and_long_records_paginate():
     data = passport()
     data.vault.educations[0].institution_name = '<a href="https://secret.invalid">Not a link</a>'

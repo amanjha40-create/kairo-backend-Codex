@@ -47,6 +47,12 @@ from app.schemas.passport_pdf import (
     PassportPDFTrustScore,
 )
 from app.services.passport_engine_service import PassportEngineService
+from app.services.passport_pdf_layout import (
+    branded_footer,
+    branded_header,
+    branded_record,
+    branded_trust_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +237,7 @@ def verification_status_label(status: str) -> str:
 
 
 def render_passport_pdf(projection: PassportPDFProjection) -> bytes:
-    """Render a deterministic, print-oriented PDF without external resources."""
+    """Render the private owner export with the shared branded Passport layout."""
 
     _register_fonts()
     buffer = BytesIO()
@@ -240,40 +246,170 @@ def render_passport_pdf(projection: PassportPDFProjection) -> bytes:
         pagesize=A4,
         rightMargin=20 * mm,
         leftMargin=20 * mm,
-        topMargin=19 * mm,
-        bottomMargin=20 * mm,
-        title="Kairo Trust Passport",
-        author="Kairo",
+        topMargin=18 * mm,
+        bottomMargin=22 * mm,
+        title="KairoID Trust Passport",
+        author="KairoID",
         subject="Candidate-owned professional Trust Passport export",
     )
     styles = _styles()
-    story: list = []
-
-    story.extend(_header(projection, styles))
-    story.extend(_professional_summary(projection, styles))
+    story = branded_header(
+        title="Trust Passport",
+        candidate_name=projection.profile.display_name,
+        profile_lines=_owner_profile_lines(projection),
+        generated_at=projection.generated_at,
+        notice="Private owner export of the professional information in your Trust Passport.",
+        styles=styles,
+        safe=_safe,
+    )
     if projection.trust_score is not None:
-        story.extend(_trust_score_summary(projection.trust_score, styles))
+        story.extend(
+            branded_trust_score(
+                overall=projection.trust_score.overall,
+                status_label=projection.trust_score.status_label,
+                caption="Authoritative backend value.",
+                styles=styles,
+                safe=_safe,
+            )
+        )
 
-    _append_record_section(story, "Employment", projection.employments, _employment_story, styles)
-    _append_record_section(story, "Education", projection.educations, _education_story, styles)
-    _append_record_section(
+    _append_owner_section(
+        story,
+        "Employment",
+        projection.employments,
+        _owner_employment_fields,
+        styles,
+    )
+    _append_owner_section(
+        story,
+        "Education",
+        projection.educations,
+        _owner_education_fields,
+        styles,
+    )
+    _append_owner_section(
         story,
         "Certifications",
         projection.certifications,
-        _certification_story,
+        _owner_certification_fields,
         styles,
     )
-    _append_record_section(story, "Projects", projection.projects, _project_story, styles)
-    if projection.skills:
-        story.extend(_skills_story(projection.skills, styles))
+    _append_owner_section(
+        story,
+        "Projects",
+        projection.projects,
+        _owner_project_fields,
+        styles,
+    )
+    _append_owner_section(story, "Skills", projection.skills, _owner_skill_fields, styles)
+
+    footer = branded_footer(
+        label="KairoID | Private owner Trust Passport",
+        title="KairoID Trust Passport",
+        subject="Candidate-owned professional Trust Passport export",
+    )
 
     document.build(
         story,
-        onFirstPage=_draw_page_frame,
-        onLaterPages=_draw_page_frame,
+        onFirstPage=footer,
+        onLaterPages=footer,
         canvasmaker=_invariant_canvas,
     )
     return buffer.getvalue()
+
+
+def _owner_profile_lines(projection: PassportPDFProjection) -> list[str]:
+    profile = projection.profile
+    lines: list[str] = []
+    if profile.headline:
+        lines.append(profile.headline)
+    role = " | ".join(value for value in (profile.current_role, profile.industry) if value)
+    if role:
+        lines.append(role)
+    if profile.years_of_experience is not None:
+        lines.append(f"{profile.years_of_experience} years of professional experience")
+    if profile.location:
+        lines.append(profile.location)
+    if profile.professional_summary:
+        lines.append(profile.professional_summary)
+    return lines
+
+
+def _append_owner_section(story, title, records, field_builder, styles) -> None:  # noqa: ANN001
+    if not records:
+        return
+    story.extend([CondPageBreak(55 * mm), Paragraph(title, styles["section_title"])])
+    for record in records:
+        story.extend(
+            branded_record(
+                fields=field_builder(record),
+                verification_label=record.verification_label,
+                styles=styles,
+                safe=_safe,
+            )
+        )
+
+
+def _owner_employment_fields(item: PassportPDFEmployment) -> list[tuple[str, str]]:
+    fields = [("Job title", item.job_title)]
+    if item.employer_name:
+        fields.append(("Employer legal name", item.employer_name))
+    if item.start_date:
+        fields.append(("Start date", _format_date(item.start_date)))
+    if item.end_date:
+        fields.append(("End date", _format_date(item.end_date)))
+    elif item.start_date:
+        fields.append(("End date", "Present"))
+    return fields
+
+
+def _owner_education_fields(item: PassportPDFEducation) -> list[tuple[str, str]]:
+    fields = [("Institution name", item.institution_name)]
+    if item.degree:
+        fields.append(("Degree", item.degree))
+    if item.field_of_study:
+        fields.append(("Field of study", item.field_of_study))
+    if item.start_date:
+        fields.append(("Start date", _format_date(item.start_date)))
+    if item.end_date:
+        fields.append(("End date", _format_date(item.end_date)))
+    if item.is_currently_studying:
+        fields.append(("Currently studying", "Yes"))
+    return fields
+
+
+def _owner_certification_fields(item: PassportPDFCertification) -> list[tuple[str, str]]:
+    fields = [("Title", item.title)]
+    if item.issuing_organization:
+        fields.append(("Issuing organization", item.issuing_organization))
+    if item.issued_date:
+        fields.append(("Issued date", _format_date(item.issued_date)))
+    if item.does_not_expire:
+        fields.append(("Does not expire", "Yes"))
+    elif item.expiry_date:
+        fields.append(("Expiry date", _format_date(item.expiry_date)))
+    return fields
+
+
+def _owner_project_fields(item: PassportPDFProject) -> list[tuple[str, str]]:
+    fields = [("Title", item.title)]
+    if item.role:
+        fields.append(("Role", item.role))
+    if item.organization_name:
+        fields.append(("Organization name", item.organization_name))
+    if item.description:
+        fields.append(("Description", item.description))
+    if item.start_date:
+        fields.append(("Start date", _format_date(item.start_date)))
+    if item.end_date:
+        fields.append(("End date", _format_date(item.end_date)))
+    elif item.is_ongoing:
+        fields.append(("End date", "Present"))
+    return fields
+
+
+def _owner_skill_fields(item: PassportPDFSkill) -> list[tuple[str, str]]:
+    return [("Name", item.name)]
 
 
 def _header(projection: PassportPDFProjection, styles: dict[str, ParagraphStyle]) -> list:

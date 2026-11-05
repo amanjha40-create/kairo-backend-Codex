@@ -6,14 +6,18 @@ Documents retain the public page's metadata-only disclosure contract.
 
 from datetime import UTC, date, datetime
 from io import BytesIO
-from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
-from reportlab.platypus import CondPageBreak, Image, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import CondPageBreak, Paragraph, SimpleDocTemplate
 
 from app.schemas.public_passport import PublicPassportResponse
+from app.services.passport_pdf_layout import (
+    branded_footer,
+    branded_header,
+    branded_record,
+    branded_trust_score,
+)
 from app.services.passport_pdf_service import _register_fonts, _safe, _styles
 
 # Explicit field allowlists prevent future DTO additions becoming PDF disclosures.
@@ -79,12 +83,6 @@ _TITLES = {
     "skills": "Skills",
     "user_documents": "Shared documents",
 }
-_LOGO = (
-    Path(__file__).resolve().parents[1]
-    / "integrations/email/reference_assets/kairoid-logo-primary.png"
-)
-
-
 def _value(value: object, precision: str | None = None) -> str:
     if isinstance(value, date):
         return value.strftime(
@@ -128,44 +126,37 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
         author="KairoID",
         subject="Permission-limited shared Passport snapshot",
     )
-    image_width, image_height = ImageReader(str(_LOGO)).getSize()
-    logo = Image(str(_LOGO), width=52 * mm, height=52 * mm * image_height / image_width)
-    logo.hAlign = "LEFT"
-    story = [logo, Spacer(1, 5 * mm), Paragraph("Shared Trust Passport", styles["document_title"])]
-    # Owner attribution is part of the existing public contract even without profile sharing.
-    if passport.profile.full_name:
-        story.append(Paragraph(_safe(passport.profile.full_name), styles["candidate_name"]))
     permissions = passport.share.permissions
+    profile_lines = []
     if permissions.include_profile:
         for value in (passport.profile.headline, passport.profile.location):
             if value:
-                story.append(Paragraph(_safe(value), styles["body"]))
-    generated = datetime.now(UTC).strftime("%d %b %Y, %H:%M UTC")
-    story.extend(
-        [
-            Spacer(1, 3 * mm),
-            Paragraph(f"Generated {generated}", styles["caption"]),
-            Paragraph(
-                "Only information allowed by this share is included. "
-                "A downloaded copy cannot be recalled after revocation.",
-                styles["caption"],
-            ),
-            Spacer(1, 6 * mm),
-        ]
+                profile_lines.append(value)
+    story = branded_header(
+        title="Shared Trust Passport",
+        # Owner attribution is part of the existing public contract without profile sharing.
+        candidate_name=passport.profile.full_name,
+        profile_lines=profile_lines,
+        generated_at=datetime.now(UTC),
+        notice=(
+            "Only information allowed by this share is included. "
+            "A downloaded copy cannot be recalled after revocation."
+        ),
+        styles=styles,
+        safe=_safe,
     )
     if permissions.show_trust_score and passport.trust_score is not None:
         score = passport.trust_score
         if score.overall is not None and score.status != "consent_required":
             story.extend(
-                [
-                    Paragraph("Trust Score", styles["section_title"]),
-                    Paragraph(f"{score.overall} / 100", styles["record_title"]),
-                    Paragraph(
-                        "Derived account-wide aggregate; not verification of each shared record.",
-                        styles["caption"],
+                branded_trust_score(
+                    overall=score.overall,
+                    caption=(
+                        "Derived account-wide aggregate; not verification of each shared record."
                     ),
-                    Spacer(1, 5 * mm),
-                ]
+                    styles=styles,
+                    safe=_safe,
+                )
             )
     for section, fields in _FIELDS.items():
         if not getattr(permissions, f"include_{section}"):
@@ -177,6 +168,7 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
             continue
         story.extend([CondPageBreak(30 * mm), Paragraph(_TITLES[section], styles["section_title"])])
         for record in records:
+            record_fields: list[tuple[str, str]] = []
             for field in fields:
                 if field == "employer_legal_name" and not permissions.show_employer_names:
                     continue
@@ -185,20 +177,23 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
                     continue
                 precision = getattr(record, f"{field}_precision", None)
                 label = field.replace("_", " ").capitalize()
-                story.append(
-                    Paragraph(f"<b>{label}:</b> {_safe(_value(value, precision))}", styles["body"])
-                )
-            story.append(Paragraph(_status(record.verification_status), styles["status"]))
+                record_fields.append((label, _value(value, precision)))
             if section == "employments" and permissions.show_documents:
-                for evidence in record.documents:
-                    story.append(
-                        Paragraph(
-                            f"Shared document: {_safe(evidence.original_filename)} "
-                            f"({_safe(evidence.document_type)})",
-                            styles["body"],
-                        )
+                record_fields.extend(
+                    (
+                        "Shared document",
+                        f"{evidence.original_filename} ({evidence.document_type})",
                     )
-            story.append(Spacer(1, 5 * mm))
+                    for evidence in record.documents
+                )
+            story.extend(
+                branded_record(
+                    fields=record_fields,
+                    verification_label=_status(record.verification_status),
+                    styles=styles,
+                    safe=_safe,
+                )
+            )
     if permissions.show_documents:
         story.append(
             Paragraph(
@@ -208,12 +203,11 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
             )
         )
 
-    def footer(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("KairoSans", 8)
-        canvas.drawString(20 * mm, 12 * mm, "KairoID | Consent-based shared Passport")
-        canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"Page {doc.page}")
-        canvas.restoreState()
+    footer = branded_footer(
+        label="KairoID | Consent-based shared Passport",
+        title="KairoID Shared Trust Passport",
+        subject="Permission-limited shared Passport snapshot",
+    )
 
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return output.getvalue()
