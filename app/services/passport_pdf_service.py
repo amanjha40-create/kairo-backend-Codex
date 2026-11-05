@@ -51,6 +51,7 @@ from app.services.passport_pdf_layout import (
     branded_footer,
     branded_header,
     branded_record,
+    branded_section_header,
     branded_verification_summary,
 )
 
@@ -366,7 +367,15 @@ def _owner_metrics(projection: PassportPDFProjection) -> list[tuple[str, int]]:
 def _append_owner_section(story, title, records, field_builder, styles) -> None:  # noqa: ANN001
     if not records:
         return
-    story.extend([CondPageBreak(55 * mm), Paragraph(title, styles["section_title"])])
+    story.append(CondPageBreak(35 * mm))
+    story.extend(
+        branded_section_header(
+            title=title,
+            count=len(records),
+            eyebrow="PASSPORT RECORD",
+            styles=styles,
+        )
+    )
     for record in records:
         story.extend(
             branded_record(
@@ -873,6 +882,40 @@ def _styles() -> dict[str, ParagraphStyle]:
             alignment=TA_CENTER,
             textColor=HexColor("#9DB5C7"),
         ),
+        "hero_score_label_left": ParagraphStyle(
+            "KairoHeroScoreLabelLeft",
+            parent=sample["Normal"],
+            fontName="KairoSans-Bold",
+            fontSize=7,
+            leading=9,
+            textColor=HexColor("#9DB5C7"),
+            spaceAfter=1.5 * mm,
+        ),
+        "hero_score_left": ParagraphStyle(
+            "KairoHeroScoreLeft",
+            parent=sample["Normal"],
+            fontName="KairoSans-Bold",
+            fontSize=24,
+            leading=27,
+            textColor=colors.white,
+        ),
+        "hero_score_caption_left": ParagraphStyle(
+            "KairoHeroScoreCaptionLeft",
+            parent=sample["Normal"],
+            fontName="KairoSans",
+            fontSize=7,
+            leading=9,
+            textColor=HexColor("#9DB5C7"),
+        ),
+        "hero_score_status_left": ParagraphStyle(
+            "KairoHeroScoreStatusLeft",
+            parent=sample["Normal"],
+            fontName="KairoSans-Bold",
+            fontSize=7,
+            leading=9,
+            textColor=HexColor("#12D6C5"),
+            spaceBefore=1.5 * mm,
+        ),
         "hero_notice": ParagraphStyle(
             "KairoHeroNotice",
             parent=sample["Normal"],
@@ -907,6 +950,32 @@ def _styles() -> dict[str, ParagraphStyle]:
             alignment=TA_CENTER,
             textColor=_MUTED,
         ),
+        "section_eyebrow": ParagraphStyle(
+            "KairoSectionEyebrow",
+            parent=sample["Normal"],
+            fontName="KairoSans-Bold",
+            fontSize=6.7,
+            leading=8,
+            textColor=_KAIRO_TEAL,
+            spaceAfter=0.5 * mm,
+        ),
+        "section_title_public": ParagraphStyle(
+            "KairoSectionTitlePublic",
+            parent=sample["Heading2"],
+            fontName="KairoSans-Bold",
+            fontSize=16,
+            leading=19,
+            textColor=_INK,
+        ),
+        "section_count": ParagraphStyle(
+            "KairoSectionCount",
+            parent=sample["Normal"],
+            fontName="KairoSans",
+            fontSize=7.5,
+            leading=9,
+            alignment=TA_RIGHT,
+            textColor=_MUTED,
+        ),
         "record_card_title": ParagraphStyle(
             "KairoRecordCardTitle",
             parent=sample["Normal"],
@@ -933,6 +1002,18 @@ def _styles() -> dict[str, ParagraphStyle]:
             leading=11,
             textColor=_MUTED,
             spaceAfter=0.8 * mm,
+        ),
+        "record_disclosure": ParagraphStyle(
+            "KairoRecordDisclosure",
+            parent=sample["Normal"],
+            fontName="KairoSans",
+            fontSize=6.7,
+            leading=8.5,
+            textColor=_MUTED,
+            borderColor=HexColor("#E6EFEF"),
+            borderWidth=0.4,
+            borderPadding=(2.5 * mm, 0, 0, 0),
+            spaceBefore=2.5 * mm,
         ),
         "status_badge": ParagraphStyle(
             "KairoStatusBadge",

@@ -16,6 +16,7 @@ from app.services.passport_pdf_layout import (
     branded_footer,
     branded_header,
     branded_record,
+    branded_section_header,
     branded_verification_summary,
 )
 from app.services.passport_pdf_service import _register_fonts, _safe, _styles
@@ -164,7 +165,14 @@ def render_public_passport_pdf(passport: PublicPassportResponse) -> bytes:
         records = getattr(passport.vault, section)
         if not records:
             continue
-        story.extend([CondPageBreak(30 * mm), Paragraph(_TITLES[section], styles["section_title"])])
+        story.append(CondPageBreak(30 * mm))
+        story.extend(
+            branded_section_header(
+                title=_TITLES[section],
+                count=len(records),
+                styles=styles,
+            )
+        )
         for record in records:
             record_fields: list[tuple[str, str]] = []
             for field in fields:

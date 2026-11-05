@@ -169,6 +169,7 @@ def service(*, state="active"):
 
 def test_pdf_branded_permission_limited_and_no_identifiers():
     data = passport()
+    data.vault.educations[0].verification_status = "self_declared"
     content = render_public_passport_pdf(data)
     assert content.startswith(b"%PDF-")
     reader = PdfReader(BytesIO(content))
@@ -177,6 +178,9 @@ def test_pdf_branded_permission_limited_and_no_identifiers():
     assert "Trust that travels." in rendered
     assert "CONSENT-BASED PROFESSIONAL IDENTITY" in rendered
     assert "PASSPORT OWNER" in rendered
+    assert "SHARED RECORD" in rendered
+    assert "Candidate-provided" in rendered
+    assert "Provided by the Candidate and not independently verified." in rendered
     for expected in ("KairoID", "Synthetic University", "Education", "2020", "Jun 2023"):
         assert expected in rendered
     for hidden in (

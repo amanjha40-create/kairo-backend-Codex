@@ -59,9 +59,12 @@ def branded_header(
         ),
     )
 
-    profile_content = [
+    hero_intro = [
         Paragraph("CONSENT-BASED PROFESSIONAL IDENTITY", styles["hero_eyebrow"]),
         Paragraph(safe(title), styles["hero_title"]),
+        Paragraph(safe(notice), styles["hero_notice"]),
+    ]
+    profile_content = [
         Paragraph("PASSPORT OWNER", styles["hero_profile_label"]),
     ]
     if candidate_name:
@@ -70,60 +73,79 @@ def branded_header(
         if line:
             profile_content.append(Paragraph(safe(line), styles["hero_body"]))
 
-    score_content: list = []
+    profile_panel = Table(
+        [[profile_content]],
+        colWidths=[160 * mm],
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _NAVY_PANEL),
+                ("BOX", (0, 0), (-1, -1), 0.7, HexColor("#31445F")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6 * mm),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6 * mm),
+                ("TOPPADDING", (0, 0), (-1, -1), 5 * mm),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
+            ]
+        ),
+    )
+
+    score_panel = None
     if trust_score is not None:
         overall, status_label, caption = trust_score
-        score_content.extend(
-            [
-                Paragraph("Trust Score", styles["hero_score_label"]),
-                Paragraph(f"{overall} / 100", styles["hero_score"]),
-            ]
-        )
-        if status_label:
-            score_content.append(Paragraph(safe(status_label), styles["hero_score_status"]))
-        score_content.append(Paragraph(safe(caption), styles["hero_score_caption"]))
-
-    if score_content:
-        hero_body = Table(
-            [[profile_content, score_content]],
-            colWidths=[105 * mm, 55 * mm],
+        fill_width = max(1, min(147, 148 * overall / 100)) * mm
+        track_width = 149 * mm - fill_width
+        progress = Table(
+            [["", ""]],
+            colWidths=[fill_width, track_width],
+            rowHeights=[1.6 * mm],
             style=TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (0, 0), _NAVY_PANEL),
-                    ("BACKGROUND", (1, 0), (1, 0), HexColor("#0B1934")),
-                    ("BOX", (0, 0), (-1, -1), 0.7, HexColor("#26425A")),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.5, HexColor("#26425A")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5 * mm),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
+                    ("BACKGROUND", (0, 0), (0, 0), _TEAL),
+                    ("BACKGROUND", (1, 0), (1, 0), HexColor("#31445F")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ]
             ),
         )
-    else:
-        hero_body = Table(
-            [[profile_content]],
+        score_content = [
+            Paragraph("Trust Score", styles["hero_score_label_left"]),
+            Paragraph(
+                f"{overall} <font size='9' color='#9DB5C7'>/ 100</font>",
+                styles["hero_score_left"],
+            ),
+            Spacer(1, 2 * mm),
+            progress,
+            Spacer(1, 2 * mm),
+            Paragraph(safe(caption), styles["hero_score_caption_left"]),
+        ]
+        if status_label:
+            score_content.append(Paragraph(safe(status_label), styles["hero_score_status_left"]))
+        score_panel = Table(
+            [[score_content]],
             colWidths=[160 * mm],
             style=TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, -1), _NAVY_PANEL),
-                    ("BOX", (0, 0), (-1, -1), 0.7, HexColor("#26425A")),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
+                    ("BACKGROUND", (0, 0), (-1, -1), HexColor("#0B1934")),
+                    ("BOX", (0, 0), (-1, -1), 0.7, HexColor("#263858")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6 * mm),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6 * mm),
                     ("TOPPADDING", (0, 0), (-1, -1), 5 * mm),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
                 ]
             ),
         )
 
+    hero_rows = [
+        [hero_intro],
+        [profile_panel],
+    ]
+    if score_panel is not None:
+        hero_rows.append([score_panel])
     generated = generated_at.astimezone(UTC).strftime("%d %b %Y, %H:%M UTC")
+    hero_rows.append([Paragraph(f"Generated {generated}", styles["hero_timestamp"])])
     hero = Table(
-        [
-            [hero_body],
-            [Paragraph(safe(notice), styles["hero_notice"])],
-            [Paragraph(f"Generated {generated}", styles["hero_timestamp"])],
-        ],
+        hero_rows,
         colWidths=[170 * mm],
         hAlign="LEFT",
         style=TableStyle(
@@ -132,10 +154,8 @@ def branded_header(
                 ("BOX", (0, 0), (-1, -1), 0.8, HexColor("#183D50")),
                 ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
-                ("TOPPADDING", (0, 0), (-1, 0), 5 * mm),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 3 * mm),
-                ("TOPPADDING", (0, 1), (-1, -1), 1.5 * mm),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 1.5 * mm),
+                ("TOPPADDING", (0, 0), (-1, -1), 4 * mm),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
             ]
         ),
     )
@@ -174,6 +194,37 @@ def branded_verification_summary(
     return [table, Spacer(1, 7 * mm)]
 
 
+def branded_section_header(
+    *,
+    title: str,
+    count: int,
+    styles: dict[str, ParagraphStyle],
+    eyebrow: str = "SHARED RECORD",
+) -> list:
+    """Render the public page's section label, title, and record count."""
+
+    heading = [
+        Paragraph(eyebrow, styles["section_eyebrow"]),
+        Paragraph(title, styles["section_title_public"]),
+    ]
+    count_label = f"{count} {'record' if count == 1 else 'records'}"
+    row = Table(
+        [[heading, Paragraph(count_label, styles["section_count"])]],
+        colWidths=[135 * mm, 35 * mm],
+        style=TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        ),
+    )
+    return [row, Spacer(1, 2.5 * mm)]
+
+
 def branded_record(
     *,
     fields: Iterable[tuple[str, str]],
@@ -187,10 +238,24 @@ def branded_record(
     if not visible_fields:
         return []
     lead_label, lead_value = visible_fields[0]
-    body = [
+    body: list = [
         Paragraph(safe(lead_value), styles["record_card_title"]),
         Paragraph(safe(lead_label), styles["record_card_kicker"]),
     ]
+    detail_text = visible_fields[1:]
+    details_fit_card = sum(len(label) + len(value) for label, value in detail_text) <= 1200
+    if details_fit_card:
+        body.extend(
+            Paragraph(f"<b>{safe(label)}:</b> {safe(value)}", styles["record_card_body"])
+            for label, value in detail_text
+        )
+    if verification_label in {"Candidate-provided", "Self-declared / Not Verified"}:
+        body.append(
+            Paragraph(
+                "Provided by the Candidate and not independently verified.",
+                styles["record_disclosure"],
+            )
+        )
     card = Table(
         [[[body], Paragraph(safe(verification_label), styles["status_badge"])]],
         colWidths=[105 * mm, 55 * mm],
@@ -208,10 +273,12 @@ def branded_record(
             ]
         ),
     )
-    details = [
-        Paragraph(f"<b>{safe(label)}:</b> {safe(value)}", styles["record_card_body"])
-        for label, value in visible_fields[1:]
-    ]
+    details = []
+    if not details_fit_card:
+        details = [
+            Paragraph(f"<b>{safe(label)}:</b> {safe(value)}", styles["record_card_body"])
+            for label, value in detail_text
+        ]
     return [KeepTogether([card]), *details, Spacer(1, 3 * mm)]
 
 

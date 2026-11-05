@@ -312,6 +312,8 @@ def test_owner_pdf_uses_branded_layout_with_stable_section_order() -> None:
     assert "Trust that travels." in rendered
     assert "CONSENT-BASED PROFESSIONAL IDENTITY" in rendered
     assert "PASSPORT OWNER" in rendered
+    assert "PASSPORT RECORD" in rendered
+    assert "Provided by the Candidate and not independently verified." in rendered
     assert "82 / 100" in rendered
     assert "Calculated" in rendered
     assert "Verified" in rendered
