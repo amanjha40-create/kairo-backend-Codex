@@ -40,6 +40,7 @@ from app.models.resume_review_session import ResumeReviewSession
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
+from app.resumes.client_compatibility import explicit_resume_review_capable
 from app.resumes.education_review import normalize_education_review
 from app.resumes.normalization import normalize_review_date, payload_hash, stable_claim_id
 from app.resumes.review_enums import ResumeImportAction, ResumeReviewStatus
@@ -207,12 +208,17 @@ class ResumeReviewService:
         ):
             raise ValidationAppError("Distinct-role confirmation requires an employment create decision")
         self._check_version(item.version, payload.expected_version)
+        strict_review = explicit_resume_review_capable()
         excluding = payload.selected is False or payload.import_action == ResumeImportAction.SKIP
         if excluding and payload.edited_payload is None:
             item.selected = False
             item.import_action = ResumeImportAction.SKIP.value
             item.target_record_id = None
-            item.review_status = "excluded" if payload.confirmed is not False else "deselected"
+            item.review_status = (
+                "excluded"
+                if strict_review and payload.confirmed is not False
+                else "deselected"
+            )
             item.version += 1
             review.status = ResumeReviewStatus.REVIEWING.value
             review.version += 1
@@ -274,7 +280,13 @@ class ResumeReviewService:
             value is not None
             for value in (payload.selected, payload.import_action, payload.target_record_id)
         ) or payload.confirm_distinct_role
-        if payload.confirmed is False:
+        if not strict_review:
+            item.review_status = (
+                "edited"
+                if normalized != item.original_payload
+                else ("selected" if item.selected else "deselected")
+            )
+        elif payload.confirmed is False:
             item.review_status = "selected" if item.selected else "deselected"
         elif explicitly_edited:
             item.review_status = "edited"
@@ -340,10 +352,13 @@ class ResumeReviewService:
         review.status = ResumeReviewStatus.IMPORTING.value
         await self.session.flush()
         logger.info("resume_import_started", extra={"review_session_id": str(review.id), "import_batch_id": str(batch.id), "user_id": str(user_id)})
+        item_filter = ResumeReviewItem.review_status.in_({"confirmed", "excluded", "edited"})
+        if not explicit_resume_review_capable():
+            item_filter = ResumeReviewItem.selected.is_(True)
         items = (await self.session.scalars(select(ResumeReviewItem).where(
             ResumeReviewItem.review_session_id == review.id,
             ResumeReviewItem.claim_type.in_(SUPPORTED_IMPORT_TYPES),
-            ResumeReviewItem.review_status.in_({"confirmed", "excluded", "edited"}),
+            item_filter,
         ).order_by(ResumeReviewItem.created_at))).all()
         for item in items:
             try:
@@ -406,8 +421,11 @@ class ResumeReviewService:
     async def _build_plan(self, review: ResumeReviewSession) -> ReviewPlanResponse:
         items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == review.id).order_by(ResumeReviewItem.created_at))).all()
         plans: list[ReviewPlanItem] = []
+        strict_review = explicit_resume_review_capable()
         for item in items:
             if item.claim_type in SUGGESTION_ONLY_TYPES:
+                continue
+            if not strict_review and not item.selected:
                 continue
             if item.claim_type == "employment":
                 await self._refresh_employment_match(item)
@@ -420,7 +438,7 @@ class ResumeReviewService:
                 item.claim_type,
                 item.edited_payload,
             )
-            if not resolved:
+            if strict_review and not resolved:
                 blockers.append("candidate_review_required")
             if item.claim_type == "education" and item.import_action != "skip":
                 try:
@@ -471,6 +489,8 @@ class ResumeReviewService:
                 warnings=sorted(set([*item.conflict_warnings, *importability_warnings])),
                 verified_record_protected=verified_protected,
             ))
+        if not plans and not strict_review:
+            plans.append(ReviewPlanItem(item_id=review.id, claim_type="none", action="none", target_model=None, duplicate_status="no_match", target_record_id=None, fields_to_create=[], fields_ignored=[], blockers=["select_at_least_one_item"], warnings=[], verified_record_protected=False))
         return ReviewPlanResponse(session_id=review.id, ready=not any(item.blockers for item in plans), version=review.version, items=plans)
 
     async def _import_item(

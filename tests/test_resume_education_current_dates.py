@@ -9,6 +9,11 @@ import pytest
 from sqlalchemy import delete, func, select
 
 from app.db.session import async_session_factory
+from app.employment.client_compatibility import (
+    ClientMetadata,
+    bind_client_metadata,
+    reset_client_metadata,
+)
 from app.exceptions import ValidationAppError
 from app.models.education import Education
 from app.models.resume_document import ResumeDocument
@@ -16,6 +21,7 @@ from app.models.resume_parsed_result import ResumeParsedResult
 from app.models.resume_processing_job import ResumeProcessingJob
 from app.models.resume_review_item import ResumeReviewItem
 from app.models.user import User
+from app.resumes.client_compatibility import EXPLICIT_RESUME_REVIEW_CAPABILITY
 from app.resumes.education_review import normalize_education_review
 from app.resumes.review_schemas import (
     ReviewImportRequest,
@@ -26,6 +32,17 @@ from app.resumes.review_schemas import (
 from app.services.resume_review_service import ResumeReviewService
 
 BASE = {"claim_type": "education", "institution_name": "Synthetic Institute"}
+
+
+@pytest.fixture(autouse=True)
+def explicit_resume_review_client():
+    token = bind_client_metadata(
+        ClientMetadata(capabilities=frozenset({EXPLICIT_RESUME_REVIEW_CAPABILITY}))
+    )
+    try:
+        yield
+    finally:
+        reset_client_metadata(token)
 
 
 @pytest.mark.parametrize("extra", [

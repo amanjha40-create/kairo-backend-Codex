@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -7,6 +8,12 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.employment.client_compatibility import (
+    ClientMetadata,
+    bind_client_metadata,
+    reset_client_metadata,
+)
+from app.resumes.client_compatibility import EXPLICIT_RESUME_REVIEW_CAPABILITY
 from app.resumes.normalization import (
     date_ranges_overlap,
     normalize_date,
@@ -24,6 +31,17 @@ from app.resumes.review_schemas import (
 )
 from app.services.resume_duplicate_service import ResumeDuplicateService, classify_match
 from app.services.resume_review_service import ResumeReviewService
+
+
+@contextmanager
+def explicit_review_client():
+    token = bind_client_metadata(
+        ClientMetadata(capabilities=frozenset({EXPLICIT_RESUME_REVIEW_CAPABILITY}))
+    )
+    try:
+        yield
+    finally:
+        reset_client_metadata(token)
 
 
 def test_stable_claim_ids_and_payload_hashes_are_deterministic() -> None:
@@ -180,8 +198,12 @@ async def test_parser_default_selection_requires_explicit_candidate_review() -> 
         async def scalars(self, _statement: object) -> SimpleNamespace:
             return SimpleNamespace(all=lambda: [item])
 
-    plan = await ResumeReviewService(FakeSession())._build_plan(review)
+    legacy_plan = await ResumeReviewService(FakeSession())._build_plan(review)
+    with explicit_review_client():
+        plan = await ResumeReviewService(FakeSession())._build_plan(review)
 
+    assert legacy_plan.ready is True
+    assert legacy_plan.items[0].blockers == []
     assert plan.ready is False
     assert plan.items[0].blockers == ["candidate_review_required"]
 
@@ -208,9 +230,13 @@ async def test_explicit_all_excluded_and_zero_item_reviews_are_ready() -> None:
         async def scalars(self, _statement: object) -> SimpleNamespace:
             return SimpleNamespace(all=lambda: self.items)
 
-    excluded_plan = await ResumeReviewService(FakeSession([excluded]))._build_plan(review)
-    empty_plan = await ResumeReviewService(FakeSession([]))._build_plan(review)
+    legacy_empty_plan = await ResumeReviewService(FakeSession([]))._build_plan(review)
+    with explicit_review_client():
+        excluded_plan = await ResumeReviewService(FakeSession([excluded]))._build_plan(review)
+        empty_plan = await ResumeReviewService(FakeSession([]))._build_plan(review)
 
+    assert legacy_empty_plan.ready is False
+    assert legacy_empty_plan.items[0].blockers == ["select_at_least_one_item"]
     assert excluded_plan.ready is True
     assert excluded_plan.items[0].action == "skip"
     assert empty_plan.ready is True
@@ -837,37 +863,38 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert unedited_education.edited_payload["end_date"] == "2019-12-31"
         assert unedited_education.edited_payload["end_date_precision"] == "year"
         assert unedited_education.edited_payload["is_current"] is False
-        for item in review.items:
-            if item.claim_type == "profile":
-                continue
-            await service.update_item(
-                user.id,
-                review.id,
-                item.id,
-                ReviewItemUpdateRequest(
-                    expected_version=item.version,
-                    selected=item.import_action != "skip",
-                    import_action=item.import_action,
-                    confirmed=True,
-                ),
+        with explicit_review_client():
+            for item in review.items:
+                if item.claim_type == "profile":
+                    continue
+                await service.update_item(
+                    user.id,
+                    review.id,
+                    item.id,
+                    ReviewItemUpdateRequest(
+                        expected_version=item.version,
+                        selected=item.import_action != "skip",
+                        import_action=item.import_action,
+                        confirmed=True,
+                    ),
+                )
+            review = await service.get(user.id, review.id)
+            plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
+            assert plan.ready
+            # Rows inserted together can have equal timestamps; ordering is not this contract.
+            assert sorted(item.claim_type for item in plan.items) == [
+                "education",
+                "education",
+                "employment",
+            ]
+            unusable_plan_item = next(
+                item for item in plan.items if "unusable_record" in item.warnings
             )
-        review = await service.get(user.id, review.id)
-        plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
-        assert plan.ready
-        # Rows inserted together can have equal timestamps; ordering is not this contract.
-        assert sorted(item.claim_type for item in plan.items) == [
-            "education",
-            "education",
-            "employment",
-        ]
-        unusable_plan_item = next(
-            item for item in plan.items if "unusable_record" in item.warnings
-        )
-        assert unusable_plan_item.blockers == []
-        assert "missing_institution_name" in unusable_plan_item.warnings
-        request = ReviewImportRequest(expected_version=plan.version, idempotency_key="synthetic-confirmed-import", confirmed=True)
-        first = await service.import_review(user.id, review.id, request)
-        second = await service.import_review(user.id, review.id, request)
+            assert unusable_plan_item.blockers == []
+            assert "missing_institution_name" in unusable_plan_item.warnings
+            request = ReviewImportRequest(expected_version=plan.version, idempotency_key="synthetic-confirmed-import", confirmed=True)
+            first = await service.import_review(user.id, review.id, request)
+            second = await service.import_review(user.id, review.id, request)
         assert first.id == second.id
         assert first.status == "completed"
         assert first.imported_count == 2
