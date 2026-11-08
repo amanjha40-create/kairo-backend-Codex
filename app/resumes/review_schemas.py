@@ -160,6 +160,7 @@ review_claim_adapter = TypeAdapter(ReviewClaim)
 
 class ReviewItemUpdateRequest(StrictModel):
     expected_version: int = Field(ge=1)
+    confirmed: bool | None = None
     selected: bool | None = None
     import_action: ResumeImportAction | None = None
     target_record_id: UUID | None = None

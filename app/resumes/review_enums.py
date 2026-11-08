@@ -17,6 +17,8 @@ class ResumeReviewItemStatus(StrEnum):
     EDITED = "edited"
     SELECTED = "selected"
     DESELECTED = "deselected"
+    CONFIRMED = "confirmed"
+    EXCLUDED = "excluded"
     INVALID = "invalid"
     IMPORTED = "imported"
     SKIPPED = "skipped"

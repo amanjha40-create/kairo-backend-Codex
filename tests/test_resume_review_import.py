@@ -161,6 +161,88 @@ async def test_excluded_or_review_only_claims_do_not_block_import() -> None:
     assert plan.items[0].blockers == []
 
 
+@pytest.mark.asyncio
+async def test_parser_default_selection_requires_explicit_candidate_review() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
+    item = SimpleNamespace(
+        id=uuid4(),
+        selected=True,
+        review_status="selected",
+        import_action="create_new",
+        claim_type="project",
+        edited_payload={"claim_type": "project", "title": "Synthetic project"},
+        duplicate_status="no_match",
+        target_record_id=None,
+        conflict_warnings=[],
+    )
+
+    class FakeSession:
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: [item])
+
+    plan = await ResumeReviewService(FakeSession())._build_plan(review)
+
+    assert plan.ready is False
+    assert plan.items[0].blockers == ["candidate_review_required"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_all_excluded_and_zero_item_reviews_are_ready() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
+    excluded = SimpleNamespace(
+        id=uuid4(),
+        selected=False,
+        review_status="excluded",
+        import_action="skip",
+        claim_type="project",
+        edited_payload={"claim_type": "project", "title": "Synthetic project"},
+        duplicate_status="no_match",
+        target_record_id=None,
+        conflict_warnings=[],
+    )
+
+    class FakeSession:
+        def __init__(self, items: list[SimpleNamespace]) -> None:
+            self.items = items
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: self.items)
+
+    excluded_plan = await ResumeReviewService(FakeSession([excluded]))._build_plan(review)
+    empty_plan = await ResumeReviewService(FakeSession([]))._build_plan(review)
+
+    assert excluded_plan.ready is True
+    assert excluded_plan.items[0].action == "skip"
+    assert empty_plan.ready is True
+    assert empty_plan.items == []
+
+
+@pytest.mark.asyncio
+async def test_explicitly_excluded_item_skips_before_payload_validation() -> None:
+    class FakeSession:
+        async def scalar(self, _statement: object) -> None:
+            return None
+
+    item = SimpleNamespace(
+        id=uuid4(),
+        claim_type="project",
+        import_action="skip",
+        review_status="excluded",
+        edited_payload={"claim_type": "project"},
+    )
+
+    outcome = await ResumeReviewService(FakeSession())._import_item(
+        uuid4(),
+        SimpleNamespace(id=uuid4()),
+        SimpleNamespace(id=uuid4()),
+        item,
+        datetime.now(UTC),
+    )
+
+    assert outcome == ("skipped", None, None, [])
+    assert item.review_status == "skipped"
+
+
 def test_incomplete_resume_claims_remain_importable_for_career_completion() -> None:
     service = ResumeReviewService(SimpleNamespace())
     assert service._required_blockers("education", {
@@ -755,6 +837,21 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert unedited_education.edited_payload["end_date"] == "2019-12-31"
         assert unedited_education.edited_payload["end_date_precision"] == "year"
         assert unedited_education.edited_payload["is_current"] is False
+        for item in review.items:
+            if item.claim_type == "profile":
+                continue
+            await service.update_item(
+                user.id,
+                review.id,
+                item.id,
+                ReviewItemUpdateRequest(
+                    expected_version=item.version,
+                    selected=item.import_action != "skip",
+                    import_action=item.import_action,
+                    confirmed=True,
+                ),
+            )
+        review = await service.get(user.id, review.id)
         plan = await service.validate(user.id, review.id, ReviewValidateRequest(expected_version=review.version))
         assert plan.ready
         # Rows inserted together can have equal timestamps; ordering is not this contract.

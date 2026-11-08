@@ -207,6 +207,27 @@ class ResumeReviewService:
         ):
             raise ValidationAppError("Distinct-role confirmation requires an employment create decision")
         self._check_version(item.version, payload.expected_version)
+        excluding = payload.selected is False or payload.import_action == ResumeImportAction.SKIP
+        if excluding and payload.edited_payload is None:
+            item.selected = False
+            item.import_action = ResumeImportAction.SKIP.value
+            item.target_record_id = None
+            item.review_status = "excluded" if payload.confirmed is not False else "deselected"
+            item.version += 1
+            review.status = ResumeReviewStatus.REVIEWING.value
+            review.version += 1
+            await self.session.commit()
+            logger.info(
+                "resume_review_item_updated",
+                extra={
+                    "resume_review_session_id": str(review.id),
+                    "resume_review_item_id": str(item.id),
+                    "user_id": str(user_id),
+                    "claim_type": item.claim_type,
+                    "selected": False,
+                },
+            )
+            return self._item_response(item)
         edit_payload = dict(payload.edited_payload if payload.edited_payload is not None else item.edited_payload)
         if item.claim_type == "education":
             edit_payload = education_identity(edit_payload, item.edited_payload)
@@ -248,7 +269,23 @@ class ResumeReviewService:
         if item.claim_type == "employment":
             # Explicit confirmation is bound to the freshly assessed payload/candidates.
             await self._refresh_employment_match(item, confirm_distinct=payload.confirm_distinct_role)
-        item.review_status = "edited" if normalized != item.original_payload else ("selected" if item.selected else "deselected")
+        explicitly_edited = payload.edited_payload is not None and normalized != item.original_payload
+        explicit_decision = payload.confirmed is True or any(
+            value is not None
+            for value in (payload.selected, payload.import_action, payload.target_record_id)
+        ) or payload.confirm_distinct_role
+        if payload.confirmed is False:
+            item.review_status = "selected" if item.selected else "deselected"
+        elif explicitly_edited:
+            item.review_status = "edited"
+        elif explicit_decision:
+            item.review_status = (
+                "excluded"
+                if not item.selected or item.import_action == ResumeImportAction.SKIP.value
+                else "confirmed"
+            )
+        else:
+            item.review_status = "selected" if item.selected else "deselected"
         item.version += 1
         review.status = ResumeReviewStatus.REVIEWING.value
         review.version += 1
@@ -305,8 +342,8 @@ class ResumeReviewService:
         logger.info("resume_import_started", extra={"review_session_id": str(review.id), "import_batch_id": str(batch.id), "user_id": str(user_id)})
         items = (await self.session.scalars(select(ResumeReviewItem).where(
             ResumeReviewItem.review_session_id == review.id,
-            ResumeReviewItem.selected.is_(True),
             ResumeReviewItem.claim_type.in_(SUPPORTED_IMPORT_TYPES),
+            ResumeReviewItem.review_status.in_({"confirmed", "excluded", "edited"}),
         ).order_by(ResumeReviewItem.created_at))).all()
         for item in items:
             try:
@@ -374,13 +411,17 @@ class ResumeReviewService:
                 continue
             if item.claim_type == "employment":
                 await self._refresh_employment_match(item)
-            if not item.selected:
-                continue
+            review_status = getattr(item, "review_status", "confirmed")
+            resolved = review_status in {"confirmed", "excluded", "edited"} or (
+                item.claim_type not in SUPPORTED_IMPORT_TYPES and item.import_action == "skip"
+            )
             blockers = self._action_blockers(
                 item.import_action,
                 item.claim_type,
                 item.edited_payload,
             )
+            if not resolved:
+                blockers.append("candidate_review_required")
             if item.claim_type == "education" and item.import_action != "skip":
                 try:
                     education_identity(normalize_education_review(item.edited_payload))
@@ -430,8 +471,6 @@ class ResumeReviewService:
                 warnings=sorted(set([*item.conflict_warnings, *importability_warnings])),
                 verified_record_protected=verified_protected,
             ))
-        if not plans:
-            plans.append(ReviewPlanItem(item_id=review.id, claim_type="none", action="none", target_model=None, duplicate_status="no_match", target_record_id=None, fields_to_create=[], fields_ignored=[], blockers=["select_at_least_one_item"], warnings=[], verified_record_protected=False))
         return ReviewPlanResponse(session_id=review.id, ready=not any(item.blockers for item in plans), version=review.version, items=plans)
 
     async def _import_item(
@@ -461,7 +500,7 @@ class ResumeReviewService:
             item.imported_record_id = prior.record_id
             return "linked", prior.record_type, prior.record_id, ["already_imported"]
         action = item.import_action
-        if item.claim_type == "education" and action == "skip":
+        if action == "skip":
             item.review_status = "skipped"
             return "skipped", None, None, []
         import_payload = (

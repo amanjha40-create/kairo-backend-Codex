@@ -70,7 +70,7 @@ async def career(uid, **changes):
         return row.id
 
 
-async def review(uid, claims):
+async def review(uid, claims, *, confirm=True):
     async with async_session_factory() as session:
         doc = ResumeDocument(
             user_id=uid,
@@ -108,7 +108,23 @@ async def review(uid, claims):
             )
         )
         await session.commit()
-        return await ResumeReviewService(session).create(uid, doc.id)
+        service = ResumeReviewService(session)
+        result = await service.create(uid, doc.id)
+        if confirm:
+            for item in result.items:
+                await service.update_item(
+                    uid,
+                    result.id,
+                    item.id,
+                    ReviewItemUpdateRequest(
+                        expected_version=item.version,
+                        selected=item.import_action != "skip",
+                        import_action=item.import_action,
+                        confirmed=True,
+                    ),
+                )
+            result = await service.get(uid, result.id)
+        return result
 
 
 async def run_import(uid, item, key=None):
@@ -221,7 +237,7 @@ async def test_possible_match_defaults_to_skip_and_requires_explicit_distinct_co
     assert first.items[0].duplicate_status == "possible_match"
     assert (await run_import(owner, first)).skipped_count == 1
     assert await count(owner) == 1
-    second = await review(owner, [ambiguous])
+    second = await review(owner, [ambiguous], confirm=False)
     async with async_session_factory() as session:
         svc = ResumeReviewService(session)
         item = second.items[0]

@@ -159,7 +159,7 @@ async def education_owner():
         await session.commit()
 
 
-async def create_review(session, uid, claim, extra_claims=None):
+async def create_review(session, uid, claim, extra_claims=None, *, confirm=True):
     doc = ResumeDocument(
         user_id=uid, storage_bucket="synthetic", storage_key=f"synthetic/{uuid4()}",
         original_filename="synthetic.pdf", normalized_filename="synthetic.pdf",
@@ -183,7 +183,27 @@ async def create_review(session, uid, claim, extra_claims=None):
                            **(extra_claims or {})},
     ))
     await session.commit()
-    return await ResumeReviewService(session).create(uid, doc.id)
+    service = ResumeReviewService(session)
+    result = await service.create(uid, doc.id)
+    if confirm:
+        for item in result.items:
+            await service.update_item(
+                uid,
+                result.id,
+                item.id,
+                ReviewItemUpdateRequest(
+                    expected_version=item.version,
+                    selected=item.import_action != "skip" and not item.conflict_warnings,
+                    import_action=(
+                        item.import_action
+                        if item.import_action != "skip" and not item.conflict_warnings
+                        else "skip"
+                    ),
+                    confirmed=True,
+                ),
+            )
+        result = await service.get(uid, result.id)
+    return result
 
 
 @pytest.mark.integration
@@ -201,7 +221,7 @@ async def test_parsed_conflict_reaches_review_and_requires_correction(
         service = ResumeReviewService(session)
         review = await create_review(session, uid, {
             "institution_name": "Synthetic", "is_current": True, **dates,
-        })
+        }, confirm=False)
         item = review.items[0]
         original = deepcopy(item.original_payload)
         assert item.edited_payload == original
@@ -269,7 +289,8 @@ async def test_conflicting_education_does_not_block_other_claims(education_owner
             education_owner, review.id, ReviewValidateRequest(expected_version=review.version),
         )
         assert plan.ready
-        assert len(plan.items) == 3
+        assert len(plan.items) == 4
+        assert sum(item.action == "skip" for item in plan.items) == 1
 
 
 @pytest.mark.integration
