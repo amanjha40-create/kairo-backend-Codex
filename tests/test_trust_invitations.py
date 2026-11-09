@@ -322,6 +322,82 @@ def test_trust_invitation_projection_preserves_valid_creator_email() -> None:
     assert response.created_by_email == "owner@example.com"
 
 
+def test_timeline_collapses_duplicate_expiration_projection_without_deleting_audit_rows() -> None:
+    invitation = _service_invitation("candidate@example.com", include_creator_event=True)
+    now = datetime.now(tz=UTC)
+    invitation.events.extend(
+        [
+            SimpleNamespace(
+                id=uuid4(),
+                event_type=TrustInvitationEventType.EXPIRED.value,
+                occurred_at=now - timedelta(minutes=2),
+                actor_user_id=None,
+                actor_user=None,
+                metadata_payload={},
+            ),
+            SimpleNamespace(
+                id=uuid4(),
+                event_type=TrustInvitationEventType.EXPIRED.value,
+                occurred_at=now - timedelta(minutes=1),
+                actor_user_id=None,
+                actor_user=None,
+                metadata_payload={},
+            ),
+        ]
+    )
+    service = TrustInvitationService.__new__(TrustInvitationService)
+    service._settings = SimpleNamespace(
+        candidate_portal_base_url="https://candidate.example.com",
+        jwt_secret_key="test-secret",
+    )
+
+    detail = service._to_detail_response(invitation)
+
+    assert [event.event_type for event in detail.timeline] == [
+        TrustInvitationEventType.CREATED,
+        TrustInvitationEventType.EXPIRED,
+    ]
+    assert len(invitation.events) == 3
+
+
+@pytest.mark.asyncio
+async def test_expiration_rechecks_locked_state_before_recording_event() -> None:
+    invitation_id = uuid4()
+    stale_invitation = SimpleNamespace(
+        id=invitation_id,
+        status=TrustInvitationStatus.PENDING,
+        declined_at=None,
+        expires_at=datetime.now(tz=UTC) - timedelta(minutes=1),
+    )
+    locked_invitation = SimpleNamespace(
+        id=invitation_id,
+        status=TrustInvitationStatus.EXPIRED,
+        declined_at=None,
+        expires_at=stale_invitation.expires_at,
+    )
+
+    class Repository:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        async def get_by_id_for_update(self, requested_id):  # noqa: ANN001
+            assert requested_id == invitation_id
+            return locked_invitation
+
+        async def add_event(self, event):  # noqa: ANN001
+            self.events.append(event)
+            return event
+
+    repository = Repository()
+    service = TrustInvitationService.__new__(TrustInvitationService)
+    service._repo = repository
+
+    changed = await service._expire_if_needed(stale_invitation)
+
+    assert changed is False
+    assert repository.events == []
+
+
 def test_trust_invitation_response_keeps_strict_validation_for_non_null_email() -> None:
     with pytest.raises(ValueError):
         FakeTrustInvitationService()._response(subject_email="not-an-email")

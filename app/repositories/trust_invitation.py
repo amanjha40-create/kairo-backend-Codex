@@ -26,6 +26,15 @@ class TrustInvitationRepository:
         await self._session.flush()
         return event
 
+    async def get_by_id_for_update(self, invitation_id: UUID) -> TrustInvitation | None:
+        stmt = (
+            select(TrustInvitation)
+            .where(TrustInvitation.id == invitation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def delete(self, invitation: TrustInvitation) -> None:
         await self._session.delete(invitation)
         await self._session.flush()
