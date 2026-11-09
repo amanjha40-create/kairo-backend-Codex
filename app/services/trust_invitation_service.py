@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 
 def _public_subject_email(email: str | None) -> str | None:
-    """Hide Candidate deletion tombstones from Trust Invitation projections."""
+    """Hide account-deletion tombstones from Trust Invitation projections."""
     if email and email.endswith("@deleted.kairoid.invalid"):
         return None
     return email
@@ -949,7 +949,7 @@ class TrustInvitationService:
             status=invitation.status,
             delivery_method=invitation.delivery_method,
             delivery_state=invitation.delivery_state,
-            created_by_email=invitation.created_by_user.email,
+            created_by_email=_public_subject_email(invitation.created_by_user.email),
             created_by_full_name=invitation.created_by_user.full_name,
             expires_at=invitation.expires_at,
             sent_at=invitation.sent_at,
@@ -1005,7 +1005,11 @@ class TrustInvitationService:
                     event_type=TrustInvitationEventType(event.event_type),
                     occurred_at=event.occurred_at,
                     actor_user_id=event.actor_user_id,
-                    actor_email=event.actor_user.email if event.actor_user is not None else None,
+                    actor_email=(
+                        _public_subject_email(event.actor_user.email)
+                        if event.actor_user is not None
+                        else None
+                    ),
                     actor_full_name=(
                         event.actor_user.full_name if event.actor_user is not None else None
                     ),
@@ -1028,7 +1032,11 @@ class TrustInvitationService:
                     event_type=TrustInvitationEventType(event.event_type),
                     occurred_at=event.occurred_at,
                     actor_user_id=event.actor_user_id,
-                    actor_email=event.actor_user.email if event.actor_user is not None else None,
+                    actor_email=(
+                        _public_subject_email(event.actor_user.email)
+                        if event.actor_user is not None
+                        else None
+                    ),
                     actor_full_name=(
                         event.actor_user.full_name if event.actor_user is not None else None
                     ),

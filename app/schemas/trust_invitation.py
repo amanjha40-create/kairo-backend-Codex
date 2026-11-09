@@ -133,7 +133,9 @@ class TrustInvitationResponse(BaseModel):
     status: TrustInvitationStatus
     delivery_method: TrustInvitationDeliveryMethod
     delivery_state: TrustInvitationDeliveryState
-    created_by_email: EmailStr
+    # Creator accounts may be deleted while retained invitations remain auditable.
+    # Internal tombstone addresses are projected as null.
+    created_by_email: EmailStr | None
     created_by_full_name: str | None
     expires_at: datetime
     sent_at: datetime | None

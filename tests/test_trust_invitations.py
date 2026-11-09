@@ -217,8 +217,14 @@ class FakeTrustInvitationService:
         return self._response(TrustInvitationStatus.CANCELLED)
 
 
-def _service_invitation(subject_email: str) -> SimpleNamespace:
+def _service_invitation(
+    subject_email: str,
+    *,
+    created_by_email: str = "owner@example.com",
+    include_creator_event: bool = False,
+) -> SimpleNamespace:
     now = datetime.now(tz=UTC)
+    creator = SimpleNamespace(email=created_by_email, full_name="Owner User")
     return SimpleNamespace(
         public_id=uuid4(),
         organization=SimpleNamespace(public_id=uuid4()),
@@ -231,7 +237,7 @@ def _service_invitation(subject_email: str) -> SimpleNamespace:
         status=TrustInvitationStatus.ACCEPTED,
         delivery_method=TrustInvitationDeliveryMethod.EMAIL,
         delivery_state=TrustInvitationDeliveryState.DELIVERED,
-        created_by_user=SimpleNamespace(email="owner@example.com", full_name="Owner User"),
+        created_by_user=creator,
         expires_at=now + timedelta(days=1),
         sent_at=now - timedelta(days=1),
         opened_at=now - timedelta(hours=12),
@@ -240,7 +246,20 @@ def _service_invitation(subject_email: str) -> SimpleNamespace:
         verification_requests=[],
         created_at=now - timedelta(days=2),
         updated_at=now,
-        events=[],
+        events=(
+            [
+                SimpleNamespace(
+                    id=uuid4(),
+                    event_type=TrustInvitationEventType.CREATED.value,
+                    occurred_at=now - timedelta(days=2),
+                    actor_user_id=uuid4(),
+                    actor_user=creator,
+                    metadata_payload={},
+                )
+            ]
+            if include_creator_event
+            else []
+        ),
     )
 
 
@@ -271,14 +290,50 @@ def test_trust_invitation_projection_preserves_valid_subject_email() -> None:
     assert _public_subject_email("candidate@example.com") == "candidate@example.com"
 
 
+def test_deleted_creator_tombstone_is_hidden_from_invitation_and_timeline() -> None:
+    tombstone = "deleted-candidate+creator@deleted.kairoid.invalid"
+    invitation = _service_invitation(
+        "candidate@example.com",
+        created_by_email=tombstone,
+        include_creator_event=True,
+    )
+    service = TrustInvitationService.__new__(TrustInvitationService)
+    service._settings = SimpleNamespace(
+        candidate_portal_base_url="https://candidate.example.com",
+        jwt_secret_key="test-secret",
+    )
+
+    response = service._to_response(invitation)
+    detail = service._to_detail_response(invitation)
+
+    assert response.created_by_email is None
+    assert detail.created_by_email is None
+    assert detail.timeline[0].actor_email is None
+    assert tombstone not in response.model_dump_json()
+    assert tombstone not in detail.model_dump_json()
+
+
+def test_trust_invitation_projection_preserves_valid_creator_email() -> None:
+    invitation = _service_invitation("candidate@example.com")
+    service = TrustInvitationService.__new__(TrustInvitationService)
+
+    response = service._to_response(invitation)
+
+    assert response.created_by_email == "owner@example.com"
+
+
 def test_trust_invitation_response_keeps_strict_validation_for_non_null_email() -> None:
     with pytest.raises(ValueError):
         FakeTrustInvitationService()._response(subject_email="not-an-email")
 
 
 @pytest.mark.asyncio
-async def test_deleted_subject_list_remains_searchable_sortable_and_paginated() -> None:
-    invitation = _service_invitation("deleted-candidate+abc@deleted.kairoid.invalid")
+async def test_deleted_emails_list_remains_searchable_sortable_and_paginated() -> None:
+    creator_tombstone = "deleted-candidate+creator@deleted.kairoid.invalid"
+    invitation = _service_invitation(
+        "deleted-candidate+abc@deleted.kairoid.invalid",
+        created_by_email=creator_tombstone,
+    )
     organization_id = uuid4()
 
     class Organizations:
@@ -309,6 +364,8 @@ async def test_deleted_subject_list_remains_searchable_sortable_and_paginated() 
     assert isinstance(result, Page)
     assert result.total == 1
     assert result.items[0].subject_email is None
+    assert result.items[0].created_by_email is None
+    assert creator_tombstone not in result.items[0].model_dump_json()
     assert invitation.subject_email.endswith("@deleted.kairoid.invalid")
 
 
