@@ -490,6 +490,7 @@ class AdminOrganizationService:
                     email_masked=_mask_email(person.primary_email),
                     relationship=_value(person.relationship) or "unknown",
                     lifecycle_status=_value(person.lifecycle_status) or "unknown",
+                    invitation_status=(_value(person.invitation_status_summary) or "not_invited"),
                     verification_request_count=int(request_count),
                     verified_count=int(verified_count),
                     pending_count=int(pending_count),

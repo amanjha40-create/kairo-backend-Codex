@@ -34,6 +34,8 @@ from app.models.user_account_event import UserAccountEvent
 from app.models.user_document import UserDocument
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.schemas.admin_operations import (
+    AdminClientPersonActivationRequest,
+    AdminClientPersonCreateRequest,
     AdminCreateCandidateRequest,
     AdminFirstHRInvitationRequest,
     AdminOrganizationCreateRequest,
@@ -60,6 +62,14 @@ class _FakeEmailDelivery:
 
     async def queue_template_email(self, **kwargs):
         self.calls.append(kwargs)
+        return SimpleNamespace(status="queued")
+
+
+class _FailOnceEmailDelivery(_FakeEmailDelivery):
+    async def queue_template_email(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            return SimpleNamespace(status="failed")
         return SimpleNamespace(status="queued")
 
 
@@ -98,6 +108,14 @@ def test_admin_permissions_and_public_contracts_are_additive() -> None:
 
     paths = app.openapi()["paths"]
     assert "/api/v1/admin/operations/candidates" in paths
+    assert "/api/v1/admin/operations/organizations/{org_public_id}/people" in paths
+    assert (
+        "/api/v1/admin/operations/organizations/{org_public_id}/people/{person_public_id}/candidate-activation"
+        in paths
+    )
+    assert "/api/v1/admin/organizations/{organization_public_id}/job-roles" in paths
+    assert "/api/v1/admin/organizations/{organization_public_id}/team-invitations" in paths
+    assert "/api/v1/admin/organizations/{organization_public_id}/people-imports" in paths
     assert "/api/v1/candidate-activations/validate" in paths
     assert "/api/v1/candidate-activations/claim" in paths
     assert "/api/v1/admin/users/{id}/verify-all" not in paths
@@ -208,6 +226,137 @@ async def test_candidate_create_activation_resend_and_claim_lifecycle() -> None:
             )
         with pytest.raises(NotFoundError):
             await service.validate_candidate_activation("x" * 64)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_client_person_is_created_before_candidate_activation() -> None:
+    email = _FakeEmailDelivery()
+    settings = get_settings()
+    async with async_session_factory() as session:
+        admin = await _user(role=Role.ADMIN, email_prefix="admin-client-person")
+        session.add(admin)
+        await session.commit()
+        await session.refresh(admin)
+        service = AdminOperationsService(session, settings, email_delivery=email)
+        users_before = await session.scalar(select(func.count()).select_from(User))
+        people_before = await session.scalar(select(func.count()).select_from(OrganizationPerson))
+
+        organization = await service.create_organization(
+            admin.id,
+            AdminOrganizationCreateRequest(
+                name=f"Client People {uuid4()}",
+                organization_type=OrganizationType.EMPLOYER,
+                idempotency_key=uuid4(),
+            ),
+        )
+        assert await session.scalar(select(func.count()).select_from(User)) == users_before
+        assert (
+            await session.scalar(select(func.count()).select_from(OrganizationPerson))
+            == people_before
+        )
+
+        person = await service.create_client_person(
+            admin.id,
+            organization.organization_public_id,
+            AdminClientPersonCreateRequest(
+                full_name="Imported Before Activation",
+                email=f"client-person-{uuid4()}@example.com",
+            ),
+        )
+        assert person.linked_candidate_id is None
+        assert person.invitation_status == "not_invited"
+        assert await session.scalar(select(func.count()).select_from(User)) == users_before
+
+        activation = await service.activate_client_person(
+            admin.id,
+            organization.organization_public_id,
+            person.person_id,
+            AdminClientPersonActivationRequest(idempotency_key=uuid4()),
+        )
+        assert activation.delivery_state == "queued"
+        assert len(email.calls) == 1
+        stored_person = await session.scalar(
+            select(OrganizationPerson).where(OrganizationPerson.public_id == person.person_id)
+        )
+        assert stored_person is not None
+        assert stored_person.linked_user_id == activation.candidate_id
+        assert stored_person.invitation_status_summary == "sent"
+
+        token = _opaque_token(email.calls[0], "activation_url")
+        await service.claim_candidate_account(
+            CandidateClaimRequest(
+                token=token,
+                password="Candidate-owned-password-2026!",
+                confirm_password="Candidate-owned-password-2026!",
+            )
+        )
+        accepted_person = await session.scalar(
+            select(OrganizationPerson)
+            .where(OrganizationPerson.public_id == person.person_id)
+            .execution_options(populate_existing=True)
+        )
+        assert accepted_person is not None
+        assert accepted_person.invitation_status_summary == "accepted"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_client_person_activation_retries_same_candidate_after_delivery_failure() -> None:
+    email = _FailOnceEmailDelivery()
+    settings = get_settings()
+    async with async_session_factory() as session:
+        admin = await _user(role=Role.ADMIN, email_prefix="admin-client-person-retry")
+        session.add(admin)
+        await session.commit()
+        await session.refresh(admin)
+        service = AdminOperationsService(session, settings, email_delivery=email)
+        organization = await service.create_organization(
+            admin.id,
+            AdminOrganizationCreateRequest(
+                name=f"Client Person Retry {uuid4()}",
+                organization_type=OrganizationType.EMPLOYER,
+                idempotency_key=uuid4(),
+            ),
+        )
+        person = await service.create_client_person(
+            admin.id,
+            organization.organization_public_id,
+            AdminClientPersonCreateRequest(
+                full_name="Retryable Client Person",
+                email=f"client-person-retry-{uuid4()}@example.com",
+            ),
+        )
+        users_before = await session.scalar(select(func.count()).select_from(User))
+
+        with pytest.raises(ValidationAppError) as failed:
+            await service.activate_client_person(
+                admin.id,
+                organization.organization_public_id,
+                person.person_id,
+                AdminClientPersonActivationRequest(idempotency_key=uuid4()),
+            )
+        assert failed.value.code == "candidate_activation_delivery_failed"
+        stored_person = await session.scalar(
+            select(OrganizationPerson).where(OrganizationPerson.public_id == person.person_id)
+        )
+        assert stored_person is not None and stored_person.linked_user_id is not None
+        candidate_id = stored_person.linked_user_id
+        assert stored_person.invitation_status_summary == "not_invited"
+        assert await session.scalar(select(func.count()).select_from(User)) == users_before + 1
+
+        activation = await service.activate_client_person(
+            admin.id,
+            organization.organization_public_id,
+            person.person_id,
+            AdminClientPersonActivationRequest(idempotency_key=uuid4()),
+        )
+        assert activation.candidate_id == candidate_id
+        assert activation.delivery_state == "queued"
+        assert await session.scalar(select(func.count()).select_from(User)) == users_before + 1
+        await session.refresh(stored_person)
+        assert stored_person.invitation_status_summary == "sent"
+        assert len(email.calls) == 2
 
 
 @pytest.mark.integration

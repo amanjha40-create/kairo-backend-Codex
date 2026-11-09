@@ -41,6 +41,9 @@ from app.schemas.admin_operations import (
     AdminCareerMutationResponse,
     AdminCareerRecordResponse,
     AdminCareerUpdateRequest,
+    AdminClientPersonActivationRequest,
+    AdminClientPersonCreateRequest,
+    AdminClientPersonResponse,
     AdminCreateCandidateRequest,
     AdminFirstHRInvitationRequest,
     AdminFirstHRInvitationResponse,
@@ -164,6 +167,35 @@ async def create_assisted_candidate(
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> AdminCandidateResponse:
     return await service.create_candidate(actor.id, payload)
+
+
+@router.post(
+    "/organizations/{org_public_id}/people",
+    response_model=AdminClientPersonResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_client_person(
+    org_public_id: UUID,
+    payload: AdminClientPersonCreateRequest,
+    actor: Annotated[CurrentUser, _permission(Permission.CREATE_PERSON)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> AdminClientPersonResponse:
+    return await service.create_client_person(actor.id, org_public_id, payload)
+
+
+@router.post(
+    "/organizations/{org_public_id}/people/{person_public_id}/candidate-activation",
+    response_model=CandidateActivationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def activate_client_person(
+    org_public_id: UUID,
+    person_public_id: UUID,
+    payload: AdminClientPersonActivationRequest,
+    actor: Annotated[CurrentUser, _permission(Permission.SEND_CANDIDATE_ACTIVATION)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> CandidateActivationResponse:
+    return await service.activate_client_person(actor.id, org_public_id, person_public_id, payload)
 
 
 @router.get("/candidates/{candidate_id}", response_model=AdminCandidateResponse)

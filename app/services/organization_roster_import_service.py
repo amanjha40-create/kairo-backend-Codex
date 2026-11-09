@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +22,8 @@ from app.models.organization import Organization
 from app.models.organization_person import OrganizationPerson
 from app.models.organization_person_identifier import OrganizationPersonIdentifier
 from app.models.organization_person_roster_profile import OrganizationPersonRosterProfile
-from app.models.organization_roster_import import OrganizationRosterImport
 from app.models.organization_roster_import import (
+    OrganizationRosterImport,
     OrganizationRosterImportAuditEvent,
     OrganizationRosterImportRow,
 )
@@ -119,8 +120,11 @@ class OrganizationRosterImportService:
         filename: str,
         content_type: str | None,
         content: bytes,
+        admin_override: bool = False,
     ) -> OrganizationRosterPreviewResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         safe_filename, parsed = await asyncio.to_thread(
             parse_roster_file,
             filename=filename,
@@ -181,17 +185,19 @@ class OrganizationRosterImportService:
             raise NotFoundError("Roster preview not found")
         return self._to_response(persisted)
 
-    async def authorize_upload(self, *, actor_user_id: UUID, org_public_id: UUID) -> None:
+    async def authorize_upload(
+        self, *, actor_user_id: UUID, org_public_id: UUID, admin_override: bool = False
+    ) -> None:
         """Authorize the tenant before the route reads the multipart body."""
 
-        await self._require_manager(actor_user_id, org_public_id)
+        await self._require_manager(actor_user_id, org_public_id, admin_override=admin_override)
 
     async def authorize_template_download(
-        self, *, actor_user_id: UUID, org_public_id: UUID
+        self, *, actor_user_id: UUID, org_public_id: UUID, admin_override: bool = False
     ) -> None:
         """Apply roster-management authorization to a non-mutating template download."""
 
-        await self._require_manager(actor_user_id, org_public_id)
+        await self._require_manager(actor_user_id, org_public_id, admin_override=admin_override)
 
     async def get_preview(
         self,
@@ -199,8 +205,11 @@ class OrganizationRosterImportService:
         actor_user_id: UUID,
         org_public_id: UUID,
         import_public_id: UUID,
+        admin_override: bool = False,
     ) -> OrganizationRosterPreviewResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         roster_import = await self._require_import(organization.id, import_public_id)
         return self._to_response(roster_import)
 
@@ -211,8 +220,11 @@ class OrganizationRosterImportService:
         org_public_id: UUID,
         import_public_id: UUID,
         payload: RosterMappingUpdateRequest,
+        admin_override: bool = False,
     ) -> OrganizationRosterPreviewResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         roster_import = await self._require_import(organization.id, import_public_id)
         if roster_import.state not in {
             OrganizationRosterImportState.MAPPING_REQUIRED.value,
@@ -253,8 +265,11 @@ class OrganizationRosterImportService:
         actor_user_id: UUID,
         org_public_id: UUID,
         import_public_id: UUID,
+        admin_override: bool = False,
     ) -> OrganizationRosterPreviewResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         organization_id = organization.id
         try:
             roster_import = await self._repository.lock_by_public_id_for_organization(
@@ -410,8 +425,11 @@ class OrganizationRosterImportService:
         actor_user_id: UUID,
         org_public_id: UUID,
         params: RosterImportListQueryParams,
+        admin_override: bool = False,
     ) -> RosterImportListResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         items, total = await self._repository.list_imports(
             organization.id,
             offset=params.offset or 0,
@@ -431,8 +449,11 @@ class OrganizationRosterImportService:
         org_public_id: UUID,
         import_public_id: UUID,
         params: RosterRowListQueryParams,
+        admin_override: bool = False,
     ) -> RosterRowListResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         roster_import = await self._require_import(organization.id, import_public_id)
         rows, total = await self._repository.list_rows(
             roster_import.id,
@@ -454,8 +475,11 @@ class OrganizationRosterImportService:
         actor_user_id: UUID,
         org_public_id: UUID,
         import_public_id: UUID,
+        admin_override: bool = False,
     ) -> tuple[str, str]:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         roster_import = await self._require_import(organization.id, import_public_id)
         output = io.StringIO(newline="")
         writer = csv.writer(output, lineterminator="\n")
@@ -496,8 +520,11 @@ class OrganizationRosterImportService:
         org_public_id: UUID,
         roster_type: OrganizationRosterType,
         params: OrganizationRosterListQueryParams,
+        admin_override: bool = False,
     ) -> OrganizationRosterListResponse:
-        organization = await self._require_manager(actor_user_id, org_public_id)
+        organization = await self._require_manager(
+            actor_user_id, org_public_id, admin_override=admin_override
+        )
         rows, total = await self._repository.list_roster_people(
             organization.id,
             roster_type,
@@ -514,7 +541,22 @@ class OrganizationRosterImportService:
             **self._page_metadata(total, params),
         )
 
-    async def _require_manager(self, actor_user_id: UUID, org_public_id: UUID) -> Organization:
+    async def _require_manager(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        *,
+        admin_override: bool = False,
+    ) -> Organization:
+        if admin_override:
+            organization = await self._session.scalar(
+                select(Organization).where(Organization.public_id == org_public_id)
+            )
+            if organization is None or organization.closed_at is not None:
+                raise NotFoundError("Organization not found")
+            if organization.suspended_at is not None:
+                raise ForbiddenError("Organization roster access is suspended")
+            return organization
         organization, membership = await self._organizations.require_org_manager(
             actor_user_id, org_public_id
         )

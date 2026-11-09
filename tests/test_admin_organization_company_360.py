@@ -125,6 +125,7 @@ class FakeAdminOrganizationService:
                     email_masked="ca*******@example.test",
                     relationship="candidate",
                     lifecycle_status="active",
+                    invitation_status="not_invited",
                     verification_request_count=3,
                     verified_count=2,
                     pending_count=1,
@@ -197,8 +198,8 @@ class FakeAdminOrganizationService:
 @pytest.mark.asyncio
 async def test_company_360_routes_return_backend_truth() -> None:
     app.dependency_overrides[get_current_user] = _admin_user
-    app.dependency_overrides[get_admin_organization_service] = (
-        lambda: FakeAdminOrganizationService()
+    app.dependency_overrides[get_admin_organization_service] = lambda: (
+        FakeAdminOrganizationService()
     )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -244,11 +245,24 @@ async def test_company_360_rejects_unauthenticated_and_non_admin_users() -> None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         candidate = await client.get("/api/v1/admin/organizations")
         candidate_detail = await client.get(f"/api/v1/admin/organizations/{ORG_ID}")
+        candidate_invitations = await client.get(
+            f"/api/v1/admin/organizations/{ORG_ID}/team-invitations"
+        )
+        candidate_roles = await client.get(f"/api/v1/admin/organizations/{ORG_ID}/job-roles")
+        candidate_imports = await client.get(f"/api/v1/admin/organizations/{ORG_ID}/people-imports")
+        candidate_create_role = await client.post(
+            f"/api/v1/admin/organizations/{ORG_ID}/job-roles",
+            json={"name": "Unauthorized role", "mode": "submit"},
+        )
     app.dependency_overrides.clear()
 
     assert unauthenticated.status_code == 401
     assert candidate.status_code == 403
     assert candidate_detail.status_code == 403
+    assert candidate_invitations.status_code == 403
+    assert candidate_roles.status_code == 403
+    assert candidate_imports.status_code == 403
+    assert candidate_create_role.status_code == 403
 
 
 def test_overview_uses_canonical_status_taxonomy_and_defensible_rate() -> None:

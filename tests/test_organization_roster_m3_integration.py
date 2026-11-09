@@ -242,6 +242,7 @@ async def test_confirm_creates_employee_or_student_with_organization_only_proven
                 }
             ],
         )
+        users_before = await _count(session, User)
         response = await OrganizationRosterImportService(session, _settings()).confirm_import(
             actor_user_id=actor.id,
             org_public_id=organization.public_id,
@@ -281,6 +282,7 @@ async def test_confirm_creates_employee_or_student_with_organization_only_proven
         assert await _count(session, Education) == 0
         assert await _count(session, VerificationRequest) == 0
         assert await _count(session, Notification) == 0
+        assert await _count(session, User) == users_before
 
 
 async def test_valid_update_preserves_blank_and_unrelated_fields(

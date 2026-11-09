@@ -82,6 +82,7 @@ class AdminOrganizationPersonItem(BaseModel):
     email_masked: str | None = None
     relationship: str
     lifecycle_status: str
+    invitation_status: str
     verification_request_count: int = 0
     verified_count: int = 0
     pending_count: int = 0

@@ -47,6 +47,13 @@ from app.models.user import User
 from app.models.user_account_event import UserAccountEvent
 from app.models.user_document import UserDocument
 from app.organization.enums import OrganizationInvitationStatus, OrganizationRole
+from app.organization_people.enums import (
+    OrganizationPersonInvitationStatusSummary,
+    OrganizationPersonLifecycleStatus,
+    OrganizationPersonRelationship,
+    OrganizationPersonTrustState,
+    OrganizationPersonVerificationStatusSummary,
+)
 from app.resumes.review_schemas import ImportBatchResponse, review_claim_adapter
 from app.schemas.admin_operations import (
     AdminCandidateResponse,
@@ -54,6 +61,9 @@ from app.schemas.admin_operations import (
     AdminCareerMutationRequest,
     AdminCareerMutationResponse,
     AdminCareerRecordResponse,
+    AdminClientPersonActivationRequest,
+    AdminClientPersonCreateRequest,
+    AdminClientPersonResponse,
     AdminCreateCandidateRequest,
     AdminFirstHRInvitationRequest,
     AdminFirstHRInvitationResponse,
@@ -212,6 +222,125 @@ class AdminOperationsService:
         await self._session.commit()
         await self._session.refresh(user)
         return await self._candidate_response(user)
+
+    async def create_client_person(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        payload: AdminClientPersonCreateRequest,
+    ) -> AdminClientPersonResponse:
+        organization = await self._session.scalar(
+            select(Organization).where(Organization.public_id == org_public_id)
+        )
+        if organization is None:
+            raise NotFoundError("Client organization not found")
+
+        email = normalize_email(str(payload.email))
+        existing = await self._session.scalar(
+            select(OrganizationPerson).where(
+                OrganizationPerson.organization_id == organization.id,
+                func.lower(OrganizationPerson.primary_email) == email,
+                OrganizationPerson.lifecycle_status != OrganizationPersonLifecycleStatus.MERGED,
+            )
+        )
+        if existing is not None:
+            raise AdminOperationsConflict(
+                "This client already has a Person with that email",
+                code="client_person_email_exists",
+            )
+
+        person = OrganizationPerson(
+            organization_id=organization.id,
+            full_name=payload.full_name,
+            primary_email=email,
+            primary_phone=(
+                normalize_phone(payload.phone, self._settings) if payload.phone else None
+            ),
+            relationship=payload.relationship,
+            lifecycle_status=OrganizationPersonLifecycleStatus.ACTIVE,
+            trust_state=OrganizationPersonTrustState.UNKNOWN,
+            invitation_status_summary=OrganizationPersonInvitationStatusSummary.NOT_INVITED,
+            verification_status_summary=OrganizationPersonVerificationStatusSummary.NOT_STARTED,
+            added_by_user_id=actor_user_id,
+            added_at=datetime.now(tz=UTC),
+            resolution_state="admin_entered",
+            resolution_method="admin_operations",
+        )
+        self._session.add(person)
+        await self._session.flush()
+        await self._organization_event(
+            organization.id,
+            actor_user_id,
+            "client_person_created",
+            "organization_person",
+            person.public_id,
+            {"relationship": payload.relationship.value, "candidate_account_created": False},
+        )
+        await self._session.commit()
+        await self._session.refresh(person)
+        return self._client_person_response(organization, person)
+
+    async def activate_client_person(
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        person_public_id: UUID,
+        payload: AdminClientPersonActivationRequest,
+    ) -> CandidateActivationResponse:
+        organization, person = await self._organization_person(org_public_id, person_public_id)
+        if not person.primary_email:
+            raise ValidationAppError(
+                "A client Person needs an email before Candidate activation",
+                code="client_person_email_required",
+            )
+        if person.linked_user_id is None:
+            candidate = await self.create_candidate(
+                actor_user_id,
+                AdminCreateCandidateRequest(
+                    full_name=person.full_name,
+                    email=person.primary_email,
+                    phone=person.primary_phone,
+                    idempotency_key=payload.idempotency_key,
+                ),
+            )
+            person = await self._session.scalar(
+                select(OrganizationPerson)
+                .where(OrganizationPerson.id == person.id)
+                .with_for_update()
+            )
+            if person is None:
+                raise NotFoundError("Client Person not found")
+            person.linked_user_id = candidate.candidate_id
+            person.last_activity_at = datetime.now(tz=UTC)
+            await self._organization_event(
+                organization.id,
+                actor_user_id,
+                "client_person_candidate_linked",
+                "organization_person",
+                person.public_id,
+                {"candidate_id": str(candidate.candidate_id)},
+            )
+            await self._session.commit()
+        elif (
+            person.invitation_status_summary
+            != OrganizationPersonInvitationStatusSummary.NOT_INVITED
+        ):
+            raise AdminOperationsConflict(
+                "This client Person is already linked to a Candidate account",
+                code="client_person_already_linked",
+            )
+        else:
+            candidate = await self._candidate_response(
+                await self._managed_candidate(person.linked_user_id)
+            )
+
+        activation = await self.send_candidate_activation(
+            actor_user_id, candidate.candidate_id, resend=False
+        )
+        person.invitation_status_summary = OrganizationPersonInvitationStatusSummary.SENT
+        person.last_activity_at = activation.last_sent_at
+        await self._session.commit()
+        return activation
 
     async def candidate_status(self, candidate_id: UUID) -> AdminCandidateResponse:
         return await self._candidate_response(await self._managed_candidate(candidate_id))
@@ -376,6 +505,16 @@ class AdminOperationsService:
         ).all()
         for sibling in sibling_tokens:
             sibling.revoked_at = now
+        linked_people = list(
+            (
+                await self._session.scalars(
+                    select(OrganizationPerson).where(OrganizationPerson.linked_user_id == user.id)
+                )
+            ).all()
+        )
+        for person in linked_people:
+            person.invitation_status_summary = OrganizationPersonInvitationStatusSummary.ACCEPTED
+            person.last_activity_at = now
         self._session.add(
             UserAccountEvent(
                 user_id=user.id,
@@ -1213,6 +1352,27 @@ class AdminOperationsService:
             activation_expires_at=activation.expires_at if activation else None,
             activation_last_sent_at=activation.last_sent_at if activation else None,
             created_at=user.created_at,
+        )
+
+    @staticmethod
+    def _client_person_response(
+        organization: Organization, person: OrganizationPerson
+    ) -> AdminClientPersonResponse:
+        return AdminClientPersonResponse(
+            organization_id=organization.public_id,
+            person_id=person.public_id,
+            linked_candidate_id=person.linked_user_id,
+            full_name=person.full_name,
+            email_masked=mask_email(person.primary_email or ""),
+            relationship=OrganizationPersonRelationship(person.relationship),
+            invitation_status=str(
+                getattr(
+                    person.invitation_status_summary,
+                    "value",
+                    person.invitation_status_summary,
+                )
+            ),
+            created_at=person.created_at,
         )
 
     async def _resolve_activation(self, raw_token: str) -> tuple[CandidateActivationToken, User]:

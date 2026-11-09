@@ -154,12 +154,15 @@ class HRV2Service:
         )
 
     async def list_roles(
-        self, actor_user_id: UUID, org_public_id: UUID
+        self, actor_user_id: UUID, org_public_id: UUID, *, admin_override: bool = False
     ) -> list[OrganizationJobRoleResponse]:
-        organization, membership = await self._organizations.require_org_member(
-            actor_user_id, org_public_id
-        )
-        self._assert_active_access(organization, membership)
+        if admin_override:
+            organization = await self._admin_organization(org_public_id)
+        else:
+            organization, membership = await self._organizations.require_org_member(
+                actor_user_id, org_public_id
+            )
+            self._assert_active_access(organization, membership)
         rows = await self._session.execute(
             select(OrganizationJobRole, func.count(OrganizationPerson.id))
             .outerjoin(OrganizationPerson, OrganizationPerson.role_id == OrganizationJobRole.id)
@@ -176,11 +179,20 @@ class HRV2Service:
         actor_user_id: UUID,
         org_public_id: UUID,
         payload: OrganizationJobRoleCreateRequest,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationJobRoleResponse:
-        organization, membership = await self._organizations.require_org_member(
-            actor_user_id, org_public_id
+        membership = None
+        if admin_override:
+            organization = await self._admin_organization(org_public_id)
+        else:
+            organization, membership = await self._organizations.require_org_member(
+                actor_user_id, org_public_id
+            )
+            self._assert_active_access(organization, membership)
+        is_manager = admin_override or (
+            membership is not None and is_organization_manager(membership.role)
         )
-        self._assert_active_access(organization, membership)
         normalized = normalize_role_name(payload.name)
         await self._assert_unique_role_name(organization.id, normalized)
         role = OrganizationJobRole(
@@ -195,21 +207,15 @@ class HRV2Service:
                 "draft"
                 if payload.mode == "draft"
                 else "active"
-                if is_organization_manager(membership.role)
+                if is_manager
                 else "pending_approval"
             ),
-            is_active=payload.mode != "draft" and is_organization_manager(membership.role),
+            is_active=payload.mode != "draft" and is_manager,
             created_by_user_id=actor_user_id,
             approved_by_user_id=(
-                actor_user_id
-                if is_organization_manager(membership.role) and payload.mode == "submit"
-                else None
+                actor_user_id if is_manager and payload.mode == "submit" else None
             ),
-            approved_at=(
-                datetime.now(tz=UTC)
-                if is_organization_manager(membership.role) and payload.mode == "submit"
-                else None
-            ),
+            approved_at=(datetime.now(tz=UTC) if is_manager and payload.mode == "submit" else None),
         )
         self._session.add(role)
         await self._session.flush()
@@ -227,9 +233,13 @@ class HRV2Service:
         org_public_id: UUID,
         role_public_id: UUID,
         payload: OrganizationJobRoleUpdateRequest,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationJobRoleResponse:
-        organization, _ = await self._organizations.require_org_manager(
-            actor_user_id, org_public_id
+        organization = (
+            await self._admin_organization(org_public_id)
+            if admin_override
+            else (await self._organizations.require_org_manager(actor_user_id, org_public_id))[0]
         )
         role = await self._role(organization.id, role_public_id)
         if payload.name is not None:
@@ -318,10 +328,17 @@ class HRV2Service:
         return self._role_response(role, await self._role_assignment_count(role.id))
 
     async def deactivate_role(
-        self, actor_user_id: UUID, org_public_id: UUID, role_public_id: UUID
+        self,
+        actor_user_id: UUID,
+        org_public_id: UUID,
+        role_public_id: UUID,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationJobRoleResponse:
-        organization, _ = await self._organizations.require_org_manager(
-            actor_user_id, org_public_id
+        organization = (
+            await self._admin_organization(org_public_id)
+            if admin_override
+            else (await self._organizations.require_org_manager(actor_user_id, org_public_id))[0]
         )
         role = await self._role(organization.id, role_public_id)
         role.is_active = False
@@ -915,6 +932,16 @@ class HRV2Service:
             raise NotFoundError("Organization person not found")
         return person
 
+    async def _admin_organization(self, org_public_id: UUID) -> Organization:
+        organization = await self._session.scalar(
+            select(Organization).where(Organization.public_id == org_public_id)
+        )
+        if organization is None or organization.closed_at is not None:
+            raise NotFoundError("Organization not found")
+        if organization.suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
+        return organization
+
     async def _role(self, organization_id: UUID, role_public_id: UUID) -> OrganizationJobRole:
         role = (
             await self._session.execute(
@@ -1022,9 +1049,7 @@ class HRV2Service:
                 setattr(person, field, value)
 
     @staticmethod
-    def _correction_date(
-        value: object, current: date | None, supplied: bool
-    ) -> date | None:
+    def _correction_date(value: object, current: date | None, supplied: bool) -> date | None:
         if not supplied:
             return current
         return date.fromisoformat(str(value)) if value else None

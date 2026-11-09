@@ -279,9 +279,13 @@ class OrganizationService:
         actor_user_id: UUID,
         org_public_id: UUID,
         payload: OrganizationInvitationCreateRequest,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationInvitationResponse:
-        organization, _ = await self.require_org_manager(
-            actor_user_id, org_public_id, for_update=True
+        organization = (
+            await self._require_admin_organization(org_public_id, for_update=True)
+            if admin_override
+            else (await self.require_org_manager(actor_user_id, org_public_id, for_update=True))[0]
         )
         invitee_email = self._normalize_email(str(payload.invitee_email))
         user = await self._users.get_by_email(invitee_email)
@@ -339,8 +343,14 @@ class OrganizationService:
         actor_user_id: UUID,
         org_public_id: UUID,
         params: ListQueryParams | None = None,
+        *,
+        admin_override: bool = False,
     ) -> list[OrganizationInvitationResponse] | Page[OrganizationInvitationResponse]:
-        organization, _ = await self.require_org_manager(actor_user_id, org_public_id)
+        organization = (
+            await self._require_admin_organization(org_public_id)
+            if admin_override
+            else (await self.require_org_manager(actor_user_id, org_public_id))[0]
+        )
         invitations = await self._invitations.list_for_organization(organization.id)
         await self._expire_stale_invitations(invitations, datetime.now(tz=UTC))
         responses = [self._to_invitation_response(invitation) for invitation in invitations]
@@ -393,9 +403,13 @@ class OrganizationService:
         actor_user_id: UUID,
         org_public_id: UUID,
         invitation_public_id: UUID,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationInvitationResponse:
-        organization, _ = await self.require_org_manager(
-            actor_user_id, org_public_id, for_update=True
+        organization = (
+            await self._require_admin_organization(org_public_id, for_update=True)
+            if admin_override
+            else (await self.require_org_manager(actor_user_id, org_public_id, for_update=True))[0]
         )
         invitation = await self._require_org_invitation(organization.id, invitation_public_id)
         await self._expire_stale_invitations([invitation], datetime.now(tz=UTC))
@@ -441,9 +455,13 @@ class OrganizationService:
         actor_user_id: UUID,
         org_public_id: UUID,
         invitation_public_id: UUID,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationInvitationResponse:
-        organization, _ = await self.require_org_manager(
-            actor_user_id, org_public_id, for_update=True
+        organization = (
+            await self._require_admin_organization(org_public_id, for_update=True)
+            if admin_override
+            else (await self.require_org_manager(actor_user_id, org_public_id, for_update=True))[0]
         )
         invitation = await self._require_org_invitation(organization.id, invitation_public_id)
         await self._expire_stale_invitations([invitation], datetime.now(tz=UTC))
@@ -609,6 +627,18 @@ class OrganizationService:
         if not is_organization_manager(membership.role):
             raise ForbiddenError("Only organization owners or admins can manage members")
         return organization, membership
+
+    async def _require_admin_organization(
+        self, org_public_id: UUID, *, for_update: bool = False
+    ) -> Organization:
+        organization = await self._organizations.get_by_public_id(
+            org_public_id, for_update=for_update
+        )
+        if organization is None or organization.closed_at is not None:
+            raise NotFoundError("Organization not found")
+        if organization.suspended_at is not None:
+            raise ForbiddenError("Organization access is suspended")
+        return organization
 
     async def _to_organization_response(
         self,
