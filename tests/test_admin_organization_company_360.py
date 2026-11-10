@@ -36,6 +36,7 @@ from app.services.admin_organization_service import (
 )
 
 ORG_ID = UUID("10000000-0000-0000-0000-000000000001")
+REGISTRY_ID = UUID("10000000-0000-0000-0000-000000000002")
 PERSON_ID = UUID("20000000-0000-0000-0000-000000000001")
 REQUEST_ID = UUID("30000000-0000-0000-0000-000000000001")
 MEMBER_ID = UUID("40000000-0000-0000-0000-000000000001")
@@ -71,6 +72,7 @@ class FakeAdminOrganizationService:
                     name="XYZ Pharma",
                     domain="xyzpharma.test",
                     organization_type="employer",
+                    registry_record_public_id=REGISTRY_ID,
                     account_status="active",
                     verification_state="verified",
                     is_workspace_customer=True,
@@ -223,6 +225,7 @@ async def test_company_360_routes_return_backend_truth() -> None:
     assert directory.status_code == 200
     assert directory.json()["items"][0]["name"] == "XYZ Pharma"
     assert directory.json()["items"][0]["people_count"] == 126
+    assert directory.json()["items"][0]["registry_record_public_id"] == str(REGISTRY_ID)
     assert detail.status_code == 200
     assert detail.json()["primary_owner_email_masked"] == "ow***@xyzpharma.test"
     assert overview.status_code == 200
@@ -378,12 +381,76 @@ async def test_company_directory_uses_aggregates_without_per_row_queries() -> No
     assert session.execute.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_company_directory_projects_canonical_identity_without_per_row_lookup() -> None:
+    organization = SimpleNamespace(
+        public_id=ORG_ID,
+        name="XYZ Pharma",
+        domain="xyzpharma.test",
+        organization_type="employer",
+        suspended_at=None,
+        setup_completed_at=NOW,
+        verification_state="verified",
+        updated_at=NOW,
+    )
+    rows = SimpleNamespace(
+        all=lambda: [
+            (
+                organization,
+                REGISTRY_ID,
+                126,
+                6,
+                284,
+                241,
+                31,
+                8,
+                4,
+            )
+        ]
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(return_value=1),
+        execute=AsyncMock(return_value=rows),
+    )
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+
+    page = await service.list_organizations(
+        SimpleNamespace(
+            search=None,
+            organization_type=None,
+            status=None,
+            offset=0,
+            limit=20,
+            page=1,
+            page_size=20,
+        )
+    )
+
+    assert page.items[0].registry_record_public_id == REGISTRY_ID
+    assert session.execute.await_count == 1
+
+
 def test_page_contract_keeps_pagination_stable() -> None:
     params = PageParams(page=2, page_size=10)
     page = AdminOrganizationPeoplePage.create(items=[], total=21, params=params)
     assert page.page == 2
     assert page.page_size == 10
     assert page.total_pages == 3
+
+
+def test_company_list_contract_exposes_canonical_identity_link() -> None:
+    item = AdminOrganizationListItem(
+        public_id=ORG_ID,
+        name="XYZ Pharma",
+        organization_type="employer",
+        registry_record_public_id=REGISTRY_ID,
+        account_status="active",
+        verification_state="verified",
+        is_workspace_customer=True,
+        updated_at=NOW,
+    )
+
+    assert item.registry_record_public_id == REGISTRY_ID
 
 
 @pytest.mark.asyncio

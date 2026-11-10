@@ -17,6 +17,7 @@ from app.models.organization_person import OrganizationPerson
 from app.models.refresh_token import RefreshToken
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
+from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
@@ -262,6 +263,7 @@ class AdminOrganizationService:
         rows = await self._session.execute(
             select(
                 Organization,
+                TrustRegistryRecord.public_id.label("registry_record_public_id"),
                 func.coalesce(people_stats.c.people_count, 0),
                 func.coalesce(team_stats.c.team_size, 0),
                 func.coalesce(request_stats.c.request_count, 0),
@@ -279,6 +281,13 @@ class AdminOrganizationService:
                 request_stats,
                 request_stats.c.organization_id == Organization.id,
             )
+            .outerjoin(
+                TrustRegistryRecord,
+                and_(
+                    TrustRegistryRecord.id == Organization.registry_record_id,
+                    TrustRegistryRecord.deleted_at.is_(None),
+                ),
+            )
             .where(*filters)
             .order_by(Organization.name.asc(), Organization.public_id.asc())
             .offset(params.offset or 0)
@@ -287,6 +296,7 @@ class AdminOrganizationService:
         items = []
         for (
             organization,
+            registry_record_public_id,
             people_count,
             team_size,
             request_count,
@@ -301,6 +311,7 @@ class AdminOrganizationService:
                     name=organization.name,
                     domain=organization.domain,
                     organization_type=_value(organization.organization_type) or "other",
+                    registry_record_public_id=registry_record_public_id,
                     account_status=_organization_status(organization),
                     verification_state=_value(organization.verification_state) or "unknown",
                     is_workspace_customer=int(team_size) > 0,

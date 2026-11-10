@@ -23,6 +23,7 @@ class AdminOrganizationListItem(BaseModel):
     name: str
     domain: str | None = None
     organization_type: str
+    registry_record_public_id: UUID | None = None
     account_status: str
     verification_state: str
     is_workspace_customer: bool
