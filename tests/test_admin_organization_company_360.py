@@ -13,10 +13,17 @@ from sqlalchemy.dialects import postgresql
 
 from app.api.dependencies.services import get_admin_organization_service
 from app.auth.deps import CurrentUser, get_current_user
+from app.exceptions import ConflictError, NotFoundError
 from app.main import app
+from app.models.organization_activity_event import OrganizationActivityEvent
+from app.models.trust_registry_domain import TrustRegistryDomain
+from app.models.trust_registry_record import TrustRegistryRecord
 from app.schemas.admin_organization import (
     AdminOrganizationActivityItem,
     AdminOrganizationActivityPage,
+    AdminOrganizationCompanyRecordConnectRequest,
+    AdminOrganizationCompanyRecordCreateRequest,
+    AdminOrganizationCompanyRecordResponse,
     AdminOrganizationDetailResponse,
     AdminOrganizationListItem,
     AdminOrganizationPage,
@@ -198,6 +205,41 @@ class FakeAdminOrganizationService:
             params=params,
         )
 
+    async def connect_company_record(self, actor_id, public_id, payload):  # noqa: ANN001
+        assert public_id == ORG_ID
+        assert payload.registry_record_public_id == REGISTRY_ID
+        return AdminOrganizationCompanyRecordResponse(
+            organization_public_id=ORG_ID,
+            registry_record_public_id=REGISTRY_ID,
+            registry_record_name="XYZ Pharma Record",
+            registry_record_organization_type="employer",
+            registry_record_primary_domain="xyzpharma.test",
+            lifecycle_status="draft",
+            trust_status="unreviewed",
+            created=False,
+            already_connected=False,
+        )
+
+    async def create_and_connect_company_record(
+        self,
+        actor_id,
+        public_id,
+        payload,  # noqa: ANN001
+    ):
+        assert public_id == ORG_ID
+        assert payload.legal_name == "XYZ Pharma Private Limited"
+        return AdminOrganizationCompanyRecordResponse(
+            organization_public_id=ORG_ID,
+            registry_record_public_id=REGISTRY_ID,
+            registry_record_name="XYZ Pharma",
+            registry_record_organization_type="employer",
+            registry_record_primary_domain="xyzpharma.test",
+            lifecycle_status="draft",
+            trust_status="unreviewed",
+            created=True,
+            already_connected=False,
+        )
+
 
 @pytest.mark.asyncio
 async def test_company_360_routes_return_backend_truth() -> None:
@@ -220,6 +262,24 @@ async def test_company_360_routes_return_backend_truth() -> None:
         )
         team = await client.get(f"/api/v1/admin/organizations/{ORG_ID}/team")
         activity = await client.get(f"/api/v1/admin/organizations/{ORG_ID}/activity")
+        connected = await client.post(
+            f"/api/v1/admin/organizations/{ORG_ID}/company-record/connect",
+            json={
+                "registry_record_public_id": str(REGISTRY_ID),
+                "idempotency_key": str(uuid4()),
+            },
+        )
+        created = await client.post(
+            f"/api/v1/admin/organizations/{ORG_ID}/company-record/create-and-connect",
+            json={
+                "idempotency_key": str(uuid4()),
+                "legal_name": "XYZ Pharma Private Limited",
+                "display_name": "XYZ Pharma",
+                "organization_type": "employer",
+                "country": "IN",
+                "primary_domain": "xyzpharma.test",
+            },
+        )
 
     app.dependency_overrides.clear()
     assert directory.status_code == 200
@@ -239,6 +299,11 @@ async def test_company_360_routes_return_backend_truth() -> None:
     assert team.json()["items"][0]["role"] == "owner"
     assert activity.status_code == 200
     assert activity.json()["items"][0]["source"] == "verification_request"
+    assert connected.status_code == 200
+    assert connected.json()["registry_record_name"] == "XYZ Pharma Record"
+    assert created.status_code == 201
+    assert created.json()["lifecycle_status"] == "draft"
+    assert created.json()["trust_status"] == "unreviewed"
 
 
 @pytest.mark.asyncio
@@ -259,6 +324,22 @@ async def test_company_360_rejects_unauthenticated_and_non_admin_users() -> None
             f"/api/v1/admin/organizations/{ORG_ID}/job-roles",
             json={"name": "Unauthorized role", "mode": "submit"},
         )
+        candidate_connect = await client.post(
+            f"/api/v1/admin/organizations/{ORG_ID}/company-record/connect",
+            json={
+                "registry_record_public_id": str(REGISTRY_ID),
+                "idempotency_key": str(uuid4()),
+            },
+        )
+        candidate_create_record = await client.post(
+            f"/api/v1/admin/organizations/{ORG_ID}/company-record/create-and-connect",
+            json={
+                "idempotency_key": str(uuid4()),
+                "legal_name": "Forbidden",
+                "organization_type": "employer",
+                "country": "IN",
+            },
+        )
     app.dependency_overrides.clear()
 
     assert unauthenticated.status_code == 401
@@ -268,6 +349,8 @@ async def test_company_360_rejects_unauthenticated_and_non_admin_users() -> None
     assert candidate_roles.status_code == 403
     assert candidate_imports.status_code == 403
     assert candidate_create_role.status_code == 403
+    assert candidate_connect.status_code == 403
+    assert candidate_create_record.status_code == 403
 
 
 def test_overview_uses_canonical_status_taxonomy_and_defensible_rate() -> None:
@@ -398,6 +481,7 @@ async def test_company_directory_projects_canonical_identity_without_per_row_loo
             (
                 organization,
                 REGISTRY_ID,
+                "XYZ Pharma Record",
                 126,
                 6,
                 284,
@@ -427,6 +511,7 @@ async def test_company_directory_projects_canonical_identity_without_per_row_loo
     )
 
     assert page.items[0].registry_record_public_id == REGISTRY_ID
+    assert page.items[0].registry_record_name == "XYZ Pharma Record"
     assert session.execute.await_count == 1
 
 
@@ -451,6 +536,188 @@ def test_company_list_contract_exposes_canonical_identity_link() -> None:
     )
 
     assert item.registry_record_public_id == REGISTRY_ID
+
+
+class MutationSession:
+    def __init__(self, *scalar_values: object) -> None:
+        self.scalar_values = list(scalar_values)
+        self.scalar_statements: list[object] = []
+        self.added: list[object] = []
+        self.commit = AsyncMock()
+        self.rollback = AsyncMock()
+
+    async def scalar(self, statement):  # noqa: ANN001
+        self.scalar_statements.append(statement)
+        return self.scalar_values.pop(0)
+
+    def add(self, value: object) -> None:
+        self.added.append(value)
+
+    async def flush(self) -> None:
+        for value in self.added:
+            if hasattr(value, "id") and getattr(value, "id", None) is None:
+                value.id = uuid4()
+
+
+def _organization(*, registry_record_id: UUID | None = None, metadata=None):  # noqa: ANN001
+    return SimpleNamespace(
+        id=ORG_ID,
+        public_id=ORG_ID,
+        registry_record_id=registry_record_id,
+        registry_resolution_metadata=metadata or {},
+        registry_resolution_method=None,
+        registry_resolution_confidence=None,
+        registry_resolved_at=None,
+        registry_resolved_by_user_id=None,
+    )
+
+
+def _registry_record():
+    return SimpleNamespace(
+        id=REGISTRY_ID,
+        public_id=REGISTRY_ID,
+        legal_name="XYZ Pharma Private Limited",
+        display_name="XYZ Pharma",
+        organization_type="employer",
+        lifecycle_status="draft",
+        trust_status="unreviewed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_company_record_is_idempotent_and_actor_attributed() -> None:
+    actor_id = uuid4()
+    organization = _organization()
+    record = _registry_record()
+    session = MutationSession(organization, record, "xyzpharma.test")
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+    payload = AdminOrganizationCompanyRecordConnectRequest(
+        registry_record_public_id=REGISTRY_ID,
+        idempotency_key=uuid4(),
+    )
+
+    result = await service.connect_company_record(actor_id, ORG_ID, payload)
+
+    assert result.registry_record_name == "XYZ Pharma"
+    assert result.created is False
+    assert organization.registry_record_id == REGISTRY_ID
+    assert organization.registry_resolved_by_user_id == actor_id
+    event = next(item for item in session.added if isinstance(item, OrganizationActivityEvent))
+    assert event.actor_user_id == actor_id
+    assert event.event_type == "company_record_connected"
+    session.commit.assert_awaited_once()
+
+    retry_session = MutationSession(organization, record, "xyzpharma.test")
+    retry = await AdminOrganizationService(retry_session).connect_company_record(  # type: ignore[arg-type]
+        actor_id,
+        ORG_ID,
+        payload,
+    )
+    assert retry.already_connected is True
+    assert retry_session.added == []
+    retry_session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_company_record_is_draft_unverified_atomic_and_retry_safe() -> None:
+    actor_id = uuid4()
+    request_key = uuid4()
+    organization = _organization()
+    session = MutationSession(organization)
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+    payload = AdminOrganizationCompanyRecordCreateRequest(
+        idempotency_key=request_key,
+        legal_name="XYZ Pharma Private Limited",
+        display_name="XYZ Pharma",
+        organization_type="employer",
+        country="in",
+        state_province="Karnataka",
+        website="https://xyzpharma.test",
+        primary_domain="XYZPHARMA.TEST",
+    )
+
+    result = await service.create_and_connect_company_record(actor_id, ORG_ID, payload)
+
+    record = next(item for item in session.added if isinstance(item, TrustRegistryRecord))
+    domain = next(item for item in session.added if isinstance(item, TrustRegistryDomain))
+    event = next(item for item in session.added if isinstance(item, OrganizationActivityEvent))
+    assert result.created is True
+    assert result.lifecycle_status == "draft"
+    assert result.trust_status == "unreviewed"
+    assert record.lifecycle_status == "draft"
+    assert record.trust_status == "unreviewed"
+    assert record.registry_confidence_score == 0
+    assert domain.domain == "xyzpharma.test"
+    assert domain.is_verified is False
+    assert organization.registry_record_id == record.id
+    assert event.actor_user_id == actor_id
+    assert event.event_type == "company_record_created_and_connected"
+    session.commit.assert_awaited_once()
+
+    organization.registry_resolution_metadata = {"idempotency_key": str(request_key)}
+    retry_session = MutationSession(organization, record, "xyzpharma.test")
+    retry = await AdminOrganizationService(  # type: ignore[arg-type]
+        retry_session
+    ).create_and_connect_company_record(actor_id, ORG_ID, payload)
+    assert retry.already_connected is True
+    assert retry.registry_record_public_id == record.public_id
+    assert retry_session.added == []
+    retry_session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_company_record_connection_rejects_a_different_existing_target() -> None:
+    organization = _organization(registry_record_id=uuid4())
+    session = MutationSession(organization, _registry_record())
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+
+    with pytest.raises(ConflictError, match="already connected"):
+        await service.connect_company_record(
+            uuid4(),
+            ORG_ID,
+            AdminOrganizationCompanyRecordConnectRequest(
+                registry_record_public_id=REGISTRY_ID,
+                idempotency_key=uuid4(),
+            ),
+        )
+
+    session.commit.assert_not_awaited()
+    assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_company_record_connection_rejects_an_invalid_target_without_mutation() -> None:
+    session = MutationSession(_organization(), None)
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+
+    with pytest.raises(NotFoundError, match="Company record not found"):
+        await service.connect_company_record(
+            uuid4(),
+            ORG_ID,
+            AdminOrganizationCompanyRecordConnectRequest(
+                registry_record_public_id=uuid4(),
+                idempotency_key=uuid4(),
+            ),
+        )
+
+    session.commit.assert_not_awaited()
+    assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_company_record_mutations_lock_the_client_row_for_concurrent_submissions() -> None:
+    session = MutationSession(_organization())
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+
+    await service._require_organization_for_update(ORG_ID)
+
+    sql = str(
+        session.scalar_statements[0].compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+    assert "for update" in sql
 
 
 @pytest.mark.asyncio

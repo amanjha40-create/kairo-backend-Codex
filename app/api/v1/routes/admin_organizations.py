@@ -23,6 +23,9 @@ from app.organization_roster_import.enums import OrganizationRosterType
 from app.organization_roster_import.templates import build_roster_template
 from app.schemas.admin_organization import (
     AdminOrganizationActivityPage,
+    AdminOrganizationCompanyRecordConnectRequest,
+    AdminOrganizationCompanyRecordCreateRequest,
+    AdminOrganizationCompanyRecordResponse,
     AdminOrganizationDetailResponse,
     AdminOrganizationListParams,
     AdminOrganizationOverviewResponse,
@@ -335,6 +338,37 @@ async def list_admin_organizations(
     svc: Annotated[AdminOrganizationService, Depends(get_admin_organization_service)],
 ) -> AdminOrganizationPage:
     return await svc.list_organizations(params)
+
+
+@router.post(
+    "/{organization_public_id}/company-record/connect",
+    response_model=AdminOrganizationCompanyRecordResponse,
+)
+async def connect_admin_organization_company_record(
+    organization_public_id: UUID,
+    payload: AdminOrganizationCompanyRecordConnectRequest,
+    actor: Annotated[CurrentUser, Depends(require_user_manager)],
+    svc: Annotated[AdminOrganizationService, Depends(get_admin_organization_service)],
+) -> AdminOrganizationCompanyRecordResponse:
+    return await svc.connect_company_record(actor.id, organization_public_id, payload)
+
+
+@router.post(
+    "/{organization_public_id}/company-record/create-and-connect",
+    response_model=AdminOrganizationCompanyRecordResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_and_connect_admin_organization_company_record(
+    organization_public_id: UUID,
+    payload: AdminOrganizationCompanyRecordCreateRequest,
+    actor: Annotated[CurrentUser, Depends(require_user_manager)],
+    svc: Annotated[AdminOrganizationService, Depends(get_admin_organization_service)],
+) -> AdminOrganizationCompanyRecordResponse:
+    return await svc.create_and_connect_company_record(
+        actor.id,
+        organization_public_id,
+        payload,
+    )
 
 
 @router.get("/{organization_public_id}", response_model=AdminOrganizationDetailResponse)
