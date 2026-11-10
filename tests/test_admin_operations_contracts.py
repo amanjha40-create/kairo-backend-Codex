@@ -26,6 +26,7 @@ from app.exceptions import ForbiddenError, NotFoundError, ValidationAppError
 from app.integrations.email.renderer import EmailTemplateRenderer
 from app.models.admin_profile_provenance import AdminProfileProvenance
 from app.models.candidate_activation import CandidateActivationToken
+from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
@@ -268,6 +269,21 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
         assert person.invitation_status == "not_invited"
         assert await session.scalar(select(func.count()).select_from(User)) == users_before
 
+        stored_organization = await session.scalar(
+            select(Organization).where(
+                Organization.public_id == organization.organization_public_id
+            )
+        )
+        assert stored_organization is not None
+        session.add(
+            OrganizationMember(
+                organization_id=stored_organization.id,
+                user_id=admin.id,
+                role=OrganizationRole.OWNER,
+            )
+        )
+        await session.commit()
+
         activation = await service.activate_client_person(
             admin.id,
             organization.organization_public_id,
@@ -302,6 +318,47 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_candidate_activation_rejects_non_client_organization() -> None:
+    email = _FakeEmailDelivery()
+    settings = get_settings()
+    async with async_session_factory() as session:
+        admin = await _user(role=Role.ADMIN, email_prefix="admin-non-client")
+        session.add(admin)
+        await session.commit()
+        await session.refresh(admin)
+        service = AdminOperationsService(session, settings, email_delivery=email)
+        organization = await service.create_organization(
+            admin.id,
+            AdminOrganizationCreateRequest(
+                name=f"Not Yet A Client {uuid4()}",
+                organization_type=OrganizationType.EMPLOYER,
+                idempotency_key=uuid4(),
+            ),
+        )
+        person = await service.create_client_person(
+            admin.id,
+            organization.organization_public_id,
+            AdminClientPersonCreateRequest(
+                full_name="Non-client Person",
+                email=f"non-client-person-{uuid4()}@example.com",
+            ),
+        )
+        users_before = await session.scalar(select(func.count()).select_from(User))
+
+        with pytest.raises(NotFoundError, match="Active client organization person not found"):
+            await service.activate_client_person(
+                admin.id,
+                organization.organization_public_id,
+                person.person_id,
+                AdminClientPersonActivationRequest(idempotency_key=uuid4()),
+            )
+
+        assert await session.scalar(select(func.count()).select_from(User)) == users_before
+        assert email.calls == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_client_person_activation_retries_same_candidate_after_delivery_failure() -> None:
     email = _FailOnceEmailDelivery()
     settings = get_settings()
@@ -319,6 +376,20 @@ async def test_client_person_activation_retries_same_candidate_after_delivery_fa
                 idempotency_key=uuid4(),
             ),
         )
+        stored_organization = await session.scalar(
+            select(Organization).where(
+                Organization.public_id == organization.organization_public_id
+            )
+        )
+        assert stored_organization is not None
+        session.add(
+            OrganizationMember(
+                organization_id=stored_organization.id,
+                user_id=admin.id,
+                role=OrganizationRole.OWNER,
+            )
+        )
+        await session.commit()
         person = await service.create_client_person(
             admin.id,
             organization.organization_public_id,

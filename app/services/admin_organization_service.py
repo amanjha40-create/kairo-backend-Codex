@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased, joinedload
 
 from app.exceptions import NotFoundError
 from app.models.organization import Organization
+from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
 from app.models.refresh_token import RefreshToken
@@ -65,6 +66,15 @@ EXCLUDED_FROM_COMPLETION_RATE = {
     VerificationRequestStatus.DRAFT.value,
     VerificationRequestStatus.CANCELLED.value,
     VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE.value,
+}
+
+ORGANIZATION_ACTIVITY_TRANSITIONS: dict[str, tuple[str | None, str | None]] = {
+    "team_invitation_created": (None, "pending"),
+    "team_invitation_resent": ("pending", "pending"),
+    "team_invitation_accepted": ("pending", "accepted"),
+    "team_invitation_revoked": ("pending", "revoked"),
+    "first_hr_invitation_sent": (None, "pending"),
+    "first_hr_invitation_resent": ("pending", "pending"),
 }
 
 
@@ -662,6 +672,7 @@ class AdminOrganizationService:
         organization = await self._require_organization(public_id)
         verification_actor = aliased(User)
         invitation_actor = aliased(User)
+        organization_actor = aliased(User)
         verification_events = (
             select(
                 VerificationRequestEvent.id.label("public_id"),
@@ -670,9 +681,12 @@ class AdminOrganizationService:
                 literal("verification_request").label("source"),
                 verification_actor.full_name.label("actor_name"),
                 verification_actor.role.label("actor_role"),
-                VerificationRequest.public_id.label("subject_public_id"),
+                verification_actor.email.label("actor_email"),
+                cast(VerificationRequest.public_id, String).label("subject_public_id"),
                 cast(VerificationRequestEvent.previous_status, String).label("previous_status"),
                 cast(VerificationRequestEvent.new_status, String).label("new_status"),
+                literal(organization.name).label("organization_name"),
+                literal(None, type_=String).label("on_behalf_of_organization_name"),
             )
             .join(
                 VerificationRequest,
@@ -692,9 +706,12 @@ class AdminOrganizationService:
                 literal("trust_invitation").label("source"),
                 invitation_actor.full_name.label("actor_name"),
                 invitation_actor.role.label("actor_role"),
-                TrustInvitation.public_id.label("subject_public_id"),
+                invitation_actor.email.label("actor_email"),
+                cast(TrustInvitation.public_id, String).label("subject_public_id"),
                 literal(None, type_=String).label("previous_status"),
                 literal(None, type_=String).label("new_status"),
+                literal(organization.name).label("organization_name"),
+                literal(None, type_=String).label("on_behalf_of_organization_name"),
             )
             .join(
                 TrustInvitation,
@@ -706,7 +723,32 @@ class AdminOrganizationService:
             )
             .where(TrustInvitation.organization_id == organization.id)
         )
-        combined = union_all(verification_events, invitation_events).subquery()
+        organization_events = (
+            select(
+                OrganizationActivityEvent.public_id.label("public_id"),
+                OrganizationActivityEvent.created_at.label("occurred_at"),
+                OrganizationActivityEvent.event_type.label("event_type"),
+                literal("organization_activity").label("source"),
+                organization_actor.full_name.label("actor_name"),
+                organization_actor.role.label("actor_role"),
+                organization_actor.email.label("actor_email"),
+                OrganizationActivityEvent.subject_public_id.label("subject_public_id"),
+                literal(None, type_=String).label("previous_status"),
+                literal(None, type_=String).label("new_status"),
+                literal(organization.name).label("organization_name"),
+                literal(organization.name).label("on_behalf_of_organization_name"),
+            )
+            .outerjoin(
+                organization_actor,
+                organization_actor.id == OrganizationActivityEvent.actor_user_id,
+            )
+            .where(OrganizationActivityEvent.organization_id == organization.id)
+        )
+        combined = union_all(
+            verification_events,
+            invitation_events,
+            organization_events,
+        ).subquery()
         total = int(await self._session.scalar(select(func.count()).select_from(combined)) or 0)
         rows = await self._session.execute(
             select(combined)
@@ -720,11 +762,22 @@ class AdminOrganizationService:
                 occurred_at=row.occurred_at,
                 event_type=row.event_type,
                 source=row.source,
-                actor_name=row.actor_name,
+                actor_name=row.actor_name or _mask_email(row.actor_email),
                 actor_role=row.actor_role,
+                actor_email_masked=_mask_email(row.actor_email),
+                organization_name=row.organization_name,
+                on_behalf_of_organization_name=row.on_behalf_of_organization_name,
                 subject_public_id=row.subject_public_id,
-                previous_status=row.previous_status,
-                new_status=row.new_status,
+                previous_status=(
+                    ORGANIZATION_ACTIVITY_TRANSITIONS.get(row.event_type, (None, None))[0]
+                    if row.source == "organization_activity"
+                    else row.previous_status
+                ),
+                new_status=(
+                    ORGANIZATION_ACTIVITY_TRANSITIONS.get(row.event_type, (None, None))[1]
+                    if row.source == "organization_activity"
+                    else row.new_status
+                ),
             )
             for row in rows
         ]

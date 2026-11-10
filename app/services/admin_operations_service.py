@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1521,11 +1521,17 @@ class AdminOperationsService:
                 .where(
                     Organization.public_id == org_public_id,
                     OrganizationPerson.public_id == person_public_id,
+                    Organization.suspended_at.is_(None),
+                    exists(
+                        select(OrganizationMember.id).where(
+                            OrganizationMember.organization_id == Organization.id
+                        )
+                    ),
                 )
             )
         ).one_or_none()
         if row is None:
-            raise NotFoundError("Organization person not found")
+            raise NotFoundError("Active client organization person not found")
         return row[0], row[1]
 
     async def _validated_evidence(

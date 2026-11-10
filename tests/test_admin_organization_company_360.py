@@ -29,6 +29,7 @@ from app.schemas.admin_organization import (
     AdminOrganizationVerificationPage,
 )
 from app.schemas.pagination import ListQueryParams, PageParams
+from app.services.admin_directory_service import candidate_identity_filter
 from app.services.admin_organization_service import (
     AdminOrganizationService,
     build_overview_counts,
@@ -186,7 +187,8 @@ class FakeAdminOrganizationService:
                     occurred_at=NOW,
                     event_type="verification_submitted",
                     source="verification_request",
-                    subject_public_id=REQUEST_ID,
+                    organization_name="XYZ Pharma",
+                    subject_public_id=str(REQUEST_ID),
                     new_status="pending_admin_review",
                 )
             ],
@@ -307,6 +309,48 @@ def test_company_search_is_partial_case_insensitive_and_supports_domain_id_owner
     assert "organization_members" in sql
 
 
+def test_candidate_directory_uses_identity_provenance_not_the_shared_auth_role() -> None:
+    sql = str(
+        candidate_identity_filter().compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+    assert "users.role = 'user'" in sql
+    assert "pending_signups" in sql
+    assert "pending_signups.signup_kind = 'candidate'" in sql
+    assert "pending_signups.signup_kind = 'organization'" in sql
+    assert "organization_members" in sql
+    assert "organization_people" in sql
+    assert "organization_people.relationship = 'candidate'" in sql
+
+
+@pytest.mark.asyncio
+async def test_company_activity_query_includes_persisted_organization_events() -> None:
+    class EmptyRows:
+        def __iter__(self):
+            return iter(())
+
+    organization = SimpleNamespace(id=ORG_ID, name="XYZ Pharma")
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[organization, 0]),
+        execute=AsyncMock(return_value=EmptyRows()),
+    )
+    service = AdminOrganizationService(session)  # type: ignore[arg-type]
+    await service.list_activity(ORG_ID, ListQueryParams(page=1, page_size=20))
+    statement = session.execute.await_args.args[0]
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+    assert "organization_activity_events" in sql
+    assert "organization_activity" in sql
+    assert str(ORG_ID) in sql
+
+
 @pytest.mark.asyncio
 async def test_company_directory_uses_aggregates_without_per_row_queries() -> None:
     empty_result = SimpleNamespace(all=lambda: [])
@@ -352,7 +396,7 @@ async def test_company_sections_are_scoped_to_the_requested_organization() -> No
             return iter(())
 
     async def capture_query(method_name: str, params: object):
-        organization = SimpleNamespace(id=ORG_ID)
+        organization = SimpleNamespace(id=ORG_ID, name="XYZ Pharma")
         session = SimpleNamespace(
             scalar=AsyncMock(side_effect=[organization, 0]),
             execute=AsyncMock(return_value=EmptyRows()),

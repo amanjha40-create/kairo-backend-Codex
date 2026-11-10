@@ -120,7 +120,10 @@ class AdminOrganizationActivityItem(BaseModel):
     source: str
     actor_name: str | None = None
     actor_role: str | None = None
-    subject_public_id: UUID | None = None
+    actor_email_masked: str | None = None
+    organization_name: str
+    on_behalf_of_organization_name: str | None = None
+    subject_public_id: str | None = None
     previous_status: str | None = None
     new_status: str | None = None
 
