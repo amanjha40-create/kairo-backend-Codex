@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import tempfile
 from datetime import UTC, datetime
@@ -42,6 +43,21 @@ RUNTIME_HEALTHCHECK_COMMAND = [
     "import urllib.request; "
     "urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=5)",
 ]
+
+RUNTIME_TARGETS = {
+    "api": {
+        "service": "kairo-staging-backend",
+        "container": "kairo-staging-backend",
+        "command_markers": ("gunicorn", "app.main:app"),
+    },
+    "worker": {
+        "service": "kairo-staging-resume-worker",
+        "container": "kairo-staging-resume-worker",
+        "command_markers": ("app.workers.sqs_worker",),
+    },
+}
+
+_DIGEST_IMAGE_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 
 
 def _run(command: Sequence[str], *, cwd: Path | None = None) -> str:
@@ -126,46 +142,113 @@ def ensure_staging_target(*, service: str, container: str) -> None:
         raise RuntimeError("staging deploy refuses a non-staging service or container")
 
 
-def deploy(args: argparse.Namespace) -> dict[str, str]:
-    repo_root = Path(__file__).resolve().parents[1]
-    ensure_staging_target(service=args.service, container=args.container)
-    source_sha = resolve_source_commit(repo_root, args.expected_sha)
-    build_id = source_sha
-    deployed_at = datetime.now(tz=UTC).isoformat()
-    account_id = _aws_json(args.region, "sts", "get-caller-identity")["Account"]
-    registry = f"{account_id}.dkr.ecr.{args.region}.amazonaws.com"
-    image_uri = f"{registry}/{args.repository}:{source_sha}"
+def validate_runtime_target(
+    *,
+    runtime_kind: str,
+    service_name: str,
+    container_name: str,
+    service: dict[str, Any],
+    task_definition: dict[str, Any],
+) -> None:
+    """Fail closed before image or ECS mutation when runtime identity is ambiguous."""
 
-    login_password = _run(("aws", "ecr", "get-login-password", "--region", args.region))
+    ensure_staging_target(service=service_name, container=container_name)
+    expected = RUNTIME_TARGETS[runtime_kind]
+    if service_name != expected["service"] or container_name != expected["container"]:
+        raise RuntimeError(
+            f"{runtime_kind} runtime requires service={expected['service']} "
+            f"and container={expected['container']}"
+        )
+    if service.get("serviceName") != service_name:
+        raise RuntimeError("ECS service identity does not match the requested service")
+    if task_definition.get("family") != service_name:
+        raise RuntimeError("task-definition family does not match the requested service")
+
+    container = next(
+        (
+            item
+            for item in task_definition.get("containerDefinitions", [])
+            if item.get("name") == container_name
+        ),
+        None,
+    )
+    if container is None:
+        raise RuntimeError(f"task definition has no {container_name!r} container")
+    command = " ".join(container.get("command") or [])
+    if not all(marker in command for marker in expected["command_markers"]):
+        raise RuntimeError(f"task-definition command does not match the {runtime_kind} runtime")
+    other_kind = "worker" if runtime_kind == "api" else "api"
+    if any(marker in command for marker in RUNTIME_TARGETS[other_kind]["command_markers"]):
+        raise RuntimeError(f"task-definition command contains {other_kind} runtime markers")
+
+
+def validate_digest_image_uri(image_uri: str, *, repository_uri: str) -> str:
+    if not image_uri.startswith(f"{repository_uri}@") or not _DIGEST_IMAGE_PATTERN.fullmatch(
+        image_uri
+    ):
+        raise RuntimeError("reused image must be a digest-pinned URI in the expected repository")
+    return image_uri.removeprefix(f"{repository_uri}@")
+
+
+def build_and_push_image(
+    *,
+    repo_root: Path,
+    registry: str,
+    repository_uri: str,
+    source_sha: str,
+    build_id: str,
+    region: str,
+) -> tuple[str, str]:
+    tagged_image_uri = f"{repository_uri}:{source_sha}"
+    login_password = _run(("aws", "ecr", "get-login-password", "--region", region))
     subprocess.run(
         ("docker", "login", "--username", "AWS", "--password-stdin", registry),
         input=login_password,
         check=True,
         text=True,
     )
-    subprocess.run(
-        (
-            "docker",
-            "buildx",
-            "build",
-            "--platform",
-            "linux/arm64",
-            "--build-arg",
-            f"APP_GIT_SHA={source_sha}",
-            "--build-arg",
-            f"APP_BUILD_ID={build_id}",
-            "--label",
-            f"org.opencontainers.image.revision={source_sha}",
-            "--tag",
-            image_uri,
-            "--push",
-            ".",
-        ),
-        cwd=repo_root,
-        check=True,
-    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        metadata_path = Path(temp_dir) / "build-metadata.json"
+        subprocess.run(
+            (
+                "docker",
+                "buildx",
+                "build",
+                "--platform",
+                "linux/arm64",
+                "--build-arg",
+                f"APP_GIT_SHA={source_sha}",
+                "--build-arg",
+                f"APP_BUILD_ID={build_id}",
+                "--label",
+                f"org.opencontainers.image.revision={source_sha}",
+                "--tag",
+                tagged_image_uri,
+                "--metadata-file",
+                str(metadata_path),
+                "--push",
+                ".",
+            ),
+            cwd=repo_root,
+            check=True,
+        )
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    image_digest = metadata.get("containerimage.digest")
+    if not isinstance(image_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+        raise RuntimeError("Docker did not return an immutable image digest")
+    return f"{repository_uri}@{image_digest}", image_digest
 
-    service = _aws_json(
+
+def deploy(args: argparse.Namespace) -> dict[str, str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    source_sha = resolve_source_commit(repo_root, args.expected_sha)
+    build_id = source_sha
+    deployed_at = datetime.now(tz=UTC).isoformat()
+    account_id = _aws_json(args.region, "sts", "get-caller-identity")["Account"]
+    registry = f"{account_id}.dkr.ecr.{args.region}.amazonaws.com"
+    repository_uri = f"{registry}/{args.repository}"
+
+    service_response = _aws_json(
         args.region,
         "ecs",
         "describe-services",
@@ -173,7 +256,11 @@ def deploy(args: argparse.Namespace) -> dict[str, str]:
         args.cluster,
         "--services",
         args.service,
-    )["services"][0]
+    )
+    services = service_response.get("services", [])
+    if len(services) != 1 or service_response.get("failures"):
+        raise RuntimeError("ECS did not return exactly one requested service")
+    service = services[0]
     task_definition_arn = service["taskDefinition"]
     task_definition = _aws_json(
         args.region,
@@ -182,6 +269,29 @@ def deploy(args: argparse.Namespace) -> dict[str, str]:
         "--task-definition",
         task_definition_arn,
     )["taskDefinition"]
+    validate_runtime_target(
+        runtime_kind=args.runtime_kind,
+        service_name=args.service,
+        container_name=args.container,
+        service=service,
+        task_definition=task_definition,
+    )
+
+    if args.image_uri:
+        image_uri = args.image_uri
+        image_digest = validate_digest_image_uri(image_uri, repository_uri=repository_uri)
+        image_built = "false"
+    else:
+        image_uri, image_digest = build_and_push_image(
+            repo_root=repo_root,
+            registry=registry,
+            repository_uri=repository_uri,
+            source_sha=source_sha,
+            build_id=build_id,
+            region=args.region,
+        )
+        image_built = "true"
+
     payload = build_task_definition_payload(
         task_definition,
         container_name=args.container,
@@ -233,20 +343,23 @@ def deploy(args: argparse.Namespace) -> dict[str, str]:
         "source_sha": source_sha,
         "build_id": build_id,
         "image_uri": image_uri,
+        "image_digest": image_digest,
+        "image_built": image_built,
         "task_definition": new_task_definition,
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--region", default="us-east-1")
     parser.add_argument("--cluster", default="kairo-production")
-    parser.add_argument("--service", default="kairo-staging-backend")
-    parser.add_argument("--container", default="kairo-staging-backend")
+    parser.add_argument("--service", required=True)
+    parser.add_argument("--container", required=True)
     parser.add_argument("--repository", default="kairo-backend")
     parser.add_argument("--runtime-kind", choices=("api", "worker"), default="api")
-    return parser.parse_args()
+    parser.add_argument("--image-uri")
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
