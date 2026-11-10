@@ -9,10 +9,14 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import inspect as sqlalchemy_inspect
+from sqlalchemy.orm.attributes import NO_VALUE
 
 from app.models.organization_person import OrganizationPerson
+from app.models.verification_request import VerificationRequest
 from app.organization_people.enums import OrganizationPersonRelationship
 from app.services.organization_person_service import OrganizationPersonService
+from app.verification_requests.enums import VerificationRequestStatus, VerificationRequestType
 
 
 def _build_service() -> OrganizationPersonService:
@@ -133,3 +137,24 @@ async def test_resolve_person_creates_new_record_when_no_match_exists() -> None:
     assert result.primary_phone == "+15551112222"
     assert result.resolution_method == "created"
     service._repo.create.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+def test_verification_request_activity_does_not_lazy_load_events() -> None:
+    service = _build_service()
+    now = datetime.now(tz=UTC)
+    request = VerificationRequest(
+        organization_id=uuid4(),
+        subject_name="Async Candidate",
+        subject_email="async-candidate@example.com",
+        request_type=VerificationRequestType.CUSTOM,
+        status=VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION,
+        requested_by_user_id=uuid4(),
+    )
+    request.created_at = now
+    request.updated_at = now
+
+    events_state = sqlalchemy_inspect(request).attrs.events
+    assert events_state.loaded_value is NO_VALUE
+
+    assert service._verification_request_last_activity(request) == now
+    assert events_state.loaded_value is NO_VALUE
