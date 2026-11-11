@@ -1,21 +1,27 @@
-"""Read-only organization search and Company 360 projections for Admin."""
+"""Admin Client search, detail, activity, and company-record operations."""
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import String, and_, cast, exists, func, literal, or_, select, union_all
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, joinedload
 
-from app.exceptions import NotFoundError
+from app.exceptions import ConflictError, NotFoundError
 from app.models.organization import Organization
+from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
 from app.models.refresh_token import RefreshToken
 from app.models.trust_invitation import TrustInvitation
 from app.models.trust_invitation_event import TrustInvitationEvent
+from app.models.trust_registry_domain import TrustRegistryDomain
+from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
@@ -23,6 +29,9 @@ from app.organization.enums import OrganizationRole
 from app.schemas.admin_organization import (
     AdminOrganizationActivityItem,
     AdminOrganizationActivityPage,
+    AdminOrganizationCompanyRecordConnectRequest,
+    AdminOrganizationCompanyRecordCreateRequest,
+    AdminOrganizationCompanyRecordResponse,
     AdminOrganizationDetailResponse,
     AdminOrganizationListItem,
     AdminOrganizationListParams,
@@ -37,6 +46,7 @@ from app.schemas.admin_organization import (
     AdminOrganizationVerificationPage,
 )
 from app.schemas.pagination import ListQueryParams
+from app.services.trust_registry_service import TrustRegistryCodeService
 from app.verification_requests.enums import VerificationRequestStatus
 
 PENDING_STATUSES = {
@@ -65,6 +75,15 @@ EXCLUDED_FROM_COMPLETION_RATE = {
     VerificationRequestStatus.DRAFT.value,
     VerificationRequestStatus.CANCELLED.value,
     VerificationRequestStatus.WITHDRAWN_BY_CANDIDATE.value,
+}
+
+ORGANIZATION_ACTIVITY_TRANSITIONS: dict[str, tuple[str | None, str | None]] = {
+    "team_invitation_created": (None, "pending"),
+    "team_invitation_resent": ("pending", "pending"),
+    "team_invitation_accepted": ("pending", "accepted"),
+    "team_invitation_revoked": ("pending", "revoked"),
+    "first_hr_invitation_sent": (None, "pending"),
+    "first_hr_invitation_resent": ("pending", "pending"),
 }
 
 
@@ -139,10 +158,11 @@ def _date_boundary(value: datetime | date | None, *, end: bool) -> datetime | No
 
 
 class AdminOrganizationService:
-    """Query-efficient, tenant-scoped read projections for Admin operators."""
+    """Query-efficient Client projections and scoped company-record mutations."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+        self._registry_code = TrustRegistryCodeService()
 
     async def _require_organization(self, public_id: UUID) -> Organization:
         organization = await self._session.scalar(
@@ -153,6 +173,227 @@ class AdminOrganizationService:
         if organization is None:
             raise NotFoundError("Organization not found")
         return organization
+
+    async def _require_organization_for_update(self, public_id: UUID) -> Organization:
+        organization = await self._session.scalar(
+            select(Organization)
+            .where(Organization.public_id == public_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if organization is None:
+            raise NotFoundError("Organization not found")
+        return organization
+
+    async def _require_company_record(self, public_id: UUID) -> TrustRegistryRecord:
+        record = await self._session.scalar(
+            select(TrustRegistryRecord).where(
+                TrustRegistryRecord.public_id == public_id,
+                TrustRegistryRecord.deleted_at.is_(None),
+            )
+        )
+        if record is None:
+            raise NotFoundError("Company record not found")
+        if record.lifecycle_status in {"deprecated", "merged"}:
+            raise ConflictError("This company record is not available for new connections")
+        return record
+
+    async def _primary_domain(self, registry_record_id: UUID) -> str | None:
+        return await self._session.scalar(
+            select(TrustRegistryDomain.domain)
+            .where(
+                TrustRegistryDomain.registry_record_id == registry_record_id,
+                TrustRegistryDomain.deleted_at.is_(None),
+                TrustRegistryDomain.is_primary.is_(True),
+            )
+            .order_by(TrustRegistryDomain.created_at.asc())
+            .limit(1)
+        )
+
+    async def _company_record_response(
+        self,
+        organization: Organization,
+        record: TrustRegistryRecord,
+        *,
+        created: bool,
+        already_connected: bool,
+        primary_domain: str | None = None,
+    ) -> AdminOrganizationCompanyRecordResponse:
+        return AdminOrganizationCompanyRecordResponse(
+            organization_public_id=organization.public_id,
+            registry_record_public_id=record.public_id,
+            registry_record_name=record.display_name or record.legal_name,
+            registry_record_organization_type=record.organization_type,
+            registry_record_primary_domain=(
+                primary_domain
+                if primary_domain is not None
+                else await self._primary_domain(record.id)
+            ),
+            lifecycle_status=record.lifecycle_status,
+            trust_status=record.trust_status,
+            created=created,
+            already_connected=already_connected,
+        )
+
+    async def connect_company_record(
+        self,
+        actor_user_id: UUID,
+        organization_public_id: UUID,
+        payload: AdminOrganizationCompanyRecordConnectRequest,
+    ) -> AdminOrganizationCompanyRecordResponse:
+        organization = await self._require_organization_for_update(organization_public_id)
+        record = await self._require_company_record(payload.registry_record_public_id)
+        if organization.registry_record_id is not None:
+            if organization.registry_record_id != record.id:
+                raise ConflictError(
+                    "This Client is already connected to a different company record"
+                )
+            return await self._company_record_response(
+                organization,
+                record,
+                created=False,
+                already_connected=True,
+            )
+
+        organization.registry_record_id = record.id
+        organization.registry_resolution_method = "manual"
+        organization.registry_resolution_confidence = Decimal("100")
+        organization.registry_resolution_metadata = {
+            "source": "admin_client_workspace",
+            "idempotency_key": str(payload.idempotency_key),
+            "created_company_record": False,
+        }
+        organization.registry_resolved_at = datetime.now(UTC)
+        organization.registry_resolved_by_user_id = actor_user_id
+        self._session.add(
+            OrganizationActivityEvent(
+                organization_id=organization.id,
+                actor_user_id=actor_user_id,
+                event_type="company_record_connected",
+                subject_type="trust_registry_record",
+                subject_public_id=str(record.public_id),
+                metadata_payload={
+                    "company_record_name": record.display_name or record.legal_name,
+                    "created_company_record": False,
+                },
+            )
+        )
+        await self._session.commit()
+        return await self._company_record_response(
+            organization,
+            record,
+            created=False,
+            already_connected=False,
+        )
+
+    async def create_and_connect_company_record(
+        self,
+        actor_user_id: UUID,
+        organization_public_id: UUID,
+        payload: AdminOrganizationCompanyRecordCreateRequest,
+    ) -> AdminOrganizationCompanyRecordResponse:
+        organization = await self._require_organization_for_update(organization_public_id)
+        if organization.registry_record_id is not None:
+            record = await self._session.scalar(
+                select(TrustRegistryRecord).where(
+                    TrustRegistryRecord.id == organization.registry_record_id,
+                    TrustRegistryRecord.deleted_at.is_(None),
+                )
+            )
+            if record is None:
+                raise ConflictError("The connected company record is unavailable")
+            same_request = (organization.registry_resolution_metadata or {}).get(
+                "idempotency_key"
+            ) == str(payload.idempotency_key)
+            if not same_request:
+                raise ConflictError("This Client is already connected to a company record")
+            return await self._company_record_response(
+                organization,
+                record,
+                created=True,
+                already_connected=True,
+            )
+
+        public_id = uuid.uuid4()
+        record = TrustRegistryRecord(
+            public_id=public_id,
+            registry_code=self._registry_code.generate(
+                public_id=public_id,
+                organization_type=payload.organization_type,
+            ),
+            legal_name=payload.legal_name,
+            display_name=payload.display_name,
+            organization_type=payload.organization_type,
+            country=payload.country,
+            state_province=payload.state_province,
+            website=payload.website,
+            lifecycle_status="draft",
+            trust_status="unreviewed",
+            registry_confidence_score=Decimal("0"),
+            trust_metadata={
+                "source": "admin_client_workspace",
+                "workspace_public_id": str(organization.public_id),
+                "idempotency_key": str(payload.idempotency_key),
+            },
+            created_by_user_id=actor_user_id,
+            updated_by_user_id=actor_user_id,
+        )
+        self._session.add(record)
+        await self._session.flush()
+        if payload.primary_domain:
+            self._session.add(
+                TrustRegistryDomain(
+                    registry_record_id=record.id,
+                    domain=payload.primary_domain,
+                    is_primary=True,
+                    is_verified=False,
+                    source_type="admin",
+                    source_metadata={
+                        "source": "admin_client_workspace",
+                        "workspace_public_id": str(organization.public_id),
+                    },
+                )
+            )
+
+        organization.registry_record_id = record.id
+        organization.registry_resolution_method = "manual"
+        organization.registry_resolution_confidence = Decimal("100")
+        organization.registry_resolution_metadata = {
+            "source": "admin_client_workspace",
+            "idempotency_key": str(payload.idempotency_key),
+            "created_company_record": True,
+        }
+        organization.registry_resolved_at = datetime.now(UTC)
+        organization.registry_resolved_by_user_id = actor_user_id
+        self._session.add(
+            OrganizationActivityEvent(
+                organization_id=organization.id,
+                actor_user_id=actor_user_id,
+                event_type="company_record_created_and_connected",
+                subject_type="trust_registry_record",
+                subject_public_id=str(record.public_id),
+                metadata_payload={
+                    "company_record_name": record.display_name or record.legal_name,
+                    "created_company_record": True,
+                    "lifecycle_status": "draft",
+                    "trust_status": "unreviewed",
+                },
+            )
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise ConflictError(
+                "The company record could not be created safely; retry the search"
+            ) from exc
+        return await self._company_record_response(
+            organization,
+            record,
+            created=True,
+            already_connected=False,
+            primary_domain=payload.primary_domain,
+        )
 
     @staticmethod
     def _search_filter(search: str):
@@ -252,6 +493,11 @@ class AdminOrganizationService:
         rows = await self._session.execute(
             select(
                 Organization,
+                TrustRegistryRecord.public_id.label("registry_record_public_id"),
+                func.coalesce(
+                    TrustRegistryRecord.display_name,
+                    TrustRegistryRecord.legal_name,
+                ).label("registry_record_name"),
                 func.coalesce(people_stats.c.people_count, 0),
                 func.coalesce(team_stats.c.team_size, 0),
                 func.coalesce(request_stats.c.request_count, 0),
@@ -269,6 +515,13 @@ class AdminOrganizationService:
                 request_stats,
                 request_stats.c.organization_id == Organization.id,
             )
+            .outerjoin(
+                TrustRegistryRecord,
+                and_(
+                    TrustRegistryRecord.id == Organization.registry_record_id,
+                    TrustRegistryRecord.deleted_at.is_(None),
+                ),
+            )
             .where(*filters)
             .order_by(Organization.name.asc(), Organization.public_id.asc())
             .offset(params.offset or 0)
@@ -277,6 +530,8 @@ class AdminOrganizationService:
         items = []
         for (
             organization,
+            registry_record_public_id,
+            registry_record_name,
             people_count,
             team_size,
             request_count,
@@ -291,6 +546,8 @@ class AdminOrganizationService:
                     name=organization.name,
                     domain=organization.domain,
                     organization_type=_value(organization.organization_type) or "other",
+                    registry_record_public_id=registry_record_public_id,
+                    registry_record_name=registry_record_name,
                     account_status=_organization_status(organization),
                     verification_state=_value(organization.verification_state) or "unknown",
                     is_workspace_customer=int(team_size) > 0,
@@ -376,6 +633,21 @@ class AdminOrganizationService:
             people_count=people_count,
             registry_record_public_id=(
                 organization.registry_record.public_id
+                if organization.registry_record is not None
+                else None
+            ),
+            registry_record_name=(
+                organization.registry_record.display_name or organization.registry_record.legal_name
+                if organization.registry_record is not None
+                else None
+            ),
+            registry_record_organization_type=(
+                organization.registry_record.organization_type
+                if organization.registry_record is not None
+                else None
+            ),
+            registry_record_primary_domain=(
+                await self._primary_domain(organization.registry_record.id)
                 if organization.registry_record is not None
                 else None
             ),
@@ -490,6 +762,7 @@ class AdminOrganizationService:
                     email_masked=_mask_email(person.primary_email),
                     relationship=_value(person.relationship) or "unknown",
                     lifecycle_status=_value(person.lifecycle_status) or "unknown",
+                    invitation_status=(_value(person.invitation_status_summary) or "not_invited"),
                     verification_request_count=int(request_count),
                     verified_count=int(verified_count),
                     pending_count=int(pending_count),
@@ -661,6 +934,7 @@ class AdminOrganizationService:
         organization = await self._require_organization(public_id)
         verification_actor = aliased(User)
         invitation_actor = aliased(User)
+        organization_actor = aliased(User)
         verification_events = (
             select(
                 VerificationRequestEvent.id.label("public_id"),
@@ -669,9 +943,12 @@ class AdminOrganizationService:
                 literal("verification_request").label("source"),
                 verification_actor.full_name.label("actor_name"),
                 verification_actor.role.label("actor_role"),
-                VerificationRequest.public_id.label("subject_public_id"),
+                verification_actor.email.label("actor_email"),
+                cast(VerificationRequest.public_id, String).label("subject_public_id"),
                 cast(VerificationRequestEvent.previous_status, String).label("previous_status"),
                 cast(VerificationRequestEvent.new_status, String).label("new_status"),
+                literal(organization.name).label("organization_name"),
+                literal(None, type_=String).label("on_behalf_of_organization_name"),
             )
             .join(
                 VerificationRequest,
@@ -691,9 +968,12 @@ class AdminOrganizationService:
                 literal("trust_invitation").label("source"),
                 invitation_actor.full_name.label("actor_name"),
                 invitation_actor.role.label("actor_role"),
-                TrustInvitation.public_id.label("subject_public_id"),
+                invitation_actor.email.label("actor_email"),
+                cast(TrustInvitation.public_id, String).label("subject_public_id"),
                 literal(None, type_=String).label("previous_status"),
                 literal(None, type_=String).label("new_status"),
+                literal(organization.name).label("organization_name"),
+                literal(None, type_=String).label("on_behalf_of_organization_name"),
             )
             .join(
                 TrustInvitation,
@@ -705,7 +985,32 @@ class AdminOrganizationService:
             )
             .where(TrustInvitation.organization_id == organization.id)
         )
-        combined = union_all(verification_events, invitation_events).subquery()
+        organization_events = (
+            select(
+                OrganizationActivityEvent.public_id.label("public_id"),
+                OrganizationActivityEvent.created_at.label("occurred_at"),
+                OrganizationActivityEvent.event_type.label("event_type"),
+                literal("organization_activity").label("source"),
+                organization_actor.full_name.label("actor_name"),
+                organization_actor.role.label("actor_role"),
+                organization_actor.email.label("actor_email"),
+                OrganizationActivityEvent.subject_public_id.label("subject_public_id"),
+                literal(None, type_=String).label("previous_status"),
+                literal(None, type_=String).label("new_status"),
+                literal(organization.name).label("organization_name"),
+                literal(organization.name).label("on_behalf_of_organization_name"),
+            )
+            .outerjoin(
+                organization_actor,
+                organization_actor.id == OrganizationActivityEvent.actor_user_id,
+            )
+            .where(OrganizationActivityEvent.organization_id == organization.id)
+        )
+        combined = union_all(
+            verification_events,
+            invitation_events,
+            organization_events,
+        ).subquery()
         total = int(await self._session.scalar(select(func.count()).select_from(combined)) or 0)
         rows = await self._session.execute(
             select(combined)
@@ -719,11 +1024,22 @@ class AdminOrganizationService:
                 occurred_at=row.occurred_at,
                 event_type=row.event_type,
                 source=row.source,
-                actor_name=row.actor_name,
+                actor_name=row.actor_name or _mask_email(row.actor_email),
                 actor_role=row.actor_role,
+                actor_email_masked=_mask_email(row.actor_email),
+                organization_name=row.organization_name,
+                on_behalf_of_organization_name=row.on_behalf_of_organization_name,
                 subject_public_id=row.subject_public_id,
-                previous_status=row.previous_status,
-                new_status=row.new_status,
+                previous_status=(
+                    ORGANIZATION_ACTIVITY_TRANSITIONS.get(row.event_type, (None, None))[0]
+                    if row.source == "organization_activity"
+                    else row.previous_status
+                ),
+                new_status=(
+                    ORGANIZATION_ACTIVITY_TRANSITIONS.get(row.event_type, (None, None))[1]
+                    if row.source == "organization_activity"
+                    else row.new_status
+                ),
             )
             for row in rows
         ]

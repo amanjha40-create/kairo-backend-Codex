@@ -8,7 +8,9 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import NO_VALUE
 
 from app.config import Settings
 from app.exceptions import ForbiddenError, NotFoundError
@@ -1034,7 +1036,9 @@ class OrganizationPersonService:
             request.candidate_response_submitted_at,
             request.accepted_at,
         ]
-        candidates.extend(event.created_at for event in request.events)
+        events = sqlalchemy_inspect(request).attrs.events.loaded_value
+        if events is not NO_VALUE:
+            candidates.extend(event.created_at for event in events)
         return max(value for value in candidates if value is not None)
 
     def _latest_passport_access(self, person: OrganizationPerson) -> OrganizationPersonPassportAccess | None:

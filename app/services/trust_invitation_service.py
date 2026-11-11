@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 
 def _public_subject_email(email: str | None) -> str | None:
-    """Hide Candidate deletion tombstones from Trust Invitation projections."""
+    """Hide account-deletion tombstones from Trust Invitation projections."""
     if email and email.endswith("@deleted.kairoid.invalid"):
         return None
     return email
@@ -801,8 +801,22 @@ class TrustInvitationService:
         if invitation.expires_at > datetime.now(tz=UTC):
             return False
 
-        invitation.status = TrustInvitationStatus.EXPIRED
-        await self._record_event(invitation, TrustInvitationEventType.EXPIRED)
+        locked_invitation = await self._repo.get_by_id_for_update(invitation.id)
+        if locked_invitation is None:
+            return False
+        if locked_invitation.status in {
+            TrustInvitationStatus.ACCEPTED,
+            TrustInvitationStatus.CANCELLED,
+            TrustInvitationStatus.EXPIRED,
+        }:
+            return False
+        if getattr(locked_invitation, "declined_at", None) is not None:
+            return False
+        if locked_invitation.expires_at > datetime.now(tz=UTC):
+            return False
+
+        locked_invitation.status = TrustInvitationStatus.EXPIRED
+        await self._record_event(locked_invitation, TrustInvitationEventType.EXPIRED)
         return True
 
     async def _deliver_invitation(
@@ -949,7 +963,7 @@ class TrustInvitationService:
             status=invitation.status,
             delivery_method=invitation.delivery_method,
             delivery_state=invitation.delivery_state,
-            created_by_email=invitation.created_by_user.email,
+            created_by_email=_public_subject_email(invitation.created_by_user.email),
             created_by_full_name=invitation.created_by_user.full_name,
             expires_at=invitation.expires_at,
             sent_at=invitation.sent_at,
@@ -999,20 +1013,7 @@ class TrustInvitationService:
         return TrustInvitationDetailResponse(
             **self._to_response(invitation, progress).model_dump(),
             invitation_url=self._build_invitation_url(invitation.public_id),
-            timeline=[
-                TrustInvitationTimelineEventResponse(
-                    id=event.id,
-                    event_type=TrustInvitationEventType(event.event_type),
-                    occurred_at=event.occurred_at,
-                    actor_user_id=event.actor_user_id,
-                    actor_email=event.actor_user.email if event.actor_user is not None else None,
-                    actor_full_name=(
-                        event.actor_user.full_name if event.actor_user is not None else None
-                    ),
-                    metadata=event.metadata_payload,
-                )
-                for event in invitation.events
-            ],
+            timeline=self._timeline_response(invitation),
         )
 
     async def _to_detail_response_with_progress(
@@ -1022,21 +1023,38 @@ class TrustInvitationService:
         return TrustInvitationDetailResponse(
             **response.model_dump(),
             invitation_url=self._build_invitation_url(invitation.public_id),
-            timeline=[
+            timeline=self._timeline_response(invitation),
+        )
+
+    def _timeline_response(
+        self,
+        invitation: TrustInvitation,
+    ) -> list[TrustInvitationTimelineEventResponse]:
+        timeline: list[TrustInvitationTimelineEventResponse] = []
+        expired_projected = False
+        for event in invitation.events:
+            if event.event_type == TrustInvitationEventType.EXPIRED.value:
+                if expired_projected:
+                    continue
+                expired_projected = True
+            timeline.append(
                 TrustInvitationTimelineEventResponse(
                     id=event.id,
                     event_type=TrustInvitationEventType(event.event_type),
                     occurred_at=event.occurred_at,
                     actor_user_id=event.actor_user_id,
-                    actor_email=event.actor_user.email if event.actor_user is not None else None,
+                    actor_email=(
+                        _public_subject_email(event.actor_user.email)
+                        if event.actor_user is not None
+                        else None
+                    ),
                     actor_full_name=(
                         event.actor_user.full_name if event.actor_user is not None else None
                     ),
                     metadata=event.metadata_payload,
                 )
-                for event in invitation.events
-            ],
-        )
+            )
+        return timeline
 
     def _related_verification_request_public_id(self, invitation: TrustInvitation) -> UUID | None:
         if not invitation.verification_requests:

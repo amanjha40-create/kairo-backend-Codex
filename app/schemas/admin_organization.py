@@ -1,11 +1,11 @@
-"""Read-only Admin Company 360 contracts."""
+"""Admin Client operations contracts."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.pagination import ListQueryParams, Page
 
@@ -23,6 +23,8 @@ class AdminOrganizationListItem(BaseModel):
     name: str
     domain: str | None = None
     organization_type: str
+    registry_record_public_id: UUID | None = None
+    registry_record_name: str | None = None
     account_status: str
     verification_state: str
     is_workspace_customer: bool
@@ -54,9 +56,57 @@ class AdminOrganizationDetailResponse(BaseModel):
     team_size: int = 0
     people_count: int = 0
     registry_record_public_id: UUID | None = None
+    registry_record_name: str | None = None
+    registry_record_organization_type: str | None = None
+    registry_record_primary_domain: str | None = None
     created_at: datetime
     updated_at: datetime
     last_activity_at: datetime | None = None
+
+
+class AdminOrganizationCompanyRecordConnectRequest(BaseModel):
+    registry_record_public_id: UUID
+    idempotency_key: UUID
+
+
+class AdminOrganizationCompanyRecordCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    idempotency_key: UUID
+    legal_name: str = Field(min_length=1, max_length=255)
+    display_name: str | None = Field(default=None, max_length=255)
+    organization_type: str = Field(min_length=1, max_length=64)
+    country: str = Field(min_length=2, max_length=2)
+    state_province: str | None = Field(default=None, max_length=128)
+    website: str | None = Field(default=None, max_length=2048)
+    primary_domain: str | None = Field(default=None, max_length=255)
+
+    @field_validator("organization_type")
+    @classmethod
+    def normalize_organization_type(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("country")
+    @classmethod
+    def normalize_country(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("primary_domain")
+    @classmethod
+    def normalize_primary_domain(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else None
+
+
+class AdminOrganizationCompanyRecordResponse(BaseModel):
+    organization_public_id: UUID
+    registry_record_public_id: UUID
+    registry_record_name: str
+    registry_record_organization_type: str
+    registry_record_primary_domain: str | None = None
+    lifecycle_status: str
+    trust_status: str
+    created: bool
+    already_connected: bool
 
 
 class AdminOrganizationOverviewResponse(BaseModel):
@@ -82,6 +132,7 @@ class AdminOrganizationPersonItem(BaseModel):
     email_masked: str | None = None
     relationship: str
     lifecycle_status: str
+    invitation_status: str
     verification_request_count: int = 0
     verified_count: int = 0
     pending_count: int = 0
@@ -119,7 +170,10 @@ class AdminOrganizationActivityItem(BaseModel):
     source: str
     actor_name: str | None = None
     actor_role: str | None = None
-    subject_public_id: UUID | None = None
+    actor_email_masked: str | None = None
+    organization_name: str
+    on_behalf_of_organization_name: str | None = None
+    subject_public_id: str | None = None
     previous_status: str | None = None
     new_status: str | None = None
 

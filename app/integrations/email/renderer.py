@@ -69,8 +69,6 @@ def _render_candidate_account_activation(
             candidate_name=payload.candidate_name,
             activation_url=payload.activation_url,
             expires_at_iso=payload.expires_at_iso,
-            role=payload.role,
-            reminder=payload.reminder,
         )
     )
     return RenderedEmailMessage(

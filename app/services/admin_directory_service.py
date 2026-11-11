@@ -5,14 +5,15 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, and_, cast, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.auth.deps import CurrentUser
 from app.auth.tokens import generate_opaque_refresh_raw, hash_refresh_token
 from app.config import Settings
-from app.core.constants import Role
+from app.core.constants import Role, SignupKind
 from app.core.permissions import Permission, get_roles_with_permission, has_permission
 from app.exceptions import ConflictError, NotFoundError
 from app.integrations.email import get_email_sender
@@ -21,6 +22,7 @@ from app.models import (
     PassportShareLink,
     PassportShareView,
     PasswordResetToken,
+    PendingSignup,
     ProfileLanguage,
     ProfileLink,
     RefreshToken,
@@ -28,6 +30,7 @@ from app.models import (
     UserAccountEvent,
     UserAdminNote,
     UserDocument,
+    UserSocialAccount,
 )
 from app.models.certification import Certification
 from app.models.education import Education
@@ -35,6 +38,8 @@ from app.models.employment import Employment
 from app.models.freelance_contract import FreelanceContract
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
+from app.models.organization_member import OrganizationMember
+from app.models.organization_person import OrganizationPerson
 from app.models.portfolio import PortfolioItem
 from app.models.project import Project
 from app.models.skill import Skill
@@ -42,6 +47,7 @@ from app.models.trust_score_snapshot import TrustScoreSnapshot
 from app.models.verification_request import VerificationRequest
 from app.models.verification_request_event import VerificationRequestEvent
 from app.organization.enums import OrganizationType
+from app.organization_people.enums import OrganizationPersonRelationship
 from app.repositories.organization import OrganizationRepository
 from app.repositories.password_reset_token import PasswordResetTokenRepository
 from app.repositories.refresh_token import RefreshTokenRepository
@@ -91,6 +97,59 @@ COMPLETED_VERIFICATION_REQUEST_STATUSES = {
     VerificationRequestStatus.CANCELLED.value,
     VerificationRequestStatus.EXPIRED.value,
 }
+
+
+def candidate_identity_filter() -> ColumnElement[bool]:
+    """Return the canonical Candidate-directory predicate.
+
+    Organization staff and Candidates intentionally share the base ``user`` auth role.
+    Candidate identity therefore comes from signup provenance or Candidate-owned domain
+    records, with a legacy fallback only for accounts that have no organization identity.
+    """
+
+    candidate_signup = exists(
+        select(PendingSignup.id).where(
+            PendingSignup.completed_user_id == User.id,
+            PendingSignup.signup_kind == SignupKind.CANDIDATE,
+        )
+    )
+    organization_signup = exists(
+        select(PendingSignup.id).where(
+            PendingSignup.completed_user_id == User.id,
+            PendingSignup.signup_kind == SignupKind.ORGANIZATION,
+        )
+    )
+    organization_membership = exists(
+        select(OrganizationMember.id).where(OrganizationMember.user_id == User.id)
+    )
+    candidate_domain_evidence = or_(
+        candidate_signup,
+        User.admin_created_at.is_not(None),
+        User.admin_created_by_user_id.is_not(None),
+        User.phone_verified_at.is_not(None),
+        exists(select(UserSocialAccount.id).where(UserSocialAccount.user_id == User.id)),
+        exists(select(ProfileLanguage.id).where(ProfileLanguage.user_id == User.id)),
+        exists(select(ProfileLink.id).where(ProfileLink.user_id == User.id)),
+        exists(select(Education.id).where(Education.user_id == User.id)),
+        exists(select(Employment.id).where(Employment.created_by_user_id == User.id)),
+        exists(
+            select(VerificationRequest.id).where(VerificationRequest.subject_user_id == User.id)
+        ),
+        exists(
+            select(OrganizationPerson.id).where(
+                OrganizationPerson.linked_user_id == User.id,
+                OrganizationPerson.relationship == OrganizationPersonRelationship.CANDIDATE,
+            )
+        ),
+    )
+    legacy_candidate_without_organization_identity = and_(
+        ~organization_signup,
+        ~organization_membership,
+    )
+    return and_(
+        User.role == Role.USER.value,
+        or_(candidate_domain_evidence, legacy_candidate_without_organization_identity),
+    )
 
 
 def _enum_value(value: object | None) -> str | None:
@@ -250,12 +309,10 @@ class AdminDirectoryService:
         self._email = get_email_sender(settings, session=session)
 
     async def _require_candidate(self, user_public_id: UUID, *, for_update: bool = False) -> User:
-        statement = select(User).where(User.id == user_public_id, User.role == Role.USER.value)
+        statement = select(User).where(User.id == user_public_id, candidate_identity_filter())
         if for_update:
             statement = statement.with_for_update().execution_options(populate_existing=True)
-        user = (
-            await self._session.execute(statement)
-        ).scalar_one_or_none()
+        user = (await self._session.execute(statement)).scalar_one_or_none()
         if user is None:
             raise NotFoundError("Candidate not found")
         return user
@@ -397,7 +454,7 @@ class AdminDirectoryService:
         )
 
     async def list_users(self, params: ListQueryParams) -> AdminUserPage:
-        filters = [User.role == Role.USER.value]
+        filters = [candidate_identity_filter()]
         search = (params.search or "").strip()
         if search:
             pattern = f"%{search}%"
@@ -419,9 +476,7 @@ class AdminDirectoryService:
             filters.append(User.created_at <= created_before)
 
         requested_statuses = {
-            item.strip().lower()
-            for item in (params.status or "").split(",")
-            if item.strip()
+            item.strip().lower() for item in (params.status or "").split(",") if item.strip()
         }
         if requested_statuses:
             status_filters = []
@@ -774,8 +829,12 @@ class AdminDirectoryService:
         )
         audit_ids = (user.id, row.id, row.family_id)
         await self._session.commit()
-        auth_audit("AUTH_SESSION_REVOKE", user_id=audit_ids[0], session_id=audit_ids[1],
-                   family_id=audit_ids[2])
+        auth_audit(
+            "AUTH_SESSION_REVOKE",
+            user_id=audit_ids[0],
+            session_id=audit_ids[1],
+            family_id=audit_ids[2],
+        )
         return await self.get_user_detail(actor, user_public_id)
 
     async def revoke_all_sessions(
@@ -1059,9 +1118,15 @@ class AdminDirectoryService:
                 bucket[status_key] = bucket.get(status_key, 0) + int(count or 0)
         return AdminUserVerificationSummary(
             overall=build_verification_breakdown(overall),
-            employments=build_verification_breakdown(by_type[VerificationRequestType.EMPLOYMENT.value]),
-            educations=build_verification_breakdown(by_type[VerificationRequestType.EDUCATION.value]),
-            certifications=build_verification_breakdown(by_type[VerificationRequestType.CERTIFICATION.value]),
+            employments=build_verification_breakdown(
+                by_type[VerificationRequestType.EMPLOYMENT.value]
+            ),
+            educations=build_verification_breakdown(
+                by_type[VerificationRequestType.EDUCATION.value]
+            ),
+            certifications=build_verification_breakdown(
+                by_type[VerificationRequestType.CERTIFICATION.value]
+            ),
         )
 
     async def _verification_items(
@@ -1090,14 +1155,10 @@ class AdminDirectoryService:
                     employment_public_id=request.employment_id,
                     education_public_id=request.education_id,
                     organization_public_id=(
-                        request.organization.public_id
-                        if request.organization is not None
-                        else None
+                        request.organization.public_id if request.organization is not None else None
                     ),
                     organization_name=(
-                        request.organization.name
-                        if request.organization is not None
-                        else None
+                        request.organization.name if request.organization is not None else None
                     ),
                     linked_record_label=build_linked_record_label(request, redacted=redacted),
                     created_at=request.created_at,
@@ -1146,7 +1207,9 @@ class AdminDirectoryService:
             total_views = int(
                 (
                     await self._session.scalar(
-                        select(func.count()).select_from(PassportShareView).where(PassportShareView.share_id.in_(share_ids))
+                        select(func.count())
+                        .select_from(PassportShareView)
+                        .where(PassportShareView.share_id.in_(share_ids))
                     )
                 )
                 or 0

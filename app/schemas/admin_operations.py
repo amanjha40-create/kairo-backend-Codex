@@ -16,6 +16,7 @@ from app.admin_operations.enums import (
     ProfileProvenanceSource,
 )
 from app.organization.enums import OrganizationRole, OrganizationType
+from app.organization_people.enums import OrganizationPersonRelationship
 from app.schemas.admin_career import ExtendedCareerType, payload_contract, validate_payload
 from app.schemas.gig_platform import GigPlatformResponse
 from app.schemas.portfolio import PortfolioItemResponse
@@ -31,6 +32,34 @@ class AdminCreateCandidateRequest(BaseModel):
     phone: str | None = Field(default=None, min_length=8, max_length=32)
     headline: str | None = Field(default=None, max_length=255)
     location: str | None = Field(default=None, max_length=255)
+    idempotency_key: UUID
+
+
+class AdminClientPersonCreateRequest(BaseModel):
+    """Create a client-scoped Person without creating a login account."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    full_name: str = Field(min_length=1, max_length=255)
+    email: EmailStr
+    phone: str | None = Field(default=None, min_length=8, max_length=32)
+    relationship: OrganizationPersonRelationship = OrganizationPersonRelationship.EMPLOYEE
+
+
+class AdminClientPersonResponse(BaseModel):
+    organization_id: UUID
+    person_id: UUID
+    linked_candidate_id: UUID | None = None
+    full_name: str
+    email_masked: str
+    relationship: OrganizationPersonRelationship
+    invitation_status: str
+    created_at: datetime
+
+
+class AdminClientPersonActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     idempotency_key: UUID
 
 
