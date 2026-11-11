@@ -114,13 +114,41 @@ def test_malformed_list(payload):
         {**item(), "uri": "https://evil.invalid"},
         {**item(), "uri": "../anything"},
         {**item(), "doctype": None},
-        {**item(), "issuerid": None},
+        {**item(), "issuerid": None, "uri": "opaque-without-document-type"},
         {**item(), "mime": {}},
     ],
 )
 def test_bad_rows_skipped(bad):
     records, malformed = normalize_items({"items": [bad, item()]})
     assert len(records) == malformed == 1
+
+
+def test_missing_issuerid_is_recovered_from_official_driving_licence_uri_shape():
+    records, malformed = normalize_items({"items": [{**item("DRVLC"), "issuerid": None}]})
+
+    assert malformed == 0
+    assert len(records) == 1
+    assert records[0]["doctype"] == "DRVLC"
+    assert records[0]["issuerid"] == "in.test"
+    assert records[0]["supported"] is True
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "DRVLC-SYNTHETIC",
+        "in.test-PANCR-SYNTHETIC",
+        "in.test-DRVLC-",
+        "in/test-DRVLC-SYNTHETIC",
+    ],
+)
+def test_missing_issuerid_with_ambiguous_uri_still_fails_closed(uri):
+    records, malformed = normalize_items(
+        {"items": [{**item("DRVLC"), "issuerid": None, "uri": uri}]}
+    )
+
+    assert records == []
+    assert malformed == 1
 
 
 @pytest.mark.parametrize(

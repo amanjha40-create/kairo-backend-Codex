@@ -56,6 +56,19 @@ def normalize_mimes(value):
     )
 
 
+def issuerid_from_uri(uri, doctype):
+    """Recover an omitted issuer id only from DigiLocker's documented URI shape."""
+    marker = f"-{doctype}-"
+    issuerid, separator, document_id = uri.partition(marker)
+    if (
+        not separator
+        or not re.fullmatch(r"[A-Za-z0-9._:]{1,128}", issuerid)
+        or not re.fullmatch(r"[A-Za-z0-9._:-]{1,2048}", document_id)
+    ):
+        return None
+    return issuerid
+
+
 def normalize_items(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         raise ProviderError("invalid_response")
@@ -70,7 +83,12 @@ def normalize_items(payload):
         doctype = _text(raw.get("doctype"), 32)
         issuerid = _text(raw.get("issuerid"), 128)
         # URIs are opaque issuer identifiers, never arbitrary URLs or endpoint paths.
-        if not uri or not re.fullmatch(r"[A-Za-z0-9._:-]+", uri) or not doctype or not issuerid:
+        if not uri or not re.fullmatch(r"[A-Za-z0-9._:-]+", uri) or not doctype:
+            malformed += 1
+            continue
+        if not issuerid and doctype in SUPPORTED_TYPES:
+            issuerid = issuerid_from_uri(uri, doctype)
+        if not issuerid:
             malformed += 1
             continue
         try:
