@@ -9,14 +9,14 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import ConflictError, NotFoundError
+from app.exceptions import ConflictError, NotFoundError, ValidationAppError
 from app.models.trust_registry_alias import TrustRegistryAlias
 from app.models.trust_registry_capability import TrustRegistryCapability
 from app.models.trust_registry_domain import TrustRegistryDomain
 from app.models.trust_registry_identifier import TrustRegistryIdentifier
-from app.models.trust_registry_relationship import TrustRegistryRelationship
 from app.models.trust_registry_record import TrustRegistryRecord
 from app.models.trust_registry_record_capability import TrustRegistryRecordCapability
+from app.models.trust_registry_relationship import TrustRegistryRelationship
 from app.repositories.trust_registry import (
     TrustRegistryAliasRepository,
     TrustRegistryCapabilityRepository,
@@ -103,6 +103,28 @@ class TrustRegistryService:
         payload: TrustRegistryRecordUpdateRequest,
     ) -> TrustRegistryDetailResponse:
         record = await self._require_record(registry_public_id)
+        if payload.trust_status is not None and payload.trust_status.value == "trusted":
+            has_verified_evidence = any(
+                item.is_verified and item.deleted_at is None for item in record.domains
+            ) or any(
+                item.is_verified and item.deleted_at is None for item in record.identifiers
+            )
+            if not has_verified_evidence:
+                raise ValidationAppError(
+                    "A verified domain or identifier is required before trusting "
+                    "this organization record",
+                    code="registry_verified_evidence_required",
+                )
+            next_lifecycle = (
+                payload.lifecycle_status.value
+                if payload.lifecycle_status is not None
+                else record.lifecycle_status
+            )
+            if next_lifecycle != "active":
+                raise ValidationAppError(
+                    "The organization record must be Active before it can be trusted",
+                    code="registry_active_lifecycle_required",
+                )
         updates = payload.model_dump(exclude_unset=True)
         for key, value in updates.items():
             if value is None and key not in {"display_name", "state_province", "website"}:

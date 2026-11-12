@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
@@ -34,6 +34,7 @@ from app.models.user import User
 from app.models.user_account_event import UserAccountEvent
 from app.models.user_document import UserDocument
 from app.organization.enums import OrganizationRole, OrganizationType
+from app.organization_people.enums import OrganizationPersonRelationship
 from app.schemas.admin_operations import (
     AdminClientPersonActivationRequest,
     AdminClientPersonCreateRequest,
@@ -49,12 +50,24 @@ from app.schemas.admin_operations import (
 )
 from app.schemas.hr_v2 import VerificationReportCheckStatus
 from app.schemas.pagination import PageParams
+from app.schemas.trust_registry import (
+    TrustRegistryDomainCreateRequest,
+    TrustRegistryRecordCreateRequest,
+    TrustRegistryRecordUpdateRequest,
+)
 from app.services.admin_operations_service import (
     AdminOperationsConflict,
     AdminOperationsService,
 )
 from app.services.hr_v2_service import HRV2Service
+from app.services.organization_person_service import OrganizationPersonService
+from app.services.trust_registry_service import TrustRegistryService
 from app.services.workspace_service import WorkspaceService
+from app.trust_registry.enums import (
+    TrustRegistryLifecycleStatus,
+    TrustRegistrySourceType,
+    TrustRegistryTrustStatus,
+)
 
 
 class _FakeEmailDelivery:
@@ -109,6 +122,11 @@ def test_admin_permissions_and_public_contracts_are_additive() -> None:
 
     paths = app.openapi()["paths"]
     assert "/api/v1/admin/operations/candidates" in paths
+    assert "/api/v1/admin/operations/candidate-invitations" in paths
+    assert "/api/v1/admin/operations/candidates/{candidate_id}/resumes" in paths
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/resumes/{resume_id}/status" in paths
+    )
     assert "/api/v1/admin/operations/organizations/{org_public_id}/people" in paths
     assert (
         "/api/v1/admin/operations/organizations/{org_public_id}/people/{person_public_id}/candidate-activation"
@@ -136,6 +154,43 @@ def test_activation_email_audit_payload_never_contains_credential() -> None:
     assert "opaque-secret" in rendered.text_body
     assert "opaque-secret" not in str(rendered.audit_payload)
     assert "activation_url" not in rendered.audit_payload
+
+
+def test_future_employee_requires_a_future_joining_date() -> None:
+    with pytest.raises(ValueError, match="joining_date is required"):
+        AdminClientPersonCreateRequest(
+            full_name="Future Employee",
+            email="future@example.com",
+            relationship=OrganizationPersonRelationship.FUTURE_EMPLOYEE,
+        )
+
+    with pytest.raises(ValueError, match="joining_date must be in the future"):
+        AdminClientPersonCreateRequest(
+            full_name="Future Employee",
+            email="future@example.com",
+            relationship=OrganizationPersonRelationship.FUTURE_EMPLOYEE,
+            joining_date=date.today(),
+        )
+
+
+def test_future_employee_projects_as_employee_on_joining_date() -> None:
+    service = object.__new__(OrganizationPersonService)
+    before_joining = SimpleNamespace(
+        relationship=OrganizationPersonRelationship.FUTURE_EMPLOYEE,
+        joining_date=datetime.now(tz=UTC).date() + timedelta(days=1),
+        employments=[],
+    )
+    joined = SimpleNamespace(
+        relationship=OrganizationPersonRelationship.FUTURE_EMPLOYEE,
+        joining_date=datetime.now(tz=UTC).date(),
+        employments=[],
+    )
+
+    assert (
+        service._derive_person_relationship(before_joining)
+        == OrganizationPersonRelationship.FUTURE_EMPLOYEE
+    )
+    assert service._derive_person_relationship(joined) == OrganizationPersonRelationship.EMPLOYEE
 
 
 @pytest.mark.integration
@@ -299,6 +354,23 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
         assert stored_person.linked_user_id == activation.candidate_id
         assert stored_person.invitation_status_summary == "sent"
 
+        active_token = await session.scalar(
+            select(CandidateActivationToken).where(
+                CandidateActivationToken.user_id == activation.candidate_id,
+                CandidateActivationToken.revoked_at.is_(None),
+            )
+        )
+        assert active_token is not None
+        assert active_token.organization_id == stored_organization.id
+        assert active_token.organization_person_id == stored_person.id
+
+        invitations = await service.list_pending_candidate_invitations()
+        pending = next(item for item in invitations if item.candidate_id == activation.candidate_id)
+        assert pending.status == "pending"
+        assert pending.organization_id == organization.organization_public_id
+        assert pending.organization_name == organization.name
+        assert pending.person_id == person.person_id
+
         token = _opaque_token(email.calls[0], "activation_url")
         await service.claim_candidate_account(
             CandidateClaimRequest(
@@ -314,6 +386,10 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
         )
         assert accepted_person is not None
         assert accepted_person.invitation_status_summary == "accepted"
+        assert all(
+            item.candidate_id != activation.candidate_id
+            for item in await service.list_pending_candidate_invitations()
+        )
 
 
 @pytest.mark.integration
@@ -428,6 +504,67 @@ async def test_client_person_activation_retries_same_candidate_after_delivery_fa
         await session.refresh(stored_person)
         assert stored_person.invitation_status_summary == "sent"
         assert len(email.calls) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_registry_verification_requires_verified_evidence_and_active_lifecycle() -> None:
+    async with async_session_factory() as session:
+        admin = await _user(role=Role.ADMIN, email_prefix="admin-registry-trust")
+        session.add(admin)
+        await session.commit()
+        await session.refresh(admin)
+        service = TrustRegistryService(session)
+        record = await service.create_record(
+            admin.id,
+            TrustRegistryRecordCreateRequest(
+                legal_name=f"Registry Trust {uuid4()}",
+                organization_type="employer",
+                country="IN",
+            ),
+        )
+
+        with pytest.raises(ValidationAppError) as missing_evidence:
+            await service.update_record(
+                admin.id,
+                record.public_id,
+                TrustRegistryRecordUpdateRequest(
+                    lifecycle_status=TrustRegistryLifecycleStatus.ACTIVE,
+                    trust_status=TrustRegistryTrustStatus.TRUSTED,
+                ),
+            )
+        assert missing_evidence.value.code == "registry_verified_evidence_required"
+
+        await service.add_domain(
+            record.public_id,
+            TrustRegistryDomainCreateRequest(
+                domain=f"{uuid4().hex}.example.com",
+                is_primary=True,
+                is_verified=True,
+                source_type=TrustRegistrySourceType.MANUAL,
+            ),
+        )
+
+        with pytest.raises(ValidationAppError) as inactive_record:
+            await service.update_record(
+                admin.id,
+                record.public_id,
+                TrustRegistryRecordUpdateRequest(
+                    trust_status=TrustRegistryTrustStatus.TRUSTED,
+                ),
+            )
+        assert inactive_record.value.code == "registry_active_lifecycle_required"
+
+        verified = await service.update_record(
+            admin.id,
+            record.public_id,
+            TrustRegistryRecordUpdateRequest(
+                lifecycle_status=TrustRegistryLifecycleStatus.ACTIVE,
+                trust_status=TrustRegistryTrustStatus.TRUSTED,
+            ),
+        )
+        assert verified.lifecycle_status == TrustRegistryLifecycleStatus.ACTIVE
+        assert verified.trust_status == TrustRegistryTrustStatus.TRUSTED
 
 
 @pytest.mark.integration

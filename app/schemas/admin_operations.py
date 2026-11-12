@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -44,6 +44,16 @@ class AdminClientPersonCreateRequest(BaseModel):
     email: EmailStr
     phone: str | None = Field(default=None, min_length=8, max_length=32)
     relationship: OrganizationPersonRelationship = OrganizationPersonRelationship.EMPLOYEE
+    joining_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_joining_date(self) -> "AdminClientPersonCreateRequest":
+        if self.relationship == OrganizationPersonRelationship.FUTURE_EMPLOYEE:
+            if self.joining_date is None:
+                raise ValueError("joining_date is required for a future employee")
+            if self.joining_date <= datetime.now(tz=UTC).date():
+                raise ValueError("joining_date must be in the future for a future employee")
+        return self
 
 
 class AdminClientPersonResponse(BaseModel):
@@ -85,6 +95,19 @@ class CandidateActivationResponse(BaseModel):
     last_sent_at: datetime
     resend_available_at: datetime
     delivery_state: Literal["queued", "failed"]
+
+
+class AdminCandidateInvitationResponse(BaseModel):
+    invitation_id: UUID
+    candidate_id: UUID
+    candidate_name: str | None
+    email_masked: str
+    organization_id: UUID | None = None
+    organization_name: str | None = None
+    person_id: UUID | None = None
+    status: Literal["pending", "expired", "revoked", "delivery_failed"]
+    sent_at: datetime
+    expires_at: datetime
 
 
 class CandidateActivationValidationResponse(BaseModel):

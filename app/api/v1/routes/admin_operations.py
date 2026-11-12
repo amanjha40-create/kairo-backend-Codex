@@ -35,6 +35,7 @@ from app.resumes.schemas import (
 )
 from app.schemas.admin_career import ExtendedCareerType
 from app.schemas.admin_operations import (
+    AdminCandidateInvitationResponse,
     AdminCandidateResponse,
     AdminCareerDeleteResponse,
     AdminCareerMutationRequest,
@@ -167,6 +168,17 @@ async def create_assisted_candidate(
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> AdminCandidateResponse:
     return await service.create_candidate(actor.id, payload)
+
+
+@router.get(
+    "/candidate-invitations",
+    response_model=list[AdminCandidateInvitationResponse],
+)
+async def list_pending_candidate_invitations(
+    _: Annotated[CurrentUser, _permission(Permission.READ_USERS)],
+    service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+) -> list[AdminCandidateInvitationResponse]:
+    return await service.list_pending_candidate_invitations()
 
 
 @router.post(
@@ -337,6 +349,36 @@ async def confirm_assisted_profile_provenance(
 
 
 # Resume/CV routes deliberately delegate to the existing Candidate parser/review/import services.
+@router.get(
+    "/candidates/{candidate_id}/resumes",
+    response_model=Page[ResumeResponse],
+)
+async def list_admin_resumes(
+    candidate_id: UUID,
+    params: Annotated[PageParams, Depends()],
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    resumes: Annotated[ResumeService, Depends(get_resume_service)],
+) -> Page[ResumeResponse]:
+    await admin.candidate_status(candidate_id)
+    return await resumes.list(candidate_id, params.offset or 0, params.limit or 20)
+
+
+@router.get(
+    "/candidates/{candidate_id}/resumes/{resume_id}/status",
+    response_model=ResumeProcessResponse,
+)
+async def get_admin_resume_status(
+    candidate_id: UUID,
+    resume_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    resumes: Annotated[ResumeService, Depends(get_resume_service)],
+) -> ResumeProcessResponse:
+    await admin.candidate_status(candidate_id)
+    return await resumes.status(candidate_id, resume_id)
+
+
 @router.post(
     "/candidates/{candidate_id}/resumes/upload-intent",
     response_model=ResumeUploadIntentResponse,

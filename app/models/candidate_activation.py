@@ -31,6 +31,18 @@ class CandidateActivationToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    organization_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organization_people.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     expires_at: Mapped[datetime] = mapped_column(

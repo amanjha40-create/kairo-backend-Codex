@@ -944,6 +944,12 @@ class OrganizationPersonService:
 
     def _derive_person_relationship(self, person: OrganizationPerson) -> OrganizationPersonRelationship:
         relationship = person.relationship
+        if (
+            relationship == OrganizationPersonRelationship.FUTURE_EMPLOYEE
+            and person.joining_date is not None
+            and person.joining_date <= datetime.now(tz=UTC).date()
+        ):
+            relationship = OrganizationPersonRelationship.EMPLOYEE
         for employment in person.employments:
             relationship = self._merge_relationship(
                 relationship,

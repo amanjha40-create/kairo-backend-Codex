@@ -56,6 +56,7 @@ from app.organization_people.enums import (
 )
 from app.resumes.review_schemas import ImportBatchResponse, review_claim_adapter
 from app.schemas.admin_operations import (
+    AdminCandidateInvitationResponse,
     AdminCandidateResponse,
     AdminCareerDeleteResponse,
     AdminCareerMutationRequest,
@@ -265,6 +266,7 @@ class AdminOperationsService:
             added_at=datetime.now(tz=UTC),
             resolution_state="admin_entered",
             resolution_method="admin_operations",
+            joining_date=payload.joining_date,
         )
         self._session.add(person)
         await self._session.flush()
@@ -335,7 +337,11 @@ class AdminOperationsService:
             )
 
         activation = await self.send_candidate_activation(
-            actor_user_id, candidate.candidate_id, resend=False
+            actor_user_id,
+            candidate.candidate_id,
+            resend=False,
+            organization_id=organization.id,
+            organization_person_id=person.id,
         )
         person.invitation_status_summary = OrganizationPersonInvitationStatusSummary.SENT
         person.last_activity_at = activation.last_sent_at
@@ -346,7 +352,13 @@ class AdminOperationsService:
         return await self._candidate_response(await self._managed_candidate(candidate_id))
 
     async def send_candidate_activation(
-        self, actor_user_id: UUID, candidate_id: UUID, *, resend: bool
+        self,
+        actor_user_id: UUID,
+        candidate_id: UUID,
+        *,
+        resend: bool,
+        organization_id: UUID | None = None,
+        organization_person_id: UUID | None = None,
     ) -> CandidateActivationResponse:
         user = await self._locked_managed_candidate(candidate_id)
         if user.claim_status == CandidateClaimStatus.CLAIMED.value:
@@ -380,6 +392,9 @@ class AdminOperationsService:
                 "An active Candidate activation already exists",
                 code="candidate_activation_exists",
             )
+        if active:
+            organization_id = organization_id or active[0].organization_id
+            organization_person_id = organization_person_id or active[0].organization_person_id
         previous_version = await self._session.scalar(
             select(func.max(CandidateActivationToken.token_version)).where(
                 CandidateActivationToken.user_id == user.id
@@ -393,6 +408,8 @@ class AdminOperationsService:
         token = CandidateActivationToken(
             user_id=user.id,
             created_by_user_id=actor_user_id,
+            organization_id=organization_id,
+            organization_person_id=organization_person_id,
             token_hash=hash_refresh_token(raw_token),
             token_version=version,
             expires_at=now + _ACTIVATION_TTL,
@@ -415,6 +432,10 @@ class AdminOperationsService:
                 metadata_payload={
                     "token_version": version,
                     "expires_at": token.expires_at.isoformat(),
+                    "organization_id": str(organization_id) if organization_id else None,
+                    "organization_person_id": (
+                        str(organization_person_id) if organization_person_id else None
+                    ),
                 },
             )
         )
@@ -454,6 +475,64 @@ class AdminOperationsService:
             resend_available_at=token.last_sent_at + _ACTIVATION_RESEND_COOLDOWN,
             delivery_state=delivery_state,
         )
+
+    async def list_pending_candidate_invitations(
+        self,
+    ) -> list[AdminCandidateInvitationResponse]:
+        now = datetime.now(tz=UTC)
+        rows = (
+            await self._session.execute(
+                select(CandidateActivationToken, User)
+                .join(User, User.id == CandidateActivationToken.user_id)
+                .where(
+                    CandidateActivationToken.used_at.is_(None),
+                    User.deleted_at.is_(None),
+                    User.claim_status != CandidateClaimStatus.CLAIMED.value,
+                )
+                .order_by(
+                    CandidateActivationToken.user_id,
+                    CandidateActivationToken.token_version.desc(),
+                )
+            )
+        ).all()
+        latest: dict[UUID, tuple[CandidateActivationToken, User]] = {}
+        for token, user in rows:
+            latest.setdefault(user.id, (token, user))
+
+        result: list[AdminCandidateInvitationResponse] = []
+        for token, user in latest.values():
+            organization = (
+                await self._session.get(Organization, token.organization_id)
+                if token.organization_id is not None
+                else None
+            )
+            person = (
+                await self._session.get(OrganizationPerson, token.organization_person_id)
+                if token.organization_person_id is not None
+                else None
+            )
+            invitation_status = "pending"
+            if token.delivery_failed_at is not None:
+                invitation_status = "delivery_failed"
+            elif token.revoked_at is not None:
+                invitation_status = "revoked"
+            elif token.expires_at <= now:
+                invitation_status = "expired"
+            result.append(
+                AdminCandidateInvitationResponse(
+                    invitation_id=token.public_id,
+                    candidate_id=user.id,
+                    candidate_name=user.full_name,
+                    email_masked=mask_email(user.email),
+                    organization_id=organization.public_id if organization else None,
+                    organization_name=organization.name if organization else None,
+                    person_id=person.public_id if person else None,
+                    status=invitation_status,
+                    sent_at=token.last_sent_at,
+                    expires_at=token.expires_at,
+                )
+            )
+        return sorted(result, key=lambda item: item.sent_at, reverse=True)
 
     async def validate_candidate_activation(
         self, raw_token: str

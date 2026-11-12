@@ -44,6 +44,7 @@ class TrustRegistryRepository:
                 TrustRegistryRecord.public_id == public_id,
                 TrustRegistryRecord.deleted_at.is_(None),
             )
+            .execution_options(populate_existing=True)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
