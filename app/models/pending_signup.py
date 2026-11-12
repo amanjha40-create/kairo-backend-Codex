@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.constants import SignupKind
@@ -36,6 +37,7 @@ class PendingSignup(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     oauth_provider_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     oauth_provider_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     oauth_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    oauth_refresh_token_encrypted: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     email_otp_sent_count: Mapped[int] = mapped_column("otp_sent_count", Integer, nullable=False, default=0)
     email_verify_attempt_count: Mapped[int] = mapped_column(
         "verify_attempt_count",

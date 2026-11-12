@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,9 +32,11 @@ class UserSocialAccount(UUIDPrimaryKeyMixin, Base):
         nullable=False,
         index=True,
     )
-    provider: Mapped[str] = mapped_column(String(32), nullable=False)          # "google" | "linkedin" | "github"
-    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False) # sub / id from provider
+    # Stable provider subject, never an email-derived identity.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    encrypted_refresh_token: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     linked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

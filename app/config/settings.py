@@ -801,6 +801,20 @@ class Settings(BaseSettings):
         default=None, validation_alias=AliasChoices("GOOGLE_ANDROID_APP_LINK_CERT_SHA256")
     )
 
+    # --- Sign in with Apple ---
+    apple_client_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("APPLE_CLIENT_ID")
+    )
+    apple_team_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("APPLE_TEAM_ID")
+    )
+    apple_key_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("APPLE_KEY_ID")
+    )
+    apple_private_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("APPLE_PRIVATE_KEY")
+    )
+
     # --- LinkedIn OAuth ---
     linkedin_client_id: str | None = Field(
         default=None, validation_alias=AliasChoices("LINKEDIN_CLIENT_ID")

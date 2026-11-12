@@ -39,6 +39,12 @@ EMAIL_FROM=verify@kairoid.com
 EMAIL_REPLY_TO=verify@kairoid.com
 AWS_REGION=us-east-1
 
+# Required only when native Sign in with Apple is enabled.
+APPLE_CLIENT_ID=com.kairoid.Kairo
+APPLE_TEAM_ID=MVT4T97ZGC
+APPLE_KEY_ID=<sign-in-with-apple-key-id>
+# APPLE_PRIVATE_KEY=<inject download-once p8 material through the secret store>
+
 DATABASE_HOST=<runtime-db-hostname>
 DATABASE_PORT=5432
 DATABASE_NAME=kairo

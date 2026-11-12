@@ -102,6 +102,10 @@ Set only the providers you actually enable.
 |---|---|---|---|
 | `GOOGLE_CLIENT_ID` | If Google auth enabled | API | Must match production redirect URI. |
 | `GOOGLE_CLIENT_SECRET` | If Google auth enabled | API | Keep secret. |
+| `APPLE_CLIENT_ID` | If native Apple auth enabled | API | Exact iOS bundle identifier (`com.kairoid.Kairo`). |
+| `APPLE_TEAM_ID` | If native Apple auth enabled | API | Apple organization Team ID. |
+| `APPLE_KEY_ID` | If native Apple auth enabled | API | ID of a Sign in with Apple-enabled key. |
+| `APPLE_PRIVATE_KEY` | If native Apple auth enabled | API | Download-once `.p8` material; keep only in the secret store. |
 | `LINKEDIN_CLIENT_ID` | If LinkedIn enabled | API | Optional today. |
 | `LINKEDIN_CLIENT_SECRET` | If LinkedIn enabled | API | Optional today. |
 | `GITHUB_CLIENT_ID` | If GitHub enabled | API | Optional today. |

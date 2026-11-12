@@ -17,6 +17,9 @@ from app.api.dependencies.rate_limit import (
 )
 from app.api.dependencies.services import get_auth_service
 from app.schemas.auth import (
+    ApplePhoneStartRequest,
+    AppleSignInRequest,
+    AppleSignInResponse,
     ChangePasswordRequest,
     ChangePasswordResponse,
     ForgotPasswordRequest,
@@ -265,6 +268,45 @@ async def signup_google_phone_start(
     auth: AuthService = Depends(get_auth_service),
 ) -> SignupStartResponse:
     return await auth.start_google_phone_verification(payload)
+
+
+@router.post(
+    "/signup/federated/phone",
+    response_model=SignupStartResponse,
+    summary="Add phone number after a verified federated signup",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_federated_phone_start(
+    payload: GooglePhoneStartRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> SignupStartResponse:
+    return await auth.start_federated_phone_verification(payload)
+
+
+@router.post(
+    "/apple",
+    response_model=AppleSignInResponse,
+    summary="Authenticate a native Sign in with Apple credential",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def apple_sign_in(
+    payload: AppleSignInRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> AppleSignInResponse:
+    return await auth.sign_in_with_apple(payload)
+
+
+@router.post(
+    "/signup/apple/phone",
+    response_model=SignupStartResponse,
+    summary="Add phone number after verified Apple signup",
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def signup_apple_phone_start(
+    payload: ApplePhoneStartRequest,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+) -> SignupStartResponse:
+    return await auth.start_apple_phone_verification(payload)
 
 
 @router.post(
