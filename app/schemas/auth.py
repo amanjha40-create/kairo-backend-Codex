@@ -274,6 +274,27 @@ class GoogleHandoffExchangeResponse(BaseModel):
     signup: SignupStartResponse | None = None
 
 
+class AppleSignInRequest(BaseModel):
+    """Native Apple credential; email and subject are trusted only from the signed token."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    identity_token: str = Field(..., min_length=20, max_length=16_384, repr=False)
+    authorization_code: str = Field(..., min_length=8, max_length=4096, repr=False)
+    nonce: str = Field(..., min_length=20, max_length=256, repr=False)
+    given_name: str | None = Field(default=None, max_length=100)
+    family_name: str | None = Field(default=None, max_length=100)
+
+
+class ApplePhoneStartRequest(BaseModel):
+    signup_session_id: UUID
+    phone: str = Field(..., min_length=8, max_length=32)
+
+
+class AppleSignInResponse(GoogleHandoffExchangeResponse):
+    """Provider-neutral result shape retained for mobile compatibility."""
+
+
 class SetPasswordRequest(BaseModel):
     """Confirm first-password creation using the account-bound email challenge."""
 

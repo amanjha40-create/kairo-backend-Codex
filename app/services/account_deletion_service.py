@@ -14,6 +14,7 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import verify_password
+from app.auth.providers.apple import revoke_refresh_token as revoke_apple_refresh_token
 from app.config import Settings
 from app.exceptions import (
     NotFoundError,
@@ -23,6 +24,7 @@ from app.exceptions import (
 )
 from app.infrastructure.sqs.envelope import SqsJobEnvelope
 from app.infrastructure.sqs.publisher import send_json_message
+from app.integrations.digilocker.crypto import TokenCipher
 from app.integrations.digilocker.transactions import TransactionStore
 from app.models import (
     Certification,
@@ -149,6 +151,7 @@ class AccountDeletionService:
 
         self._assert_confirmation(payload.confirm)
         self._assert_recent_password_reauthentication(user, payload.current_password)
+        await self._revoke_apple_credentials(user.id)
 
         now = datetime.now(tz=UTC)
         tombstone_email = self._tombstone_email(user.id)
@@ -236,6 +239,46 @@ class AccountDeletionService:
             return
         if not current_password or not verify_password(current_password, user.password_hash):
             raise UnauthorizedError("Current password is incorrect")
+
+    async def _revoke_apple_credentials(self, user_id: UUID) -> None:
+        apple_account = await self._session.scalar(
+            select(UserSocialAccount).where(
+                UserSocialAccount.user_id == user_id,
+                UserSocialAccount.provider == "apple",
+            )
+        )
+        if apple_account is None:
+            return
+        if apple_account.encrypted_refresh_token is None:
+            raise ServiceUnavailableError(
+                "Apple account deletion authorization is unavailable. "
+                "Please try Apple sign-in again."
+            )
+        if (
+            self._settings.digilocker_token_encryption_keys is None
+            or self._settings.digilocker_token_encryption_active_key_id is None
+        ):
+            raise ServiceUnavailableError("Account deletion is temporarily unavailable")
+        cipher = TokenCipher(
+            self._settings.digilocker_token_encryption_keys,
+            self._settings.digilocker_token_encryption_active_key_id,
+            environment=self._settings.app_env.value,
+        )
+        try:
+            refresh_token = cipher.decrypt_secret(
+                apple_account.encrypted_refresh_token,
+                user_id=user_id,
+                connection_id=apple_account.id,
+                purpose="refresh_token",
+                provider="apple",
+            )
+            await revoke_apple_refresh_token(refresh_token.get_secret_value(), self._settings)
+        except Exception as exc:
+            logger.warning(
+                "apple_account_revocation_failed",
+                extra={"user_id": str(user_id), "error_type": type(exc).__name__},
+            )
+            raise ServiceUnavailableError("Apple account deletion could not be completed") from None
 
     async def _build_snapshot(self, user: User) -> _DeletionSnapshot:
         snapshot = _DeletionSnapshot()

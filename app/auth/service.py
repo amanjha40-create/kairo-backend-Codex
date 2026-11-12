@@ -11,6 +11,7 @@ from typing import Literal
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
+from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +28,11 @@ from app.auth.password_errors import (
 )
 from app.auth.passwords import hash_password, password_needs_rehash, verify_password
 from app.auth.phone_utils import mask_phone, normalize_phone
+from app.auth.providers.apple import (
+    AppleTokenExchange,
+    exchange_authorization_code as exchange_apple_authorization_code,
+    validate_identity_token as validate_apple_identity_token,
+)
 from app.auth.provider_registry import get_provider
 from app.auth.signup_otp import SignupOtpStore, generate_otp_code
 from app.auth.tokens import (
@@ -47,6 +53,7 @@ from app.infrastructure.redis.keys import RedisKeys
 from app.integrations.email import get_email_sender
 from app.integrations.phone_otp import get_phone_otp_sender
 from app.integrations.phone_otp.msg91 import Msg91PhoneOtpProvider
+from app.integrations.digilocker.crypto import TokenCipher
 from app.logging.auth_audit import auth_audit
 from app.models import PasswordResetToken, PendingSignup, RefreshToken, User, UserAccountEvent
 from app.models.user_social_account import UserSocialAccount
@@ -56,6 +63,9 @@ from app.repositories.organization import OrganizationRepository
 from app.repositories.pending_signup import PendingSignupRepository
 from app.repositories.user_social_account import UserSocialAccountRepository
 from app.schemas.auth import (
+    ApplePhoneStartRequest,
+    AppleSignInRequest,
+    AppleSignInResponse,
     ChangePasswordRequest,
     ChangePasswordResponse,
     ForgotPasswordRequest,
@@ -175,6 +185,18 @@ class AuthService:
 
         self.mobile_verification = MobileVerificationService(
             session, settings, redis, self._phone, self._msg91_phone,
+        )
+
+    def _provider_token_cipher(self) -> TokenCipher:
+        if (
+            self._settings.digilocker_token_encryption_keys is None
+            or self._settings.digilocker_token_encryption_active_key_id is None
+        ):
+            raise ValidationAppError("Provider token encryption is not configured")
+        return TokenCipher(
+            self._settings.digilocker_token_encryption_keys,
+            self._settings.digilocker_token_encryption_active_key_id,
+            environment=self._settings.app_env.value,
         )
 
     def _portal_origin_from_request(
@@ -456,6 +478,103 @@ class AuthService:
         pending = await self._load_active_pending(data.signup_session_id, allow_completed=True)
         return await self._complete_pending_signup(pending, SignupKind.CANDIDATE)
 
+    async def sign_in_with_apple(self, data: AppleSignInRequest) -> AppleSignInResponse:
+        """Validate a native Apple credential without trusting client-supplied identity data."""
+
+        try:
+            identity = validate_apple_identity_token(data.identity_token, data.nonce, self._settings)
+        except Exception as exc:
+            logger.warning(
+                "apple_identity_validation_failed",
+                extra={"failure_reason": getattr(exc, "safe_reason", type(exc).__name__)},
+            )
+            return AppleSignInResponse(
+                outcome=GoogleAuthOutcome.AUTH_FAILED,
+                message="Apple sign-in could not be completed. Please try again.",
+            )
+
+        email = normalize_email(identity.email)
+        social = await self._social.get_by_provider("apple", identity.provider_user_id)
+        if social is not None:
+            user = await self._users.get_by_id(social.user_id)
+            if user is None or not user.is_active or user.deleted_at is not None:
+                return AppleSignInResponse(
+                    outcome=GoogleAuthOutcome.AUTH_FAILED,
+                    message="Apple sign-in could not be completed. Please try again.",
+                )
+            exchange = await self._exchange_apple_authorization_code(data.authorization_code)
+            if exchange is None:
+                return AppleSignInResponse(
+                    outcome=GoogleAuthOutcome.AUTH_FAILED,
+                    message="Apple sign-in could not be completed. Please try again.",
+                )
+            social.encrypted_refresh_token = self._provider_token_cipher().encrypt_secret(
+                SecretStr(exchange.refresh_token),
+                user_id=user.id,
+                connection_id=social.id,
+                purpose="refresh_token",
+                provider="apple",
+            )
+            tokens = await self._issue_tokens(user)
+            await self._session.commit()
+            return AppleSignInResponse(
+                outcome=GoogleAuthOutcome.LOGIN_COMPLETE,
+                message="Signed in successfully.",
+                tokens=tokens,
+            )
+
+        # Email similarity is never authority to merge Apple with an existing account.
+        if await self._users.get_by_email(email) is not None:
+            return AppleSignInResponse(
+                outcome=GoogleAuthOutcome.ACCOUNT_LINKING_REQUIRED,
+                message="Sign in to your existing account before linking Apple.",
+            )
+
+        full_name = " ".join(
+            part.strip() for part in (data.given_name, data.family_name) if part and part.strip()
+        ) or None
+        exchange = await self._exchange_apple_authorization_code(data.authorization_code)
+        if exchange is None:
+            return AppleSignInResponse(
+                outcome=GoogleAuthOutcome.AUTH_FAILED,
+                message="Apple sign-in could not be completed. Please try again.",
+            )
+        pending = await self._get_or_prepare_apple_pending_signup(
+            provider_user_id=identity.provider_user_id,
+            email=email,
+            full_name=full_name,
+        )
+        pending.oauth_refresh_token_encrypted = self._provider_token_cipher().encrypt_secret(
+            SecretStr(exchange.refresh_token),
+            user_id=pending.id,
+            connection_id=pending.id,
+            purpose="refresh_token",
+            provider="apple",
+        )
+        await self._session.commit()
+        return AppleSignInResponse(
+            outcome=GoogleAuthOutcome.PHONE_VERIFICATION_REQUIRED,
+            message="Verify your phone number to finish signup.",
+            signup=self._build_signup_start_response(pending, message="Phone verification required"),
+        )
+
+    async def _exchange_apple_authorization_code(self, code: str) -> AppleTokenExchange | None:
+        try:
+            return await exchange_apple_authorization_code(code, self._settings)
+        except Exception as exc:
+            logger.warning(
+                "apple_authorization_code_exchange_failed",
+                extra={"failure_reason": getattr(exc, "safe_reason", type(exc).__name__)},
+            )
+            return None
+
+    async def start_apple_phone_verification(self, data: ApplePhoneStartRequest) -> SignupStartResponse:
+        pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
+        if pending.oauth_provider != "apple" or pending.email_verified_at is None:
+            raise ForbiddenError("This signup cannot use Apple phone verification")
+        return await self._attach_phone_to_federated_signup(pending, data.phone)
+
     async def start_google_phone_verification(self, data: GooglePhoneStartRequest) -> SignupStartResponse:
         """Attach a phone to a Google-pending signup; OTP verification remains mandatory."""
 
@@ -464,7 +583,19 @@ class AuthService:
         if pending.oauth_provider != "google" or pending.email_verified_at is None:
             raise ForbiddenError("This signup cannot use Google phone verification")
 
-        phone = normalize_phone(data.phone, self._settings)
+        return await self._attach_phone_to_federated_signup(pending, data.phone)
+
+    async def start_federated_phone_verification(self, data: GooglePhoneStartRequest) -> SignupStartResponse:
+        pending = await self._load_active_pending(data.signup_session_id)
+        self._assert_signup_kind(pending, SignupKind.CANDIDATE)
+        if pending.oauth_provider not in {"google", "apple"} or pending.email_verified_at is None:
+            raise ForbiddenError("This signup cannot use federated phone verification")
+        return await self._attach_phone_to_federated_signup(pending, data.phone)
+
+    async def _attach_phone_to_federated_signup(
+        self, pending: PendingSignup, raw_phone: str
+    ) -> SignupStartResponse:
+        phone = normalize_phone(raw_phone, self._settings)
         existing = await self._users.get_by_phone(phone)
         other_pending = await self._pending.get_by_phone(phone)
         if existing is not None or (other_pending is not None and other_pending.id != pending.id):
@@ -507,7 +638,7 @@ class AuthService:
             pending.completed_user_id = user.id
             pending.completed_at = now
             if pending.oauth_provider and pending.oauth_provider_user_id:
-                await self._social.create(
+                social = await self._social.create(
                     UserSocialAccount(
                         user_id=user.id,
                         provider=pending.oauth_provider,
@@ -515,11 +646,29 @@ class AuthService:
                         provider_email=pending.oauth_provider_email or pending.email,
                     )
                 )
+                if pending.oauth_provider == "apple":
+                    if pending.oauth_refresh_token_encrypted is None:
+                        raise ConflictError("Apple signup credential expired; start Apple sign-in again")
+                    refresh_token = self._provider_token_cipher().decrypt_secret(
+                        pending.oauth_refresh_token_encrypted,
+                        user_id=pending.id,
+                        connection_id=pending.id,
+                        purpose="refresh_token",
+                        provider="apple",
+                    )
+                    social.encrypted_refresh_token = self._provider_token_cipher().encrypt_secret(
+                        refresh_token,
+                        user_id=user.id,
+                        connection_id=social.id,
+                        purpose="refresh_token",
+                        provider="apple",
+                    )
                 # Pending signup rows retain no durable third-party identifier after completion.
                 pending.oauth_provider = None
                 pending.oauth_provider_user_id = None
                 pending.oauth_provider_email = None
                 pending.oauth_validated_at = None
+                pending.oauth_refresh_token_encrypted = None
 
         if pending.completed_user_id is None:
             pending.completed_user_id = user.id
@@ -897,6 +1046,48 @@ class AuthService:
             signup_kind=SignupKind.CANDIDATE,
             oauth_provider="google",
             oauth_provider_user_id=profile.provider_user_id,
+            oauth_provider_email=email,
+            oauth_validated_at=now,
+        )
+        self._session.add(pending)
+        await self._session.flush()
+        return pending
+
+    async def _get_or_prepare_apple_pending_signup(
+        self,
+        *,
+        provider_user_id: str,
+        email: str,
+        full_name: str | None,
+    ) -> PendingSignup:
+        existing = await self._pending.get_by_email(email)
+        now = datetime.now(tz=UTC)
+        if existing is not None and not await self._pending.is_expired(existing):
+            if existing.oauth_provider == "apple" and existing.oauth_provider_user_id == provider_user_id:
+                if existing.full_name is None and full_name is not None:
+                    existing.full_name = full_name
+                return existing
+            raise ConflictError("An account signup is already pending for this email")
+        if existing is not None:
+            await self._pending.delete_by_id(existing.id)
+            await self._session.flush()
+        pending = PendingSignup(
+            email=email,
+            phone=None,
+            password_hash=None,
+            full_name=full_name,
+            expires_at=now + timedelta(hours=self._settings.signup_pending_ttl_hours),
+            email_verified_at=now,
+            phone_verified_at=None,
+            email_otp_sent_count=0,
+            email_verify_attempt_count=0,
+            email_last_otp_sent_at=None,
+            phone_otp_sent_count=0,
+            phone_verify_attempt_count=0,
+            phone_last_otp_sent_at=None,
+            signup_kind=SignupKind.CANDIDATE,
+            oauth_provider="apple",
+            oauth_provider_user_id=provider_user_id,
             oauth_provider_email=email,
             oauth_validated_at=now,
         )
