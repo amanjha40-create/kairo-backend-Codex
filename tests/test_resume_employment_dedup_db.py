@@ -17,9 +17,13 @@ from app.models.employment_document import EmploymentDocument
 from app.models.resume_document import ResumeDocument
 from app.models.resume_parsed_result import ResumeParsedResult
 from app.models.resume_processing_job import ResumeProcessingJob
+from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
-from app.resumes.client_compatibility import EXPLICIT_RESUME_REVIEW_CAPABILITY
+from app.resumes.client_compatibility import (
+    EXPLICIT_RESUME_REVIEW_CAPABILITY,
+    IMPORT_FIRST_RESUME_CAPABILITY,
+)
 from app.resumes.review_schemas import ReviewImportRequest, ReviewItemUpdateRequest
 from app.services.resume_review_service import ResumeReviewService
 
@@ -296,6 +300,38 @@ async def test_possible_match_defaults_to_skip_and_requires_explicit_distinct_co
     # Identical imported payload/provenance avoids multiplication even with missing dates.
     assert (await run_import(owner, await review(owner, [ambiguous]))).linked_count == 1
     assert await count(owner) == 2
+
+
+async def test_import_first_links_exact_and_holds_ambiguous_matches(owner):
+    token = bind_client_metadata(
+        ClientMetadata(capabilities=frozenset({IMPORT_FIRST_RESUME_CAPABILITY}))
+    )
+    try:
+        existing_id = await career(owner)
+        exact = await review(owner, [CLAIM], confirm=False)
+        assert exact.items[0].selected is True
+        assert exact.items[0].import_action == "link_existing"
+        exact_result = await run_import(owner, exact, "import-first-exact")
+        assert exact_result.linked_count == 1
+        assert exact_result.results[0].record_id == existing_id
+        async with async_session_factory() as session:
+            provenance = await session.scalar(
+                select(ResumeRecordProvenance).where(
+                    ResumeRecordProvenance.review_item_id == exact.items[0].id
+                )
+            )
+            assert provenance.confirmation_source == "resume_import_first"
+
+        ambiguous = await review(owner, [CLAIM | {"start_date": None}], confirm=False)
+        assert ambiguous.items[0].selected is False
+        held_result = await run_import(owner, ambiguous, "import-first-held")
+        assert held_result.status == "partially_completed"
+        assert held_result.blocked_count == 1
+        assert held_result.imported_count == 0
+        assert held_result.linked_count == 0
+        assert await count(owner) == 1
+    finally:
+        reset_client_metadata(token)
 
 
 async def test_concurrent_different_reviews_and_repeated_rows_create_once(owner):
