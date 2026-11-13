@@ -250,6 +250,9 @@ class ImportResultResponse(BaseModel):
 class ImportEntitySummary(BaseModel):
     detected: int = 0
     imported: int = 0
+    linked: int = 0
+    needs_attention: int = 0
+    excluded: int = 0
     incomplete: int = 0
     failed: int = 0
 
@@ -265,6 +268,11 @@ class ImportBatchResponse(BaseModel):
     failed_count: int
     blocked_count: int
     incomplete_count: int
+    detected_count: int = 0
+    added_count: int = 0
+    already_present_count: int = 0
+    needs_attention_count: int = 0
+    excluded_count: int = 0
     entity_counts: dict[str, ImportEntitySummary]
     results: list[ImportResultResponse]
     created_at: datetime

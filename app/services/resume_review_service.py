@@ -220,6 +220,8 @@ class ResumeReviewService:
         item = await self.session.scalar(select(ResumeReviewItem).where(ResumeReviewItem.id == item_id, ResumeReviewItem.review_session_id == review_id, ResumeReviewItem.user_id == user_id))
         if not item:
             raise NotFoundError("Resume review item not found")
+        if item.review_status == "imported":
+            raise ConflictError("Imported Resume records cannot be changed by recovery")
         if item.claim_type == "employment" and payload.import_action == ResumeImportAction.UPDATE_EXISTING:
             raise ValidationAppError("Keep existing employment unchanged or add a distinct role", code="employment_merge_not_supported")
         if payload.confirm_distinct_role and (
@@ -426,15 +428,18 @@ class ResumeReviewService:
                 batch.failed_count += 1
                 item.review_status = "failed"
                 self.session.add(ResumeImportResult(import_batch_id=batch.id, review_item_id=item.id, outcome="failed", sanitized_error_code="item_import_failed", warnings=[]))
-        batch.status = (
-            "completed"
-            if batch.failed_count == 0 and batch.blocked_count == 0
-            else "partially_completed"
-        )
+        await self.session.flush()
+        remaining = (await self.session.scalars(select(ResumeReviewItem).where(
+            ResumeReviewItem.review_session_id == review.id,
+            ResumeReviewItem.claim_type.in_(SUPPORTED_IMPORT_TYPES),
+            ResumeReviewItem.review_status.not_in({"imported", "skipped", "excluded"}),
+        ))).all()
+        batch.blocked_count = sum(item.review_status != "failed" for item in remaining)
+        batch.status = "completed" if not remaining else "partially_completed"
         batch.completed_at = datetime.now(UTC)
         review.status = (
             ResumeReviewStatus.IMPORTED.value
-            if batch.failed_count == 0 and batch.blocked_count == 0
+            if not remaining
             else ResumeReviewStatus.PARTIALLY_IMPORTED.value
         )
         review.confirmed_at = now
@@ -476,6 +481,8 @@ class ResumeReviewService:
         import_first = import_first_resume_capable()
         for item in items:
             if item.claim_type in SUGGESTION_ONLY_TYPES:
+                continue
+            if getattr(item, "review_status", None) in {"imported", "skipped"}:
                 continue
             if not strict_review and not import_first and not item.selected:
                 continue
@@ -863,24 +870,70 @@ class ResumeReviewService:
         batch = await self.session.scalar(select(ResumeImportBatch).where(ResumeImportBatch.id == batch.id))
         results = (await self.session.scalars(select(ResumeImportResult).where(ResumeImportResult.import_batch_id == batch.id).order_by(ResumeImportResult.created_at))).all()
         result_models = [ImportResultResponse.model_validate(result) for result in results]
-        incomplete_count = sum("needs_completion_in_career" in result.warnings for result in result_models)
         items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == batch.review_session_id))).all()
-        counts: dict[str, dict[str, int]] = defaultdict(lambda: {"detected": 0, "imported": 0, "incomplete": 0, "failed": 0})
+        all_results = (await self.session.scalars(
+            select(ResumeImportResult)
+            .join(ResumeImportBatch, ResumeImportBatch.id == ResumeImportResult.import_batch_id)
+            .where(ResumeImportBatch.review_session_id == batch.review_session_id)
+            .order_by(ResumeImportResult.created_at, ResumeImportResult.id)
+        )).all()
+        latest_result = {result.review_item_id: result for result in all_results}
+        counts: dict[str, dict[str, int]] = defaultdict(lambda: {
+            "detected": 0,
+            "imported": 0,
+            "linked": 0,
+            "needs_attention": 0,
+            "excluded": 0,
+            "incomplete": 0,
+            "failed": 0,
+        })
+        outcomes = {"added": 0, "already_present": 0, "needs_attention": 0, "excluded": 0}
         for item in items:
             if item.claim_type in SUGGESTION_ONLY_TYPES:
                 continue
-            counts[item.claim_type]["detected"] += 1
-        for result in result_models:
-            claim_type = result.record_type or next((item.claim_type for item in items if item.id == result.review_item_id), None)
-            if not claim_type:
-                continue
-            if result.outcome in {"imported", "linked"}:
-                counts[claim_type]["imported"] += 1
-            if "needs_completion_in_career" in result.warnings:
-                counts[claim_type]["incomplete"] += 1
-            if result.outcome == "failed":
-                counts[claim_type]["failed"] += 1
-        return ImportBatchResponse(id=batch.id, review_session_id=batch.review_session_id, status=batch.status, total_count=batch.total_count, imported_count=batch.imported_count, linked_count=batch.linked_count, skipped_count=batch.skipped_count, failed_count=batch.failed_count, blocked_count=batch.blocked_count, incomplete_count=incomplete_count, entity_counts={key: ImportEntitySummary(**value) for key, value in counts.items()}, results=result_models, created_at=batch.created_at, updated_at=batch.updated_at)
+            summary = counts[item.claim_type]
+            summary["detected"] += 1
+            result = latest_result.get(item.id)
+            if item.review_status == "imported" and result and result.outcome == "linked":
+                outcome = "already_present"
+                summary["linked"] += 1
+            elif item.review_status == "imported":
+                outcome = "added"
+                summary["imported"] += 1
+            elif item.review_status in {"excluded", "skipped"}:
+                outcome = "excluded"
+                summary["excluded"] += 1
+            else:
+                outcome = "needs_attention"
+                summary["needs_attention"] += 1
+            outcomes[outcome] += 1
+            if result and "needs_completion_in_career" in result.warnings:
+                summary["incomplete"] += 1
+            if result and result.outcome == "failed":
+                summary["failed"] += 1
+        detected_count = sum(outcomes.values())
+        incomplete_count = sum(summary["incomplete"] for summary in counts.values())
+        return ImportBatchResponse(
+            id=batch.id,
+            review_session_id=batch.review_session_id,
+            status=batch.status,
+            total_count=batch.total_count,
+            imported_count=batch.imported_count,
+            linked_count=batch.linked_count,
+            skipped_count=batch.skipped_count,
+            failed_count=batch.failed_count,
+            blocked_count=batch.blocked_count,
+            incomplete_count=incomplete_count,
+            detected_count=detected_count,
+            added_count=outcomes["added"],
+            already_present_count=outcomes["already_present"],
+            needs_attention_count=outcomes["needs_attention"],
+            excluded_count=outcomes["excluded"],
+            entity_counts={key: ImportEntitySummary(**value) for key, value in counts.items()},
+            results=result_models,
+            created_at=batch.created_at,
+            updated_at=batch.updated_at,
+        )
 
     @staticmethod
     def _claims(parsed: ParsedResumeResult) -> list[tuple[str, dict[str, Any]]]:

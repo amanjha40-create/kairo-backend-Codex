@@ -14,6 +14,7 @@ from app.models.freelance_contract import FreelanceContract
 from app.models.gig_platform import GigPlatform
 from app.models.internship import Internship
 from app.models.portfolio import PortfolioItem
+from app.models.project import Project
 from app.models.resume_record_provenance import ResumeRecordProvenance
 from app.models.skill import Skill
 from app.models.verification_request import VerificationRequest
@@ -67,8 +68,10 @@ class ResumeDuplicateService:
                 if skill_key(row.name or "") == requested_name
             ]
             return DuplicateAssessment("exact_match", candidates[:1], ["normalized_identity_match"] if candidates else []) if candidates else DuplicateAssessment("no_match", [], [])
-        if claim_type in {"profile", "project"}:
+        if claim_type == "profile":
             return DuplicateAssessment("no_match", [], [])
+        if claim_type == "project":
+            return await self._project(user_id, payload)
         if claim_type == "employment":
             return await self._employment(user_id, payload)
         model, primary, secondary, start, end, protected = self._spec(claim_type)
@@ -146,6 +149,63 @@ class ResumeDuplicateService:
                     "end_date": str(row.end_date) if row.end_date else None,
                 })
         status = "exact_match" if any(c["classification"] == "exact_match" for c in candidates) else "possible_match" if candidates else "no_match"
+        return DuplicateAssessment(status, candidates, [])
+
+    async def _project(self, user_id: UUID, payload: dict[str, Any]) -> DuplicateAssessment:
+        rows = (await self.session.scalars(select(Project).where(
+            Project.user_id == user_id,
+            Project.deleted_at.is_(None),
+        ).order_by(Project.created_at, Project.id))).all()
+        prior_ids = set((await self.session.scalars(select(ResumeRecordProvenance.record_id).where(
+            ResumeRecordProvenance.user_id == user_id,
+            ResumeRecordProvenance.record_type == "project",
+            ResumeRecordProvenance.edited_payload_hash == payload_hash(payload),
+        ))).all())
+        requested_title = normalize_text(payload.get("title"))
+        requested_description = normalize_text(payload.get("description"))
+        requested_url = normalize_url(payload.get("url"))
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            title_equal = bool(requested_title and requested_title == normalize_text(row.title))
+            description_equal = bool(
+                requested_description
+                and requested_description == normalize_text(row.description)
+            )
+            url_equal = bool(requested_url and requested_url == normalize_url(row.project_url))
+            unchanged_prior = bool(
+                row.id in prior_ids
+                and title_equal
+                and normalize_text(row.description) == requested_description
+                and normalize_url(row.project_url) == requested_url
+            )
+            if unchanged_prior:
+                classification, reasons = "exact_match", ["identical_previous_import"]
+            elif title_equal and url_equal:
+                classification, reasons = "exact_match", ["normalized_project_identity_match"]
+            elif title_equal and description_equal:
+                classification, reasons = "probable_match", ["normalized_project_details_match"]
+            elif title_equal or url_equal:
+                classification, reasons = "possible_match", ["partial_project_identity_match"]
+            else:
+                continue
+            candidates.append({
+                "record_id": str(row.id),
+                "classification": classification,
+                "reasons": reasons,
+                "protected": False,
+                "safety_recommendation": (
+                    "link_without_mutation"
+                    if classification == "exact_match"
+                    else "candidate_review_required"
+                ),
+            })
+        status = (
+            "exact_match"
+            if any(candidate["classification"] == "exact_match" for candidate in candidates)
+            else "probable_match"
+            if any(candidate["classification"] == "probable_match" for candidate in candidates)
+            else "possible_match" if candidates else "no_match"
+        )
         return DuplicateAssessment(status, candidates, [])
 
     @staticmethod

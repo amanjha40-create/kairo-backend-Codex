@@ -112,6 +112,78 @@ async def test_skill_duplicate_matching_links_existing_normalized_name() -> None
     assert result.candidates[0]["record_id"] == str(existing_id)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prior", "existing_description", "requested_description", "expected"),
+    [
+        (True, None, None, "exact_match"),
+        (False, "Same details", "Same details", "probable_match"),
+        (False, "Earlier scope", "Different scope", "possible_match"),
+    ],
+)
+async def test_project_duplicate_matching_is_repeat_safe_but_title_alone_is_ambiguous(
+    prior: bool,
+    existing_description: str | None,
+    requested_description: str | None,
+    expected: str,
+) -> None:
+    existing_id = uuid4()
+    row = SimpleNamespace(
+        id=existing_id,
+        title="Synthetic Project",
+        description=existing_description,
+        project_url=None,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            self.calls += 1
+            values = [row] if self.calls == 1 else ([existing_id] if prior else [])
+            return SimpleNamespace(all=lambda: values)
+
+    result = await ResumeDuplicateService(FakeSession()).assess(
+        uuid4(),
+        "project",
+        {
+            "claim_type": "project",
+            "title": "Synthetic Project",
+            "description": requested_description,
+            "url": None,
+        },
+    )
+
+    assert result.status == expected
+    assert result.candidates[0]["safety_recommendation"] == (
+        "link_without_mutation" if expected == "exact_match" else "candidate_review_required"
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_duplicate_matching_keeps_distinct_titles_separate() -> None:
+    class FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            self.calls += 1
+            rows = [SimpleNamespace(
+                id=uuid4(), title="First Project", description="Same details", project_url=None,
+            )]
+            return SimpleNamespace(all=lambda: rows if self.calls == 1 else [])
+
+    result = await ResumeDuplicateService(FakeSession()).assess(
+        uuid4(),
+        "project",
+        {"claim_type": "project", "title": "Second Project", "description": "Same details"},
+    )
+
+    assert result.status == "no_match"
+    assert result.candidates == []
+
+
 def test_review_claims_reject_unknown_and_verification_fields() -> None:
     with pytest.raises(ValidationError):
         review_claim_adapter.validate_python({
@@ -345,6 +417,32 @@ async def test_import_first_zero_item_and_blocked_item_plans_do_not_block_safe_b
     assert excluded_plan.ready is True
     assert excluded_plan.items[0].action == "skip"
     assert excluded_plan.items[0].blockers == []
+
+
+@pytest.mark.asyncio
+async def test_partial_recovery_plan_never_reimports_completed_items() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=3)
+    imported = SimpleNamespace(
+        id=uuid4(), selected=True, review_status="imported", import_action="create_new",
+        claim_type="project", edited_payload={"claim_type": "project", "title": "Imported"},
+        duplicate_status="no_match", target_record_id=None, conflict_warnings=[],
+    )
+    held = SimpleNamespace(
+        id=uuid4(), selected=False, review_status="deselected", import_action="skip",
+        claim_type="education", edited_payload={
+            "claim_type": "education", "institution_name": "Synthetic", "degree": "Degree",
+        }, duplicate_status="possible_match", target_record_id=None, conflict_warnings=[],
+    )
+
+    class FakeSession:
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: [imported, held])
+
+    with import_first_client():
+        plan = await ResumeReviewService(FakeSession())._build_plan(review)
+
+    assert [item.item_id for item in plan.items] == [held.id]
+    assert plan.items[0].blockers == ["held_for_review"]
 
 
 @pytest.mark.asyncio
@@ -793,6 +891,79 @@ def test_verified_or_active_records_are_protected() -> None:
     assert ResumeReviewService._protected(SimpleNamespace(verification_status="verified", verified_at=None))
     assert ResumeReviewService._protected(SimpleNamespace(verification_status="pending", verified_at=object()))
     assert not ResumeReviewService._protected(SimpleNamespace(verification_status="draft", verified_at=None))
+
+
+@pytest.mark.asyncio
+async def test_import_status_reconciles_every_career_item_into_one_outcome_bucket() -> None:
+    now = datetime.now(UTC)
+    batch_id = uuid4()
+    review_id = uuid4()
+    added_id, linked_id, held_id, excluded_id, profile_id = (uuid4() for _ in range(5))
+    batch = SimpleNamespace(
+        id=batch_id,
+        review_session_id=review_id,
+        status="partially_completed",
+        total_count=2,
+        imported_count=1,
+        linked_count=1,
+        skipped_count=0,
+        failed_count=0,
+        blocked_count=1,
+        created_at=now,
+        updated_at=now,
+    )
+    added = SimpleNamespace(
+        id=uuid4(), import_batch_id=batch_id, review_item_id=added_id, outcome="imported",
+        record_type="project", record_id=uuid4(), sanitized_error_code=None, warnings=[],
+        created_at=now,
+    )
+    linked = SimpleNamespace(
+        id=uuid4(), import_batch_id=batch_id, review_item_id=linked_id, outcome="linked",
+        record_type="employment", record_id=uuid4(), sanitized_error_code=None, warnings=[],
+        created_at=now,
+    )
+    items = [
+        SimpleNamespace(id=added_id, claim_type="project", review_status="imported"),
+        SimpleNamespace(id=linked_id, claim_type="employment", review_status="imported"),
+        SimpleNamespace(id=held_id, claim_type="education", review_status="deselected"),
+        SimpleNamespace(id=excluded_id, claim_type="skill", review_status="excluded"),
+        SimpleNamespace(id=profile_id, claim_type="profile", review_status="deselected"),
+    ]
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.scalar_calls = 0
+
+        async def scalar(self, _statement: object) -> SimpleNamespace:
+            self.scalar_calls += 1
+            return batch
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            self.scalar_calls += 1
+            values = {
+                2: [added, linked],
+                3: items,
+                4: [added, linked],
+            }[self.scalar_calls]
+            return SimpleNamespace(all=lambda: values)
+
+    response = await ResumeReviewService(FakeSession())._batch_response(batch)
+
+    assert response.detected_count == 4
+    assert response.added_count == 1
+    assert response.already_present_count == 1
+    assert response.needs_attention_count == 1
+    assert response.excluded_count == 1
+    assert sum((
+        response.added_count,
+        response.already_present_count,
+        response.needs_attention_count,
+        response.excluded_count,
+    )) == response.detected_count
+    assert response.entity_counts["project"].imported == 1
+    assert response.entity_counts["employment"].linked == 1
+    assert response.entity_counts["education"].needs_attention == 1
+    assert response.entity_counts["skill"].excluded == 1
 
 
 def test_employment_schema_preserves_candidate_provided_unverified_fields_only() -> None:
