@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.api.dependencies.services import (
     get_admin_operations_service,
+    get_education_service,
+    get_employment_document_service,
     get_resume_review_service,
     get_resume_service,
     get_user_document_service,
@@ -34,11 +37,13 @@ from app.resumes.schemas import (
     ResumeUploadIntentRequest,
     ResumeUploadIntentResponse,
 )
-from app.schemas.admin_career import ExtendedCareerType
 from app.schemas.admin_operations import (
     AdminCandidateInvitationResponse,
     AdminCandidateResponse,
     AdminCareerDeleteResponse,
+    AdminCareerDocumentCompleteUploadRequest,
+    AdminCareerDocumentResponse,
+    AdminCareerDocumentUploadIntentRequest,
     AdminCareerMutationRequest,
     AdminCareerMutationResponse,
     AdminCareerRecordResponse,
@@ -61,11 +66,17 @@ from app.schemas.admin_operations import (
     CandidateClaimResponse,
     CandidateProvenanceConfirmationRequest,
     CandidateProvenanceConfirmationResponse,
+    CareerClaimType,
     CourtCheckResponse,
     CourtCheckUpdateRequest,
     CourtCheckWriteRequest,
     InPersonVerificationCreateRequest,
     InPersonVerificationResponse,
+)
+from app.schemas.education import EducationDocumentUploadIntentRequest
+from app.schemas.employment_document import (
+    DocumentCompleteUploadRequest,
+    DocumentUploadIntentRequest,
 )
 from app.schemas.pagination import Page, PageParams
 from app.schemas.user_document import (
@@ -79,6 +90,8 @@ from app.schemas.verification_request import (
     VerificationRequestEvidenceResponse,
 )
 from app.services.admin_operations_service import AdminOperationsService
+from app.services.education_service import EducationService
+from app.services.employment_document_service import EmploymentDocumentService
 from app.services.resume_review_service import ResumeReviewService
 from app.services.resume_service import ResumeService
 from app.services.user_document_service import UserDocumentService
@@ -309,7 +322,7 @@ async def update_assisted_candidate_career_record(
 @router.get("/candidates/{candidate_id}/career", response_model=Page[AdminCareerRecordResponse])
 async def list_assisted_candidate_career_records(
     candidate_id: UUID,
-    claim_type: ExtendedCareerType,
+    claim_type: CareerClaimType,
     params: Annotated[PageParams, Depends()],
     actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
@@ -323,7 +336,7 @@ async def list_assisted_candidate_career_records(
 async def read_assisted_candidate_career_record(
     candidate_id: UUID,
     record_id: UUID,
-    claim_type: ExtendedCareerType,
+    claim_type: CareerClaimType,
     actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> AdminCareerRecordResponse:
@@ -336,7 +349,7 @@ async def read_assisted_candidate_career_record(
 async def delete_assisted_candidate_career_record(
     candidate_id: UUID,
     record_id: UUID,
-    claim_type: ExtendedCareerType,
+    claim_type: CareerClaimType,
     actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> AdminCareerDeleteResponse:
@@ -565,6 +578,260 @@ async def get_admin_resume_import_status(
 ) -> ImportBatchResponse:
     await admin.candidate_identity(candidate_id)
     return await reviews.latest_import_status(candidate_id, review_id)
+
+
+@router.get(
+    "/candidates/{candidate_id}/documents",
+    response_model=Page[UserDocumentResponse],
+)
+async def list_admin_candidate_documents(
+    candidate_id: UUID,
+    params: Annotated[PageParams, Depends()],
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
+) -> Page[UserDocumentResponse]:
+    await admin.candidate_identity(candidate_id)
+    items, total = await documents.list_for_user(
+        candidate_id, offset=params.offset, limit=params.limit
+    )
+    return Page[UserDocumentResponse].create(
+        items=[UserDocumentResponse.model_validate(item) for item in items],
+        total=total,
+        params=params,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/documents/upload-intent",
+    response_model=UserDocumentUploadIntentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_candidate_document_upload_intent(
+    candidate_id: UUID,
+    payload: UserDocumentUploadIntentRequest,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
+) -> UserDocumentUploadIntentResponse:
+    await admin.candidate_identity(candidate_id)
+    return await documents.create_upload_intent(candidate_id, payload)
+
+
+@router.post(
+    "/candidates/{candidate_id}/documents/{document_id}/complete-upload",
+    response_model=UserDocumentResponse,
+)
+async def complete_admin_candidate_document_upload(
+    candidate_id: UUID,
+    document_id: UUID,
+    payload: UserDocumentCompleteUploadRequest,
+    actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
+) -> UserDocumentResponse:
+    await admin.candidate_identity(candidate_id)
+    document = await documents.complete_upload(candidate_id, document_id, payload.checksum_sha256)
+    await admin.record_document_upload_audit(actor.id, candidate_id, document)
+    return UserDocumentResponse.model_validate(document)
+
+
+@router.get(
+    "/candidates/{candidate_id}/documents/{document_id}/content",
+    response_class=StreamingResponse,
+)
+async def view_admin_candidate_document(
+    candidate_id: UUID,
+    document_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
+):
+    await admin.candidate_identity(candidate_id)
+    chunks, headers, mime = await documents.content(candidate_id, document_id)
+    return StreamingResponse(
+        chunks,
+        headers={**headers, "Cache-Control": "no-store, private, max-age=0"},
+        media_type=mime,
+    )
+
+
+@router.get(
+    "/candidates/{candidate_id}/career-documents/{claim_type}/{career_record_id}",
+    response_model=Page[AdminCareerDocumentResponse],
+)
+async def list_admin_candidate_career_documents(
+    candidate_id: UUID,
+    claim_type: Literal["employment", "education"],
+    career_record_id: UUID,
+    params: Annotated[PageParams, Depends()],
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    employment_documents: Annotated[
+        EmploymentDocumentService, Depends(get_employment_document_service)
+    ],
+    education: Annotated[EducationService, Depends(get_education_service)],
+) -> Page[AdminCareerDocumentResponse]:
+    await admin.candidate_identity(candidate_id)
+    if claim_type == "employment":
+        rows, total = await employment_documents.list_for_employment_owned(
+            candidate_id,
+            career_record_id,
+            offset=params.offset,
+            limit=params.limit,
+        )
+    else:
+        rows, total = await education.list_documents(
+            candidate_id,
+            career_record_id,
+            offset=params.offset,
+            limit=params.limit,
+        )
+    return Page[AdminCareerDocumentResponse].create(
+        items=[_career_document_response(claim_type, career_record_id, row) for row in rows],
+        total=total,
+        params=params,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/career-documents/upload-intent",
+    response_model=UserDocumentUploadIntentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_candidate_career_document_upload_intent(
+    candidate_id: UUID,
+    payload: AdminCareerDocumentUploadIntentRequest,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    employment_documents: Annotated[
+        EmploymentDocumentService, Depends(get_employment_document_service)
+    ],
+    education: Annotated[EducationService, Depends(get_education_service)],
+):
+    await admin.candidate_identity(candidate_id)
+    if payload.claim_type == "employment":
+        return await employment_documents.create_upload_intent(
+            candidate_id,
+            payload.career_record_id,
+            DocumentUploadIntentRequest(
+                document_type=payload.document_type,
+                evidence_role=payload.evidence_role,
+                original_filename=payload.original_filename,
+                content_type=payload.content_type,
+                byte_size=payload.byte_size,
+            ),
+        )
+    return await education.create_document_upload_intent(
+        candidate_id,
+        payload.career_record_id,
+        EducationDocumentUploadIntentRequest(
+            document_type=payload.document_type,
+            original_filename=payload.original_filename,
+            content_type=payload.content_type,
+            byte_size=payload.byte_size,
+        ),
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/career-documents/{document_id}/complete-upload",
+    response_model=AdminCareerDocumentResponse,
+)
+async def complete_admin_candidate_career_document_upload(
+    candidate_id: UUID,
+    document_id: UUID,
+    payload: AdminCareerDocumentCompleteUploadRequest,
+    actor: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    employment_documents: Annotated[
+        EmploymentDocumentService, Depends(get_employment_document_service)
+    ],
+    education: Annotated[EducationService, Depends(get_education_service)],
+) -> AdminCareerDocumentResponse:
+    await admin.candidate_identity(candidate_id)
+    if payload.claim_type == "employment":
+        await employment_documents.complete_upload(
+            candidate_id,
+            payload.career_record_id,
+            document_id,
+            DocumentCompleteUploadRequest(checksum_sha256=payload.checksum_sha256),
+        )
+        document = await employment_documents.get_document_owned(candidate_id, document_id)
+    else:
+        document = await education.complete_document_upload(
+            candidate_id,
+            payload.career_record_id,
+            document_id,
+            payload.checksum_sha256,
+        )
+    await admin.record_document_upload_audit(
+        actor.id,
+        candidate_id,
+        document,
+        claim_type=payload.claim_type,
+        career_record_id=payload.career_record_id,
+    )
+    return _career_document_response(
+        payload.claim_type,
+        payload.career_record_id,
+        document,
+    )
+
+
+@router.get(
+    "/candidates/{candidate_id}/career-documents/{claim_type}/{career_record_id}/{document_id}/content",
+    response_class=StreamingResponse,
+)
+async def view_admin_candidate_career_document(
+    candidate_id: UUID,
+    claim_type: Literal["employment", "education"],
+    career_record_id: UUID,
+    document_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    employment_documents: Annotated[
+        EmploymentDocumentService, Depends(get_employment_document_service)
+    ],
+    education: Annotated[EducationService, Depends(get_education_service)],
+):
+    await admin.candidate_identity(candidate_id)
+    if claim_type == "employment":
+        chunks, headers, mime = await employment_documents.content(
+            candidate_id, career_record_id, document_id
+        )
+    else:
+        chunks, headers, mime = await education.document_content(
+            candidate_id, career_record_id, document_id
+        )
+    return StreamingResponse(
+        chunks,
+        headers={**headers, "Cache-Control": "no-store, private, max-age=0"},
+        media_type=mime,
+    )
+
+
+def _career_document_response(
+    claim_type: Literal["employment", "education"],
+    career_record_id: UUID,
+    document,
+) -> AdminCareerDocumentResponse:
+    evidence_role = getattr(document, "evidence_role", None)
+    return AdminCareerDocumentResponse(
+        id=document.id,
+        claim_type=claim_type,
+        career_record_id=career_record_id,
+        document_type=str(getattr(document.document_type, "value", document.document_type)),
+        original_filename=document.original_filename,
+        content_type=document.content_type,
+        byte_size=document.byte_size,
+        verification_status=str(
+            getattr(document.verification_status, "value", document.verification_status)
+        ),
+        evidence_role=evidence_role,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+    )
 
 
 @router.post(

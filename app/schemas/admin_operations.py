@@ -17,7 +17,7 @@ from app.admin_operations.enums import (
 )
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.organization_people.enums import OrganizationPersonRelationship
-from app.schemas.admin_career import ExtendedCareerType, payload_contract, validate_payload
+from app.schemas.admin_career import payload_contract, validate_payload
 from app.schemas.gig_platform import GigPlatformResponse
 from app.schemas.portfolio import PortfolioItemResponse
 from app.schemas.project import ProjectResponse
@@ -44,6 +44,9 @@ class AdminClientPersonCreateRequest(BaseModel):
     email: EmailStr
     phone: str | None = Field(default=None, min_length=8, max_length=32)
     relationship: OrganizationPersonRelationship = OrganizationPersonRelationship.EMPLOYEE
+    role_id: UUID | None = None
+    department: str | None = Field(default=None, max_length=255)
+    division: str | None = Field(default=None, max_length=255)
     joining_date: date | None = None
 
     @model_validator(mode="after")
@@ -63,6 +66,10 @@ class AdminClientPersonResponse(BaseModel):
     full_name: str
     email_masked: str
     relationship: OrganizationPersonRelationship
+    role_id: UUID | None = None
+    department: str | None = None
+    division: str | None = None
+    joining_date: date | None = None
     invitation_status: str
     created_at: datetime
 
@@ -240,15 +247,69 @@ class AdminCareerMutationResponse(BaseModel):
 
 class AdminCareerRecordResponse(BaseModel):
     candidate_id: UUID
-    claim_type: ExtendedCareerType
-    record: PortfolioItemResponse | ProjectResponse | SkillResponse | GigPlatformResponse
+    claim_type: CareerClaimType
+    record: (
+        dict[str, Any]
+        | PortfolioItemResponse
+        | ProjectResponse
+        | SkillResponse
+        | GigPlatformResponse
+    )
 
 
 class AdminCareerDeleteResponse(BaseModel):
     candidate_id: UUID
-    claim_type: ExtendedCareerType
+    claim_type: CareerClaimType
     record_id: UUID
     deleted: Literal[True] = True
+
+
+class AdminCareerDocumentUploadIntentRequest(BaseModel):
+    claim_type: Literal["employment", "education"]
+    career_record_id: UUID
+    document_type: str = Field(min_length=1, max_length=48)
+    evidence_role: Literal["primary", "supporting"] | None = None
+    original_filename: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(min_length=3, max_length=255)
+    byte_size: int = Field(gt=0, le=500_000_000)
+
+    @model_validator(mode="after")
+    def validate_document_contract(self) -> AdminCareerDocumentUploadIntentRequest:
+        from app.education.enums import EducationDocumentType
+        from app.employment.enums import EmploymentDocumentType
+
+        enum_type = (
+            EmploymentDocumentType if self.claim_type == "employment" else EducationDocumentType
+        )
+        try:
+            enum_type(self.document_type)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported {self.claim_type} document type") from exc
+        if self.claim_type == "employment" and self.evidence_role is None:
+            raise ValueError("evidence_role is required for employment documents")
+        if self.claim_type == "education" and self.evidence_role is not None:
+            raise ValueError("evidence_role is only valid for employment documents")
+        return self
+
+
+class AdminCareerDocumentCompleteUploadRequest(BaseModel):
+    claim_type: Literal["employment", "education"]
+    career_record_id: UUID
+    checksum_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class AdminCareerDocumentResponse(BaseModel):
+    id: UUID
+    claim_type: Literal["employment", "education"]
+    career_record_id: UUID
+    document_type: str
+    original_filename: str
+    content_type: str
+    byte_size: int
+    verification_status: str
+    evidence_role: Literal["primary", "supporting"] | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class CandidateProvenanceConfirmationItem(BaseModel):

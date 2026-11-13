@@ -28,6 +28,7 @@ from app.models.admin_profile_provenance import AdminProfileProvenance
 from app.models.candidate_activation import CandidateActivationToken
 from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
+from app.models.organization_job_role import OrganizationJobRole
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
 from app.models.user import User
@@ -36,6 +37,7 @@ from app.models.user_document import UserDocument
 from app.organization.enums import OrganizationRole, OrganizationType
 from app.organization_people.enums import OrganizationPersonRelationship
 from app.schemas.admin_operations import (
+    AdminCareerDocumentUploadIntentRequest,
     AdminClientPersonActivationRequest,
     AdminClientPersonCreateRequest,
     AdminCreateCandidateRequest,
@@ -137,6 +139,23 @@ def test_admin_permissions_and_public_contracts_are_additive() -> None:
         "/api/v1/admin/operations/candidates/{candidate_id}/verification-requests/{request_id}/evidence/upload-intent"
         in paths
     )
+    assert "/api/v1/admin/operations/candidates/{candidate_id}/documents" in paths
+    assert "/api/v1/admin/operations/candidates/{candidate_id}/documents/upload-intent" in paths
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/documents/{document_id}/content"
+        in paths
+    )
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/career-documents/upload-intent" in paths
+    )
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/career-documents/{claim_type}/{career_record_id}"
+        in paths
+    )
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/career-documents/{claim_type}/{career_record_id}/{document_id}/content"
+        in paths
+    )
     assert "/api/v1/admin/operations/organizations/{org_public_id}/people" in paths
     assert (
         "/api/v1/admin/operations/organizations/{org_public_id}/people/{person_public_id}/candidate-activation"
@@ -149,6 +168,49 @@ def test_admin_permissions_and_public_contracts_are_additive() -> None:
     assert "/api/v1/candidate-activations/claim" in paths
     assert "/api/v1/admin/users/{id}/verify-all" not in paths
     assert all("permanent-address" not in path for path in paths if "in-person" in path)
+
+
+def test_admin_career_document_contract_preserves_canonical_types_and_association() -> None:
+    employment = AdminCareerDocumentUploadIntentRequest(
+        claim_type="employment",
+        career_record_id=uuid4(),
+        document_type="form_w2",
+        evidence_role="supporting",
+        original_filename="employment.pdf",
+        content_type="application/pdf",
+        byte_size=256,
+    )
+    assert employment.document_type == "form_w2"
+
+    education = AdminCareerDocumentUploadIntentRequest(
+        claim_type="education",
+        career_record_id=uuid4(),
+        document_type="migration_certificate",
+        original_filename="education.pdf",
+        content_type="application/pdf",
+        byte_size=256,
+    )
+    assert education.evidence_role is None
+
+    with pytest.raises(ValueError, match="evidence_role is required"):
+        AdminCareerDocumentUploadIntentRequest(
+            claim_type="employment",
+            career_record_id=uuid4(),
+            document_type="offer_letter",
+            original_filename="employment.pdf",
+            content_type="application/pdf",
+            byte_size=256,
+        )
+
+    with pytest.raises(ValueError, match="Unsupported education document type"):
+        AdminCareerDocumentUploadIntentRequest(
+            claim_type="education",
+            career_record_id=uuid4(),
+            document_type="passport",
+            original_filename="education.pdf",
+            content_type="application/pdf",
+            byte_size=256,
+        )
 
 
 def test_activation_email_audit_payload_never_contains_credential() -> None:
@@ -179,8 +241,53 @@ def test_future_employee_requires_a_future_joining_date() -> None:
             full_name="Future Employee",
             email="future@example.com",
             relationship=OrganizationPersonRelationship.FUTURE_EMPLOYEE,
-            joining_date=date.today(),
+            joining_date=datetime.now(tz=UTC).date(),
         )
+
+
+def test_client_person_accepts_atomic_employment_assignment_fields() -> None:
+    role_id = uuid4()
+    payload = AdminClientPersonCreateRequest(
+        full_name="Client Person",
+        email="person@example.com",
+        relationship=OrganizationPersonRelationship.EMPLOYEE,
+        role_id=role_id,
+        department="Engineering",
+        division="Platform",
+        joining_date=datetime.now(tz=UTC).date(),
+    )
+
+    assert payload.role_id == role_id
+    assert payload.department == "Engineering"
+    assert payload.division == "Platform"
+    assert payload.joining_date == datetime.now(tz=UTC).date()
+
+
+def test_standard_career_projection_is_privacy_safe_and_editable() -> None:
+    record_id = uuid4()
+    record = SimpleNamespace(
+        id=record_id,
+        employer_legal_name="Example Employer",
+        job_title="Engineer",
+        employment_type="full_time",
+        work_arrangement="hybrid",
+        start_date=date(2024, 1, 1),
+        end_date=None,
+        verification_status="draft",
+        created_at=datetime.now(tz=UTC),
+        updated_at=datetime.now(tz=UTC),
+        subject_email="private@example.com",
+        reviewer_summary="internal",
+    )
+
+    projection = AdminOperationsService._career_record_payload("employment", record)
+
+    assert projection["id"] == record_id
+    assert projection["company_name"] == "Example Employer"
+    assert projection["role_title"] == "Engineer"
+    assert projection["is_current"] is True
+    assert "subject_email" not in projection
+    assert "reviewer_summary" not in projection
 
 
 def test_future_employee_projects_as_employee_on_joining_date() -> None:
@@ -322,24 +429,52 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
             == people_before
         )
 
-        person = await service.create_client_person(
-            admin.id,
-            organization.organization_public_id,
-            AdminClientPersonCreateRequest(
-                full_name="Imported Before Activation",
-                email=f"client-person-{uuid4()}@example.com",
-            ),
-        )
-        assert person.linked_candidate_id is None
-        assert person.invitation_status == "not_invited"
-        assert await session.scalar(select(func.count()).select_from(User)) == users_before
-
         stored_organization = await session.scalar(
             select(Organization).where(
                 Organization.public_id == organization.organization_public_id
             )
         )
         assert stored_organization is not None
+        role = OrganizationJobRole(
+            organization_id=stored_organization.id,
+            name="Synthetic Engineer",
+            normalized_name="synthetic engineer",
+            is_active=True,
+            created_by_user_id=admin.id,
+        )
+        session.add(role)
+        await session.commit()
+        await session.refresh(role)
+
+        joining_date = datetime.now(tz=UTC).date()
+        person = await service.create_client_person(
+            admin.id,
+            organization.organization_public_id,
+            AdminClientPersonCreateRequest(
+                full_name="Imported Before Activation",
+                email=f"client-person-{uuid4()}@example.com",
+                role_id=role.public_id,
+                department="Engineering",
+                division="Platform",
+                joining_date=joining_date,
+            ),
+        )
+        assert person.linked_candidate_id is None
+        assert person.invitation_status == "not_invited"
+        assert person.role_id == role.public_id
+        assert person.department == "Engineering"
+        assert person.division == "Platform"
+        assert person.joining_date == joining_date
+        assert await session.scalar(select(func.count()).select_from(User)) == users_before
+
+        stored_person = await session.scalar(
+            select(OrganizationPerson).where(OrganizationPerson.public_id == person.person_id)
+        )
+        assert stored_person is not None
+        assert stored_person.role_id == role.id
+        assert stored_person.department == "Engineering"
+        assert stored_person.division == "Platform"
+        assert stored_person.joining_date == joining_date
         session.add(
             OrganizationMember(
                 organization_id=stored_organization.id,
@@ -650,6 +785,20 @@ async def test_profile_provenance_confirmation_and_verified_field_protection() -
         with pytest.raises(NotFoundError):
             await service.confirm_candidate_provenance(outsider.id, confirmation)
 
+        candidate_managed = await _user(email_prefix="candidate-managed-profile")
+        session.add(candidate_managed)
+        await session.commit()
+        await session.refresh(candidate_managed)
+        managed_update = await service.update_candidate_profile(
+            admin.id,
+            candidate_managed.id,
+            AdminProfileMutationRequest(headline="Admin-assisted Candidate-managed profile"),
+        )
+        assert managed_update.candidate_id == candidate_managed.id
+        assert managed_update.candidate_confirmation_required is True
+        await session.refresh(candidate_managed)
+        assert candidate_managed.headline == "Admin-assisted Candidate-managed profile"
+
         batch = SimpleNamespace(
             id=uuid4(),
             review_session_id=uuid4(),
@@ -669,6 +818,73 @@ async def test_profile_provenance_confirmation_and_verified_field_protection() -
             )
         )
         assert audit_count == 1
+
+        document = UserDocument(
+            user_id=candidate_managed.id,
+            document_type="other",
+            object_key=f"test/admin-documents/{uuid4()}.pdf",
+            original_filename="private-source-name.pdf",
+            content_type="application/pdf",
+            byte_size=512,
+            checksum_sha256="b" * 64,
+            verification_status="pending",
+        )
+        session.add(document)
+        await session.commit()
+        await session.refresh(document)
+        await service.record_document_upload_audit(admin.id, candidate_managed.id, document)
+        await service.record_document_upload_audit(admin.id, candidate_managed.id, document)
+        document_audits = list(
+            (
+                await session.scalars(
+                    select(UserAccountEvent).where(
+                        UserAccountEvent.user_id == candidate_managed.id,
+                        UserAccountEvent.event_type == "admin_document_uploaded",
+                    )
+                )
+            ).all()
+        )
+        assert len(document_audits) == 1
+        serialized_audit = str(document_audits[0].metadata_payload)
+        assert "private-source-name.pdf" not in serialized_audit
+        assert document.object_key not in serialized_audit
+
+        career_document = UserDocument(
+            user_id=candidate_managed.id,
+            document_type="other",
+            object_key=f"test/admin-career-documents/{uuid4()}.pdf",
+            original_filename="private-career-source.pdf",
+            content_type="application/pdf",
+            byte_size=1024,
+            checksum_sha256="c" * 64,
+            verification_status="pending",
+        )
+        session.add(career_document)
+        await session.commit()
+        await session.refresh(career_document)
+        career_record_id = uuid4()
+        await service.record_document_upload_audit(
+            admin.id,
+            candidate_managed.id,
+            career_document,
+            claim_type="employment",
+            career_record_id=career_record_id,
+        )
+        career_audit = await session.scalar(
+            select(UserAccountEvent).where(
+                UserAccountEvent.user_id == candidate_managed.id,
+                UserAccountEvent.event_type == "admin_document_uploaded",
+                UserAccountEvent.metadata_payload["document_id"].as_string()
+                == str(career_document.id),
+            )
+        )
+        assert career_audit is not None
+        assert career_audit.actor_user_id == admin.id
+        assert career_audit.metadata_payload["career_claim_type"] == "employment"
+        assert career_audit.metadata_payload["career_record_id"] == str(career_record_id)
+        serialized_career_audit = str(career_audit.metadata_payload)
+        assert "private-career-source.pdf" not in serialized_career_audit
+        assert career_document.object_key not in serialized_career_audit
 
 
 @pytest.mark.integration

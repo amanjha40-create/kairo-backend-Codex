@@ -40,6 +40,7 @@ from app.models.in_person_verification import InPersonVerificationRecord
 from app.models.organization import Organization
 from app.models.organization_activity_event import OrganizationActivityEvent
 from app.models.organization_invitation import OrganizationInvitation
+from app.models.organization_job_role import OrganizationJobRole
 from app.models.organization_member import OrganizationMember
 from app.models.organization_person import OrganizationPerson
 from app.models.pending_signup import PendingSignup
@@ -250,6 +251,21 @@ class AdminOperationsService:
                 code="client_person_email_exists",
             )
 
+        role = None
+        if payload.role_id is not None:
+            role = await self._session.scalar(
+                select(OrganizationJobRole).where(
+                    OrganizationJobRole.public_id == payload.role_id,
+                    OrganizationJobRole.organization_id == organization.id,
+                    OrganizationJobRole.is_active.is_(True),
+                )
+            )
+            if role is None:
+                raise ValidationAppError(
+                    "The selected job role is not active for this client",
+                    code="client_job_role_invalid",
+                )
+
         person = OrganizationPerson(
             organization_id=organization.id,
             full_name=payload.full_name,
@@ -266,6 +282,9 @@ class AdminOperationsService:
             added_at=datetime.now(tz=UTC),
             resolution_state="admin_entered",
             resolution_method="admin_operations",
+            role_id=role.id if role is not None else None,
+            department=payload.department,
+            division=payload.division,
             joining_date=payload.joining_date,
         )
         self._session.add(person)
@@ -276,11 +295,22 @@ class AdminOperationsService:
             "client_person_created",
             "organization_person",
             person.public_id,
-            {"relationship": payload.relationship.value, "candidate_account_created": False},
+            {
+                "relationship": payload.relationship.value,
+                "role_public_id": str(role.public_id) if role is not None else None,
+                "department_present": bool(payload.department),
+                "division_present": bool(payload.division),
+                "joining_date_present": payload.joining_date is not None,
+                "candidate_account_created": False,
+            },
         )
         await self._session.commit()
         await self._session.refresh(person)
-        return self._client_person_response(organization, person)
+        return self._client_person_response(
+            organization,
+            person,
+            role_public_id=role.public_id if role is not None else None,
+        )
 
     async def activate_client_person(
         self,
@@ -638,7 +668,7 @@ class AdminOperationsService:
     async def update_candidate_profile(
         self, actor_user_id: UUID, candidate_id: UUID, payload: AdminProfileMutationRequest
     ) -> AdminProfileMutationResponse:
-        user = await self._locked_managed_candidate(candidate_id)
+        user = await self._locked_candidate_identity(candidate_id)
         return await self.update_candidate_profile_record(actor_user_id, user, payload)
 
     async def update_candidate_profile_record(
@@ -708,7 +738,7 @@ class AdminOperationsService:
         *,
         record_id: UUID | None = None,
     ) -> AdminCareerMutationResponse:
-        user = await self._locked_managed_candidate(candidate_id)
+        user = await self._locked_candidate_identity(candidate_id)
         review = ResumeReviewService(self._session)
         extended = payload.claim_type in admin_career_records.MODELS
         fields = {key: value for key, value in payload.payload.items() if key != "claim_type"}
@@ -786,9 +816,10 @@ class AdminOperationsService:
         )
 
     async def list_candidate_career(self, candidate_id: UUID, kind: str, params: PageParams):
-        user = await self._managed_candidate(candidate_id)
-        model = admin_career_records.MODELS[kind]
-        scope = (model.user_id == user.id, model.deleted_at.is_(None))
+        user = await self.candidate_identity(candidate_id)
+        review = ResumeReviewService(self._session)
+        model, owner = review._target_model(kind)
+        scope = (getattr(model, owner) == user.id, model.deleted_at.is_(None))
         total = await self._session.scalar(select(func.count()).select_from(model).where(*scope))
         records = (
             await self._session.scalars(
@@ -804,7 +835,7 @@ class AdminOperationsService:
                 AdminCareerRecordResponse(
                     candidate_id=user.id,
                     claim_type=kind,
-                    record=admin_career_records.RESPONSES[kind].model_validate(record),
+                    record=self._career_record_payload(kind, record),
                 )
                 for record in records
             ],
@@ -813,27 +844,39 @@ class AdminOperationsService:
         )
 
     async def read_candidate_career(self, candidate_id: UUID, kind: str, record_id: UUID):
-        user = await self._managed_candidate(candidate_id)
-        record = await admin_career_records.target(
-            self._session, user.id, kind, record_id, lock=False
+        user = await self.candidate_identity(candidate_id)
+        review = ResumeReviewService(self._session)
+        record = (
+            await admin_career_records.target(self._session, user.id, kind, record_id, lock=False)
+            if kind in admin_career_records.MODELS
+            else await review._target(user.id, kind, record_id)
         )
         return AdminCareerRecordResponse(
             candidate_id=user.id,
             claim_type=kind,
-            record=admin_career_records.RESPONSES[kind].model_validate(record),
+            record=self._career_record_payload(kind, record),
         )
 
     async def delete_candidate_career(
         self, actor_user_id: UUID, candidate_id: UUID, kind: str, record_id: UUID
     ):
-        user = await self._locked_managed_candidate(candidate_id)
-        record = await admin_career_records.target(self._session, user.id, kind, record_id)
-        if await ResumeReviewService(self._session)._is_protected_target(user.id, kind, record):
+        user = await self._locked_candidate_identity(candidate_id)
+        review = ResumeReviewService(self._session)
+        record = (
+            await admin_career_records.target(self._session, user.id, kind, record_id)
+            if kind in admin_career_records.MODELS
+            else await review._target(user.id, kind, record_id)
+        )
+        if await review._is_protected_target(user.id, kind, record):
             raise AdminOperationsConflict(
                 "Source-verified or active Career records cannot be removed",
                 code="source_verified_field_protected",
             )
-        fields = dict.fromkeys(admin_career_records.UPDATE_SCHEMAS[kind].model_fields)
+        fields = (
+            dict.fromkeys(admin_career_records.UPDATE_SCHEMAS[kind].model_fields)
+            if kind in admin_career_records.UPDATE_SCHEMAS
+            else dict.fromkeys(self._career_record_payload(kind, record))
+        )
         await self._protect_verified_fields(user.id, kind, record.id, fields)
         record.deleted_at = datetime.now(tz=UTC)
         self._session.add(
@@ -917,6 +960,58 @@ class AdminOperationsService:
                     "linked_count": batch.linked_count,
                     "skipped_count": batch.skipped_count,
                     "failed_count": batch.failed_count,
+                },
+            )
+        )
+        await self._session.commit()
+
+    async def record_document_upload_audit(
+        self,
+        actor_user_id: UUID,
+        candidate_id: UUID,
+        document: Any,
+        *,
+        claim_type: str | None = None,
+        career_record_id: UUID | None = None,
+    ) -> None:
+        await self.candidate_identity(candidate_id)
+        existing = await self._session.scalar(
+            select(UserAccountEvent.id).where(
+                UserAccountEvent.user_id == candidate_id,
+                UserAccountEvent.event_type == "admin_document_uploaded",
+                UserAccountEvent.metadata_payload["document_id"].as_string() == str(document.id),
+            )
+        )
+        if existing is not None:
+            return
+        self._session.add(
+            UserAccountEvent(
+                user_id=candidate_id,
+                actor_user_id=actor_user_id,
+                actor_role=Role.ADMIN.value,
+                event_type="admin_document_uploaded",
+                title="Admin uploaded a private Candidate document",
+                detail=(
+                    "The document remains private and unverified unless a separate authorized "
+                    "verification or sharing workflow uses it."
+                ),
+                metadata_payload={
+                    "document_id": str(document.id),
+                    "document_type": str(
+                        getattr(document.document_type, "value", document.document_type)
+                    ),
+                    "byte_size": document.byte_size,
+                    "visibility": "private",
+                    "verification_status": str(
+                        getattr(
+                            document.verification_status,
+                            "value",
+                            document.verification_status,
+                        )
+                    ),
+                    "career_claim_type": claim_type,
+                    "career_record_id": str(career_record_id) if career_record_id else None,
+                    "uploaded_on_behalf_of_candidate": True,
                 },
             )
         )
@@ -1450,6 +1545,81 @@ class AdminOperationsService:
             raise NotFoundError("Admin-managed Candidate not found")
         return user
 
+    async def _locked_candidate_identity(self, candidate_id: UUID) -> User:
+        from app.services.admin_directory_service import candidate_identity_filter
+
+        user = await self._session.scalar(
+            select(User)
+            .where(User.id == candidate_id, candidate_identity_filter())
+            .with_for_update()
+        )
+        if user is None or user.deleted_at is not None:
+            raise NotFoundError("Candidate not found")
+        return user
+
+    @staticmethod
+    def _career_record_payload(kind: str, record: Any) -> Any:
+        if kind in admin_career_records.RESPONSES:
+            return admin_career_records.RESPONSES[kind].model_validate(record)
+        verification_status = getattr(record, "verification_status", "unverified")
+        common = {
+            "id": record.id,
+            "verification_status": str(getattr(verification_status, "value", verification_status)),
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
+        if kind == "employment":
+            fields = {
+                "company_name": record.employer_legal_name,
+                "role_title": record.job_title,
+                "employment_type": record.employment_type,
+                "work_arrangement": record.work_arrangement,
+                "start_date": record.start_date,
+                "end_date": record.end_date,
+                "is_current": record.end_date is None,
+            }
+        elif kind == "education":
+            fields = {
+                "institution_name": record.institution_name,
+                "degree": record.degree,
+                "field_of_study": record.field_of_study,
+                "education_level": record.education_level,
+                "grade": record.grade,
+                "start_date": record.start_date,
+                "end_date": record.end_date,
+                "is_current": record.is_currently_studying,
+            }
+        elif kind == "internship":
+            fields = {
+                "company_name": record.company_name,
+                "role": record.role,
+                "description": record.description,
+                "start_date": record.start_date,
+                "end_date": record.end_date,
+                "is_current": record.is_ongoing,
+            }
+        elif kind == "freelance":
+            fields = {
+                "client_name": record.client_name,
+                "project_title": record.project_title,
+                "description": record.description,
+                "start_date": record.start_date,
+                "end_date": record.end_date,
+                "is_current": record.is_ongoing,
+            }
+        elif kind == "certification":
+            fields = {
+                "title": record.title,
+                "issuing_organization": record.issuing_organization,
+                "issued_date": record.issued_date,
+                "expiry_date": record.expiry_date,
+                "credential_id": record.credential_id,
+                "credential_url": record.credential_url,
+            }
+        else:
+            raise ValidationAppError("Unsupported Career record type")
+        return {**common, **fields}
+
     async def _candidate_response(self, user: User) -> AdminCandidateResponse:
         activation = await self._session.scalar(
             select(CandidateActivationToken)
@@ -1476,7 +1646,10 @@ class AdminOperationsService:
 
     @staticmethod
     def _client_person_response(
-        organization: Organization, person: OrganizationPerson
+        organization: Organization,
+        person: OrganizationPerson,
+        *,
+        role_public_id: UUID | None = None,
     ) -> AdminClientPersonResponse:
         return AdminClientPersonResponse(
             organization_id=organization.public_id,
@@ -1485,6 +1658,10 @@ class AdminOperationsService:
             full_name=person.full_name,
             email_masked=mask_email(person.primary_email or ""),
             relationship=OrganizationPersonRelationship(person.relationship),
+            role_id=role_public_id,
+            department=person.department,
+            division=person.division,
+            joining_date=person.joining_date,
             invitation_status=str(
                 getattr(
                     person.invitation_status_summary,
