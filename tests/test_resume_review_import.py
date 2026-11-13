@@ -58,6 +58,21 @@ def import_first_client():
         reset_client_metadata(token)
 
 
+@contextmanager
+def mixed_review_client():
+    token = bind_client_metadata(
+        ClientMetadata(
+            capabilities=frozenset(
+                {EXPLICIT_RESUME_REVIEW_CAPABILITY, IMPORT_FIRST_RESUME_CAPABILITY}
+            )
+        )
+    )
+    try:
+        yield
+    finally:
+        reset_client_metadata(token)
+
+
 def test_stable_claim_ids_and_payload_hashes_are_deterministic() -> None:
     parsed_id = uuid4()
     payload = {"claim_type": "skill", "name": "Python"}
@@ -218,6 +233,32 @@ async def test_parser_default_selection_requires_explicit_candidate_review() -> 
 
     assert legacy_plan.ready is True
     assert legacy_plan.items[0].blockers == []
+    assert plan.ready is False
+    assert plan.items[0].blockers == ["candidate_review_required"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_review_wins_when_client_advertises_both_resume_modes() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
+    item = SimpleNamespace(
+        id=uuid4(),
+        selected=True,
+        review_status="selected",
+        import_action="create_new",
+        claim_type="project",
+        edited_payload={"claim_type": "project", "title": "Synthetic project"},
+        duplicate_status="no_match",
+        target_record_id=None,
+        conflict_warnings=[],
+    )
+
+    class FakeSession:
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: [item])
+
+    with mixed_review_client():
+        plan = await ResumeReviewService(FakeSession())._build_plan(review)
+
     assert plan.ready is False
     assert plan.items[0].blockers == ["candidate_review_required"]
 

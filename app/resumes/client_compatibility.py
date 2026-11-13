@@ -15,4 +15,10 @@ def explicit_resume_review_capable() -> bool:
 def import_first_resume_capable() -> bool:
     """Allow safe automatic imports without changing legacy client behavior."""
 
-    return IMPORT_FIRST_RESUME_CAPABILITY in current_client_metadata().capabilities
+    capabilities = current_client_metadata().capabilities
+    # A malformed/mixed client must not use import-first to bypass the stricter
+    # explicit-review contract. Current clients advertise exactly one mode.
+    return (
+        IMPORT_FIRST_RESUME_CAPABILITY in capabilities
+        and EXPLICIT_RESUME_REVIEW_CAPABILITY not in capabilities
+    )
