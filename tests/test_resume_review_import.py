@@ -13,7 +13,10 @@ from app.employment.client_compatibility import (
     bind_client_metadata,
     reset_client_metadata,
 )
-from app.resumes.client_compatibility import EXPLICIT_RESUME_REVIEW_CAPABILITY
+from app.resumes.client_compatibility import (
+    EXPLICIT_RESUME_REVIEW_CAPABILITY,
+    IMPORT_FIRST_RESUME_CAPABILITY,
+)
 from app.resumes.normalization import (
     date_ranges_overlap,
     normalize_date,
@@ -37,6 +40,17 @@ from app.services.resume_review_service import ResumeReviewService
 def explicit_review_client():
     token = bind_client_metadata(
         ClientMetadata(capabilities=frozenset({EXPLICIT_RESUME_REVIEW_CAPABILITY}))
+    )
+    try:
+        yield
+    finally:
+        reset_client_metadata(token)
+
+
+@contextmanager
+def import_first_client():
+    token = bind_client_metadata(
+        ClientMetadata(capabilities=frozenset({IMPORT_FIRST_RESUME_CAPABILITY}))
     )
     try:
         yield
@@ -241,6 +255,55 @@ async def test_explicit_all_excluded_and_zero_item_reviews_are_ready() -> None:
     assert excluded_plan.items[0].action == "skip"
     assert empty_plan.ready is True
     assert empty_plan.items == []
+
+
+@pytest.mark.asyncio
+async def test_import_first_zero_item_and_blocked_item_plans_do_not_block_safe_batch() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
+    blocked = SimpleNamespace(
+        id=uuid4(),
+        selected=True,
+        review_status="selected",
+        import_action="link_existing",
+        claim_type="education",
+        edited_payload={"claim_type": "education", "institution_name": "Synthetic"},
+        duplicate_status="exact_match",
+        target_record_id=None,
+        conflict_warnings=[],
+    )
+    previously_excluded = SimpleNamespace(
+        id=uuid4(),
+        selected=False,
+        review_status="excluded",
+        import_action="skip",
+        claim_type="project",
+        edited_payload={"claim_type": "project"},
+        duplicate_status="no_match",
+        target_record_id=None,
+        conflict_warnings=[],
+    )
+
+    class FakeSession:
+        def __init__(self, items: list[SimpleNamespace]) -> None:
+            self.items = items
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: self.items)
+
+    with import_first_client():
+        empty_plan = await ResumeReviewService(FakeSession([]))._build_plan(review)
+        blocked_plan = await ResumeReviewService(FakeSession([blocked]))._build_plan(review)
+        excluded_plan = await ResumeReviewService(
+            FakeSession([previously_excluded])
+        )._build_plan(review)
+
+    assert empty_plan.ready is True
+    assert empty_plan.items == []
+    assert blocked_plan.ready is True
+    assert blocked_plan.items[0].blockers == ["target_record_required"]
+    assert excluded_plan.ready is True
+    assert excluded_plan.items[0].action == "skip"
+    assert excluded_plan.items[0].blockers == []
 
 
 @pytest.mark.asyncio
@@ -901,6 +964,7 @@ async def test_confirmed_resume_claim_import_is_idempotent_and_unverified() -> N
         assert first.skipped_count == 1
         assert first.failed_count == 0
         assert first.incomplete_count == 1
+        assert "profile" not in first.entity_counts
         await session.refresh(user)
         assert user.full_name == "Synthetic Candidate"
         assert user.email != "resume-test@example.invalid"

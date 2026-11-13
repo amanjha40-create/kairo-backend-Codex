@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalogues.education_identity import FIELDS, education_identity
@@ -40,7 +40,10 @@ from app.models.resume_review_session import ResumeReviewSession
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.verification_request import VerificationRequest
-from app.resumes.client_compatibility import explicit_resume_review_capable
+from app.resumes.client_compatibility import (
+    explicit_resume_review_capable,
+    import_first_resume_capable,
+)
 from app.resumes.education_review import normalize_education_review
 from app.resumes.normalization import normalize_review_date, payload_hash, stable_claim_id
 from app.resumes.review_enums import ResumeImportAction, ResumeReviewStatus
@@ -154,6 +157,22 @@ class ResumeReviewService:
                 and confident_for_selection(raw.get("confidence"))
                 and (assessment.status == "no_match" or claim_type == "employment")
             )
+            if import_first_resume_capable():
+                # Import-first selects only safe new records and deterministic exact
+                # links. Ambiguous matches and structurally unusable claims remain
+                # in the durable review ledger for optional recovery.
+                selected = bool(
+                    supported
+                    and not draft_issues
+                    and not self._required_blockers(claim_type, payload)
+                    and (
+                        exact is not None
+                        or (
+                            assessment.status == "no_match"
+                            and confident_for_selection(raw.get("confidence"))
+                        )
+                    )
+                )
             item = ResumeReviewItem(
                 review_session_id=review.id,
                 user_id=user_id,
@@ -346,8 +365,16 @@ class ResumeReviewService:
         plan = await self._build_plan(review)
         if not plan.ready:
             raise ValidationAppError("Review contains blocking items", code="review_not_importable")
+        import_first = import_first_resume_capable()
+        blocked_item_ids = {
+            item.item_id for item in plan.items if item.blockers
+        } if import_first else set()
+        importable_item_ids = {
+            item.item_id for item in plan.items if not item.blockers
+        } if import_first else None
         now = datetime.now(UTC)
         batch = ResumeImportBatch(user_id=user_id, review_session_id=review.id, idempotency_key=payload.idempotency_key, status="processing", started_at=now, total_count=len(plan.items))
+        batch.blocked_count = len(blocked_item_ids)
         self.session.add(batch)
         review.status = ResumeReviewStatus.IMPORTING.value
         await self.session.flush()
@@ -355,11 +382,23 @@ class ResumeReviewService:
         item_filter = ResumeReviewItem.review_status.in_({"confirmed", "excluded", "edited"})
         if not explicit_resume_review_capable():
             item_filter = ResumeReviewItem.selected.is_(True)
-        items = (await self.session.scalars(select(ResumeReviewItem).where(
+        if import_first:
+            item_filter = or_(
+                ResumeReviewItem.selected.is_(True),
+                ResumeReviewItem.review_status == "excluded",
+            )
+        item_statement = select(ResumeReviewItem).where(
             ResumeReviewItem.review_session_id == review.id,
             ResumeReviewItem.claim_type.in_(SUPPORTED_IMPORT_TYPES),
             item_filter,
-        ).order_by(ResumeReviewItem.created_at))).all()
+        )
+        if importable_item_ids is not None:
+            item_statement = item_statement.where(
+                ResumeReviewItem.id.in_(importable_item_ids)
+            )
+        items = (await self.session.scalars(
+            item_statement.order_by(ResumeReviewItem.created_at)
+        )).all()
         for item in items:
             try:
                 async with self.session.begin_nested():
@@ -370,7 +409,11 @@ class ResumeReviewService:
                         item,
                         now,
                         confirmed_by_user_id=confirmed_by_user_id or user_id,
-                        confirmation_source=confirmation_source,
+                        confirmation_source=(
+                            "resume_import_first"
+                            if import_first and confirmation_source == "candidate_confirmed"
+                            else confirmation_source
+                        ),
                         provenance_source=provenance_source,
                     )
                     self.session.add(ResumeImportResult(import_batch_id=batch.id, review_item_id=item.id, outcome=outcome, record_type=record_type, record_id=record_id, warnings=warnings))
@@ -383,9 +426,17 @@ class ResumeReviewService:
                 batch.failed_count += 1
                 item.review_status = "failed"
                 self.session.add(ResumeImportResult(import_batch_id=batch.id, review_item_id=item.id, outcome="failed", sanitized_error_code="item_import_failed", warnings=[]))
-        batch.status = "completed" if batch.failed_count == 0 else "partially_completed"
+        batch.status = (
+            "completed"
+            if batch.failed_count == 0 and batch.blocked_count == 0
+            else "partially_completed"
+        )
         batch.completed_at = datetime.now(UTC)
-        review.status = ResumeReviewStatus.IMPORTED.value if batch.failed_count == 0 else ResumeReviewStatus.PARTIALLY_IMPORTED.value
+        review.status = (
+            ResumeReviewStatus.IMPORTED.value
+            if batch.failed_count == 0 and batch.blocked_count == 0
+            else ResumeReviewStatus.PARTIALLY_IMPORTED.value
+        )
         review.confirmed_at = now
         review.version += 1
         await self.session.commit()
@@ -422,10 +473,11 @@ class ResumeReviewService:
         items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == review.id).order_by(ResumeReviewItem.created_at))).all()
         plans: list[ReviewPlanItem] = []
         strict_review = explicit_resume_review_capable()
+        import_first = import_first_resume_capable()
         for item in items:
             if item.claim_type in SUGGESTION_ONLY_TYPES:
                 continue
-            if not strict_review and not item.selected:
+            if not strict_review and not import_first and not item.selected:
                 continue
             if item.claim_type == "employment":
                 await self._refresh_employment_match(item)
@@ -440,6 +492,8 @@ class ResumeReviewService:
             )
             if strict_review and not resolved:
                 blockers.append("candidate_review_required")
+            if import_first and not item.selected and review_status != "excluded":
+                blockers.append("held_for_review")
             if item.claim_type == "education" and item.import_action != "skip":
                 try:
                     education_identity(normalize_education_review(item.edited_payload))
@@ -489,9 +543,14 @@ class ResumeReviewService:
                 warnings=sorted(set([*item.conflict_warnings, *importability_warnings])),
                 verified_record_protected=verified_protected,
             ))
-        if not plans and not strict_review:
+        if not plans and not strict_review and not import_first:
             plans.append(ReviewPlanItem(item_id=review.id, claim_type="none", action="none", target_model=None, duplicate_status="no_match", target_record_id=None, fields_to_create=[], fields_ignored=[], blockers=["select_at_least_one_item"], warnings=[], verified_record_protected=False))
-        return ReviewPlanResponse(session_id=review.id, ready=not any(item.blockers for item in plans), version=review.version, items=plans)
+        return ReviewPlanResponse(
+            session_id=review.id,
+            ready=import_first or not any(item.blockers for item in plans),
+            version=review.version,
+            items=plans,
+        )
 
     async def _import_item(
         self,
@@ -808,6 +867,8 @@ class ResumeReviewService:
         items = (await self.session.scalars(select(ResumeReviewItem).where(ResumeReviewItem.review_session_id == batch.review_session_id))).all()
         counts: dict[str, dict[str, int]] = defaultdict(lambda: {"detected": 0, "imported": 0, "incomplete": 0, "failed": 0})
         for item in items:
+            if item.claim_type in SUGGESTION_ONLY_TYPES:
+                continue
             counts[item.claim_type]["detected"] += 1
         for result in result_models:
             claim_type = result.record_type or next((item.claim_type for item in items if item.id == result.review_item_id), None)
