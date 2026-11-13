@@ -230,6 +230,7 @@ class ResumeReviewService:
             raise ValidationAppError("Distinct-role confirmation requires an employment create decision")
         self._check_version(item.version, payload.expected_version)
         strict_review = explicit_resume_review_capable()
+        import_first = import_first_resume_capable()
         excluding = payload.selected is False or payload.import_action == ResumeImportAction.SKIP
         if excluding and payload.edited_payload is None:
             item.selected = False
@@ -237,7 +238,7 @@ class ResumeReviewService:
             item.target_record_id = None
             item.review_status = (
                 "excluded"
-                if strict_review and payload.confirmed is not False
+                if (strict_review or import_first) and payload.confirmed is not False
                 else "deselected"
             )
             item.version += 1

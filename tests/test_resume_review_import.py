@@ -232,6 +232,56 @@ def test_item_update_rejects_extra_mutation_controls() -> None:
         ReviewItemUpdateRequest(expected_version=1, selected=True, verification_status="verified")
 
 
+@pytest.mark.asyncio
+async def test_import_first_confirmed_exclusion_resolves_held_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), status="reviewing", version=3)
+    item = SimpleNamespace(
+        id=uuid4(),
+        claim_type="education",
+        review_status="deselected",
+        selected=False,
+        import_action="create_new",
+        target_record_id=None,
+        version=2,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.scalars = [review, item]
+
+        async def scalar(self, _statement: object) -> SimpleNamespace:
+            return self.scalars.pop(0)
+
+        async def commit(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        ResumeReviewService,
+        "_item_response",
+        staticmethod(lambda value: value),
+    )
+    service = ResumeReviewService(FakeSession())
+
+    with import_first_client():
+        updated = await service.update_item(
+            review.user_id,
+            review.id,
+            item.id,
+            ReviewItemUpdateRequest(
+                expected_version=item.version,
+                confirmed=True,
+                selected=False,
+                import_action="skip",
+            ),
+        )
+
+    assert updated.review_status == "excluded"
+    assert updated.selected is False
+    assert updated.import_action == "skip"
+
+
 def test_import_plan_only_blocks_structurally_unusable_employment_claims() -> None:
     service = ResumeReviewService(SimpleNamespace())
     assert "unsupported_import_target" not in service._required_blockers("project", {"title": "Synthetic"})
