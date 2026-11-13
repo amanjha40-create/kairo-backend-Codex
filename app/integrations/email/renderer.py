@@ -67,6 +67,7 @@ def _render_candidate_account_activation(
     content = render_candidate_account_activation(
         CandidateAccountActivationContext(
             candidate_name=payload.candidate_name,
+            organization_name=payload.organization_name,
             activation_url=payload.activation_url,
             expires_at_iso=payload.expires_at_iso,
         )
@@ -79,7 +80,10 @@ def _render_candidate_account_activation(
         text_body=content.text_body,
         html_body=content.html_body,
         # Deliberately excludes activation_url and the opaque token.
-        audit_payload={"expires_at_iso": payload.expires_at_iso},
+        audit_payload={
+            "expires_at_iso": payload.expires_at_iso,
+            "organization_name": payload.organization_name,
+        },
     )
 
 

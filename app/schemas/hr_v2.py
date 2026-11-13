@@ -130,7 +130,7 @@ class FormerEmployeeCorrectionCreateRequest(BaseModel):
     @field_validator("proposed_changes")
     @classmethod
     def validate_changes(cls, value: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"role_id", "department", "joining_date", "last_working_day"}
+        allowed = {"role_id", "department", "division", "joining_date", "last_working_day"}
         if not value or set(value) - allowed:
             raise ValueError("Only historical employment fields may be corrected")
         if value.get("role_id") is not None:
@@ -202,6 +202,7 @@ class FormerEmployeeCorrectionPage(Page[FormerEmployeeCorrectionListItem]):
 class OrganizationRoleAssignmentRequest(BaseModel):
     role_id: UUID | None = None
     department: str | None = Field(default=None, max_length=255)
+    division: str | None = Field(default=None, max_length=255)
     joining_date: date | None = None
 
     @model_validator(mode="after")
@@ -216,6 +217,7 @@ class OrganizationRoleAssignmentResponse(BaseModel):
     role_id: UUID | None
     role: str | None
     department: str | None
+    division: str | None
     joining_date: date | None
 
 

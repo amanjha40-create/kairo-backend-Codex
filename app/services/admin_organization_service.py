@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import String, and_, cast, exists, func, literal, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, joinedload
+from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.exceptions import ConflictError, NotFoundError
 from app.models.organization import Organization
@@ -738,6 +738,7 @@ class AdminOrganizationService:
                 func.coalesce(request_stats.c.pending_count, 0),
                 request_stats.c.latest_request_at,
             )
+            .options(selectinload(OrganizationPerson.job_role))
             .outerjoin(request_stats, request_stats.c.person_id == OrganizationPerson.id)
             .where(*filters)
             .order_by(OrganizationPerson.full_name.asc(), OrganizationPerson.public_id.asc())
@@ -763,6 +764,11 @@ class AdminOrganizationService:
                     relationship=_value(person.relationship) or "unknown",
                     lifecycle_status=_value(person.lifecycle_status) or "unknown",
                     invitation_status=(_value(person.invitation_status_summary) or "not_invited"),
+                    role_id=(person.job_role.public_id if person.job_role is not None else None),
+                    role_name=(person.job_role.name if person.job_role is not None else None),
+                    department=person.department,
+                    division=person.division,
+                    joining_date=person.joining_date,
                     verification_request_count=int(request_count),
                     verified_count=int(verified_count),
                     pending_count=int(pending_count),

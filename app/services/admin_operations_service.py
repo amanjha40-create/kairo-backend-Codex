@@ -351,6 +351,18 @@ class AdminOperationsService:
     async def candidate_status(self, candidate_id: UUID) -> AdminCandidateResponse:
         return await self._candidate_response(await self._managed_candidate(candidate_id))
 
+    async def candidate_identity(self, candidate_id: UUID) -> User:
+        """Require a canonical Candidate without requiring Admin-managed ownership."""
+
+        from app.services.admin_directory_service import candidate_identity_filter
+
+        candidate = await self._session.scalar(
+            select(User).where(User.id == candidate_id, candidate_identity_filter())
+        )
+        if candidate is None or candidate.deleted_at is not None:
+            raise NotFoundError("Candidate not found")
+        return candidate
+
     async def send_candidate_activation(
         self,
         actor_user_id: UUID,
@@ -443,12 +455,19 @@ class AdminOperationsService:
 
         base = (self._settings.candidate_portal_base_url or "https://app.kairoid.com").rstrip("/")
         activation_url = f"{base}/activate-account?token={quote(raw_token, safe='')}"
+        organization_name = None
+        if organization_id is not None:
+            organization = await self._session.get(Organization, organization_id)
+            if organization is None:
+                raise NotFoundError("Client organization not found")
+            organization_name = organization.name
         try:
             delivery = await self._email.queue_template_email(
                 template_key="candidate_account_activation",
                 to_email=user.email,
                 template_data={
                     "candidate_name": user.full_name or "there",
+                    "organization_name": organization_name,
                     "activation_url": activation_url,
                     "expires_at_iso": token.expires_at.isoformat(),
                 },
@@ -620,7 +639,16 @@ class AdminOperationsService:
         self, actor_user_id: UUID, candidate_id: UUID, payload: AdminProfileMutationRequest
     ) -> AdminProfileMutationResponse:
         user = await self._locked_managed_candidate(candidate_id)
+        return await self.update_candidate_profile_record(actor_user_id, user, payload)
+
+    async def update_candidate_profile_record(
+        self,
+        actor_user_id: UUID,
+        user: User,
+        payload: AdminProfileMutationRequest,
+    ) -> AdminProfileMutationResponse:
         changes = payload.model_dump(exclude={"source"}, exclude_unset=True)
+        before_values = {field: getattr(user, field) for field in changes}
         await self._protect_verified_fields(user.id, "profile", user.id, changes)
         if "phone" in changes and changes["phone"] is not None:
             phone = normalize_phone(changes["phone"], self._settings)
@@ -647,7 +675,20 @@ class AdminOperationsService:
                 event_type="admin_profile_updated",
                 title="Assisted profile updated",
                 detail="Profile fields were updated with explicit non-verified provenance.",
-                metadata_payload={"fields": sorted(changes), "source": payload.source.value},
+                metadata_payload={
+                    "fields": sorted(changes),
+                    "source": payload.source.value,
+                    "before_after": {
+                        field: {
+                            "changed": before_values[field] != value,
+                            "previous_value_present": before_values[field] is not None,
+                            "previous_value_hash": self._value_hash(before_values[field]),
+                            "new_value_present": value is not None,
+                            "new_value_hash": self._value_hash(value),
+                        }
+                        for field, value in changes.items()
+                    },
+                },
             )
         )
         await self._session.commit()

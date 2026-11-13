@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -133,6 +133,11 @@ class AdminOrganizationPersonItem(BaseModel):
     relationship: str
     lifecycle_status: str
     invitation_status: str
+    role_id: UUID | None = None
+    role_name: str | None = None
+    department: str | None = None
+    division: str | None = None
+    joining_date: date | None = None
     verification_request_count: int = 0
     verified_count: int = 0
     pending_count: int = 0

@@ -39,6 +39,8 @@ from app.schemas.hr_v2 import (
     OrganizationJobRoleCreateRequest,
     OrganizationJobRoleResponse,
     OrganizationJobRoleUpdateRequest,
+    OrganizationRoleAssignmentRequest,
+    OrganizationRoleAssignmentResponse,
     VerificationReportResponse,
 )
 from app.schemas.organization import (
@@ -400,6 +402,26 @@ async def list_admin_organization_people(
     svc: Annotated[AdminOrganizationService, Depends(get_admin_organization_service)],
 ) -> AdminOrganizationPeoplePage:
     return await svc.list_people(organization_public_id, params)
+
+
+@router.patch(
+    "/{organization_public_id}/people/{person_public_id}/employment-profile",
+    response_model=OrganizationRoleAssignmentResponse,
+)
+async def update_admin_person_employment_profile(
+    organization_public_id: UUID,
+    person_public_id: UUID,
+    payload: OrganizationRoleAssignmentRequest,
+    actor: Annotated[CurrentUser, Depends(require_user_manager)],
+    service: Annotated[HRV2Service, Depends(get_hr_v2_service)],
+) -> OrganizationRoleAssignmentResponse:
+    return await service.assign_role(
+        actor.id,
+        organization_public_id,
+        person_public_id,
+        payload,
+        admin_override=True,
+    )
 
 
 @router.get(

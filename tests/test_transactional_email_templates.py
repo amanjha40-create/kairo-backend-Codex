@@ -169,8 +169,7 @@ def test_set_password_otp_uses_branded_copy_preheader_and_personalization() -> N
     assert "Hi Aman," in content.html_body
     assert "Hi Aman," in content.text_body
     assert (
-        "Use this code to set your KairoID password. It expires in 10 minutes."
-        in content.html_body
+        "Use this code to set your KairoID password. It expires in 10 minutes." in content.html_body
     )
     assert "654321" in content.html_body
     assert "654321" in content.text_body
@@ -178,9 +177,7 @@ def test_set_password_otp_uses_branded_copy_preheader_and_personalization() -> N
 
 
 def test_set_password_otp_uses_safe_greeting_fallback() -> None:
-    content = render_set_password_otp(
-        SetPasswordOtpContext(code="654321", ttl_minutes=10)
-    )
+    content = render_set_password_otp(SetPasswordOtpContext(code="654321", ttl_minutes=10))
 
     assert "Hi there," in content.html_body
     assert "Hi there," in content.text_body
@@ -283,3 +280,18 @@ def test_generic_templates_escape_user_controlled_values() -> None:
     assert "a=1&amp;b=2" in invitation.html_body
     assert "User &lt;unsafe&gt;" in completed.html_body
     assert "Org &amp; Co" in completed.html_body
+
+
+def test_candidate_activation_names_the_server_resolved_client() -> None:
+    content = render_candidate_account_activation(
+        CandidateAccountActivationContext(
+            candidate_name="Candidate",
+            activation_url="https://app.example.com/activate/token",
+            expires_at_iso="2026-11-20T10:00:00+00:00",
+            organization_name="Godress Pharma Pvt. Ltd.",
+        )
+    )
+
+    assert content.subject == "Godress Pharma Pvt. Ltd. invited you to KairoID"
+    assert "Godress Pharma Pvt. Ltd. invited you" in content.text_body
+    assert "Godress Pharma Pvt. Ltd." in content.html_body

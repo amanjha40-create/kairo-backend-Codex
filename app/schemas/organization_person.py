@@ -63,11 +63,16 @@ class OrganizationPersonListItemResponse(BaseModel):
     added_by: str | None = None
     added_at: datetime
     last_activity_at: datetime | None = None
-    summary_counts: OrganizationPersonSummaryCounts = Field(default_factory=OrganizationPersonSummaryCounts)
-    employment_status: OrganizationPersonEmploymentStatus = OrganizationPersonEmploymentStatus.ACTIVE
+    summary_counts: OrganizationPersonSummaryCounts = Field(
+        default_factory=OrganizationPersonSummaryCounts
+    )
+    employment_status: OrganizationPersonEmploymentStatus = (
+        OrganizationPersonEmploymentStatus.ACTIVE
+    )
     role_id: UUID | None = None
     role: str | None = None
     department: str | None = None
+    division: str | None = None
     joining_date: date | None = None
     last_working_day: date | None = None
 
@@ -80,7 +85,9 @@ class OrganizationPeopleListResponse(BaseModel):
     total_pages: int
     offset: int
     limit: int
-    summary: OrganizationPeopleDirectorySummary = Field(default_factory=OrganizationPeopleDirectorySummary)
+    summary: OrganizationPeopleDirectorySummary = Field(
+        default_factory=OrganizationPeopleDirectorySummary
+    )
 
 
 class OrganizationPersonRelationshipSummaryResponse(BaseModel):
@@ -96,10 +103,13 @@ class OrganizationPersonRelationshipSummaryResponse(BaseModel):
     resolution_method: str | None = None
     resolution_confidence: float | None = None
     resolution_metadata: dict[str, Any] = Field(default_factory=dict)
-    employment_status: OrganizationPersonEmploymentStatus = OrganizationPersonEmploymentStatus.ACTIVE
+    employment_status: OrganizationPersonEmploymentStatus = (
+        OrganizationPersonEmploymentStatus.ACTIVE
+    )
     role_id: UUID | None = None
     role: str | None = None
     department: str | None = None
+    division: str | None = None
     joining_date: date | None = None
     last_working_day: date | None = None
 
@@ -188,7 +198,9 @@ class OrganizationPersonDetailResponse(BaseModel):
     summary: OrganizationPersonSummaryResponse
     passport_preview: OrganizationPersonPassportPreviewResponse
     verification_summary: OrganizationPersonVerificationSummaryResponse
-    employment_verifications: list[OrganizationPersonEmploymentVerificationResponse] = Field(default_factory=list)
+    employment_verifications: list[OrganizationPersonEmploymentVerificationResponse] = Field(
+        default_factory=list
+    )
     shared_evidence: list[OrganizationPersonSharedEvidenceResponse] = Field(default_factory=list)
     activity: list[OrganizationPersonActivityResponse] = Field(default_factory=list)
     internal_notes: list[OrganizationPersonNoteResponse] = Field(default_factory=list)

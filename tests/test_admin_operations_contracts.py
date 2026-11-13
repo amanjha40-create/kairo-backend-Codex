@@ -124,8 +124,18 @@ def test_admin_permissions_and_public_contracts_are_additive() -> None:
     assert "/api/v1/admin/operations/candidates" in paths
     assert "/api/v1/admin/operations/candidate-invitations" in paths
     assert "/api/v1/admin/operations/candidates/{candidate_id}/resumes" in paths
+    assert "/api/v1/admin/operations/candidates/{candidate_id}/resumes/{resume_id}/status" in paths
     assert (
-        "/api/v1/admin/operations/candidates/{candidate_id}/resumes/{resume_id}/status" in paths
+        "/api/v1/admin/operations/candidates/{candidate_id}/resumes/{resume_id}/review-session"
+        in paths
+    )
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/resume-reviews/{review_id}/import-status"
+        in paths
+    )
+    assert (
+        "/api/v1/admin/operations/candidates/{candidate_id}/verification-requests/{request_id}/evidence/upload-intent"
+        in paths
     )
     assert "/api/v1/admin/operations/organizations/{org_public_id}/people" in paths
     assert (
@@ -347,6 +357,7 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
         )
         assert activation.delivery_state == "queued"
         assert len(email.calls) == 1
+        assert email.calls[0]["template_data"]["organization_name"] == stored_organization.name
         stored_person = await session.scalar(
             select(OrganizationPerson).where(OrganizationPerson.public_id == person.person_id)
         )

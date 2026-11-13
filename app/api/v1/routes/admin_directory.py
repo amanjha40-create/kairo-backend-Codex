@@ -9,6 +9,7 @@ from app.api.dependencies.services import get_admin_directory_service
 from app.api.dependencies.verification_admin import (
     CurrentUser,
     require_user_account_manager,
+    require_user_manager,
     require_user_note_manager,
     require_user_reader,
     require_user_security_manager,
@@ -21,6 +22,7 @@ from app.schemas.admin_directory import (
     AdminUserNoteCreateRequest,
     AdminUserNoteResponse,
     AdminUserPage,
+    AdminUserProfileUpdateRequest,
     AdminUserRestoreRequest,
     AdminUserSuspendRequest,
 )
@@ -64,6 +66,16 @@ async def get_admin_user_detail(
     svc: Annotated[AdminDirectoryService, Depends(get_admin_directory_service)],
 ) -> AdminUserDetailResponse:
     return await svc.get_user_detail(current, user_public_id)
+
+
+@router.patch("/users/{user_public_id}/profile", response_model=AdminUserDetailResponse)
+async def update_admin_user_profile(
+    user_public_id: UUID,
+    payload: AdminUserProfileUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_user_manager)],
+    svc: Annotated[AdminDirectoryService, Depends(get_admin_directory_service)],
+) -> AdminUserDetailResponse:
+    return await svc.update_user_profile(current, user_public_id, payload)
 
 
 @router.post(

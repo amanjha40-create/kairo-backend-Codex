@@ -72,7 +72,9 @@ _INVITATION_STATUS_MAP: dict[TrustInvitationStatus, OrganizationPersonInvitation
     TrustInvitationStatus.EXPIRED: OrganizationPersonInvitationStatusSummary.EXPIRED,
 }
 
-_VERIFICATION_STATUS_MAP: dict[VerificationRequestStatus, OrganizationPersonVerificationStatusSummary] = {
+_VERIFICATION_STATUS_MAP: dict[
+    VerificationRequestStatus, OrganizationPersonVerificationStatusSummary
+] = {
     VerificationRequestStatus.DRAFT: OrganizationPersonVerificationStatusSummary.NOT_STARTED,
     VerificationRequestStatus.PENDING_SUBJECT_ACCEPTANCE: OrganizationPersonVerificationStatusSummary.WAITING_FOR_CANDIDATE,
     VerificationRequestStatus.PENDING_SUBJECT_SUBMISSION: OrganizationPersonVerificationStatusSummary.WAITING_FOR_CANDIDATE,
@@ -159,7 +161,9 @@ class OrganizationPersonService:
         person_public_id: UUID,
     ) -> OrganizationPersonDetailResponse:
         organization, _ = await self._require_active_org_access(actor_user_id, org_public_id)
-        person = await self._repo.get_by_public_id(organization.id, person_public_id, load_related=True)
+        person = await self._repo.get_by_public_id(
+            organization.id, person_public_id, load_related=True
+        )
         if person is None:
             raise NotFoundError("Organization person not found")
 
@@ -197,7 +201,9 @@ class OrganizationPersonService:
         payload: OrganizationPersonNoteRequest,
     ) -> OrganizationPersonNoteResponse:
         organization, _ = await self._require_active_org_access(actor_user_id, org_public_id)
-        person = await self._repo.get_by_public_id(organization.id, person_public_id, load_related=False)
+        person = await self._repo.get_by_public_id(
+            organization.id, person_public_id, load_related=False
+        )
         if person is None:
             raise NotFoundError("Organization person not found")
         note = OrganizationPersonNote(
@@ -221,7 +227,9 @@ class OrganizationPersonService:
         payload: OrganizationPersonNoteRequest,
     ) -> OrganizationPersonNoteResponse:
         organization, _ = await self._require_active_org_access(actor_user_id, org_public_id)
-        person = await self._repo.get_by_public_id(organization.id, person_public_id, load_related=False)
+        person = await self._repo.get_by_public_id(
+            organization.id, person_public_id, load_related=False
+        )
         if person is None:
             raise NotFoundError("Organization person not found")
         note = await self._repo.get_note_by_public_id(person.id, note_public_id)
@@ -244,7 +252,9 @@ class OrganizationPersonService:
         note_public_id: UUID,
     ) -> None:
         organization, _ = await self._require_active_org_access(actor_user_id, org_public_id)
-        person = await self._repo.get_by_public_id(organization.id, person_public_id, load_related=False)
+        person = await self._repo.get_by_public_id(
+            organization.id, person_public_id, load_related=False
+        )
         if person is None:
             raise NotFoundError("Organization person not found")
         note = await self._repo.get_note_by_public_id(person.id, note_public_id)
@@ -316,7 +326,10 @@ class OrganizationPersonService:
             actor_user_id=actor_user_id or request.requested_by_user_id,
         )
         request.organization_person_id = person.id
-        if resolved_employment is not None and resolved_employment.organization_person_id in {None, person.id}:
+        if resolved_employment is not None and resolved_employment.organization_person_id in {
+            None,
+            person.id,
+        }:
             resolved_employment.organization_person_id = person.id
         return person
 
@@ -334,7 +347,9 @@ class OrganizationPersonService:
         granted_via_source_type: str | None = None,
         granted_via_source_public_id: str | None = None,
     ) -> OrganizationPersonPassportAccess:
-        existing = await self._repo.get_passport_access_by_share(organization_person_id, passport_share_link_id)
+        existing = await self._repo.get_passport_access_by_share(
+            organization_person_id, passport_share_link_id
+        )
         if existing is not None:
             existing.access_state = access_state
             existing.permissions_snapshot = permissions_snapshot
@@ -499,7 +514,9 @@ class OrganizationPersonService:
         raw_value: str | None,
         is_primary: bool,
     ) -> OrganizationPersonIdentifier:
-        existing = await self._repo.get_identifier(person.id, identifier_type.value, normalized_value)
+        existing = await self._repo.get_identifier(
+            person.id, identifier_type.value, normalized_value
+        )
         if existing is not None:
             existing.raw_value = raw_value
             existing.is_primary = existing.is_primary or is_primary
@@ -524,9 +541,13 @@ class OrganizationPersonService:
         if params.relationship is not None:
             filtered = [item for item in filtered if item.relationship == params.relationship]
         if params.invitation_status is not None:
-            filtered = [item for item in filtered if item.invitation_status == params.invitation_status]
+            filtered = [
+                item for item in filtered if item.invitation_status == params.invitation_status
+            ]
         if params.verification_status is not None:
-            filtered = [item for item in filtered if item.verification_status == params.verification_status]
+            filtered = [
+                item for item in filtered if item.verification_status == params.verification_status
+            ]
         if params.passport_status is not None:
             filtered = [item for item in filtered if item.passport_status == params.passport_status]
         if params.trust_state is not None:
@@ -534,13 +555,13 @@ class OrganizationPersonService:
         if params.added_by:
             needle = params.added_by.strip().lower()
             filtered = [
-                item for item in filtered
+                item
+                for item in filtered
                 if item.added_by is not None and needle in item.added_by.lower()
             ]
         if params.employment_status is not None:
             filtered = [
-                item for item in filtered
-                if item.employment_status == params.employment_status
+                item for item in filtered if item.employment_status == params.employment_status
             ]
         if params.role_id is not None:
             filtered = [item for item in filtered if item.role_id == params.role_id]
@@ -558,11 +579,21 @@ class OrganizationPersonService:
         by_role: dict[str, int] = {}
         by_employment_status: dict[str, int] = {}
         for item in items:
-            by_relationship[item.relationship.value] = by_relationship.get(item.relationship.value, 0) + 1
-            by_invitation_status[item.invitation_status.value] = by_invitation_status.get(item.invitation_status.value, 0) + 1
-            by_verification_status[item.verification_status.value] = by_verification_status.get(item.verification_status.value, 0) + 1
-            by_passport_status[item.passport_status.value] = by_passport_status.get(item.passport_status.value, 0) + 1
-            by_trust_state[item.trust_state.value] = by_trust_state.get(item.trust_state.value, 0) + 1
+            by_relationship[item.relationship.value] = (
+                by_relationship.get(item.relationship.value, 0) + 1
+            )
+            by_invitation_status[item.invitation_status.value] = (
+                by_invitation_status.get(item.invitation_status.value, 0) + 1
+            )
+            by_verification_status[item.verification_status.value] = (
+                by_verification_status.get(item.verification_status.value, 0) + 1
+            )
+            by_passport_status[item.passport_status.value] = (
+                by_passport_status.get(item.passport_status.value, 0) + 1
+            )
+            by_trust_state[item.trust_state.value] = (
+                by_trust_state.get(item.trust_state.value, 0) + 1
+            )
             role_key = str(item.role_id) if item.role_id is not None else "unassigned"
             by_role[role_key] = by_role.get(role_key, 0) + 1
             status_key = item.employment_status.value
@@ -610,7 +641,8 @@ class OrganizationPersonService:
                     1
                     for request in person.verification_requests
                     for evidence in request.evidence_items
-                    if evidence.document_id is not None or evidence.employment_document_id is not None
+                    if evidence.document_id is not None
+                    or evidence.employment_document_id is not None
                 ),
                 internal_notes=len(person.notes),
             ),
@@ -618,6 +650,7 @@ class OrganizationPersonService:
             role_id=person.job_role.public_id if person.job_role is not None else None,
             role=person.job_role.name if person.job_role is not None else None,
             department=person.department,
+            division=person.division,
             joining_date=person.joining_date,
             last_working_day=person.last_working_day,
         )
@@ -646,12 +679,15 @@ class OrganizationPersonService:
             last_activity_at=self._person_last_activity_at(person),
             resolution_state=person.resolution_state,
             resolution_method=person.resolution_method,
-            resolution_confidence=float(person.resolution_confidence) if person.resolution_confidence is not None else None,
+            resolution_confidence=float(person.resolution_confidence)
+            if person.resolution_confidence is not None
+            else None,
             resolution_metadata=dict(person.resolution_metadata or {}),
             employment_status=OrganizationPersonEmploymentStatus(person.employment_status),
             role_id=person.job_role.public_id if person.job_role is not None else None,
             role=person.job_role.name if person.job_role is not None else None,
             department=person.department,
+            division=person.division,
             joining_date=person.joining_date,
             last_working_day=person.last_working_day,
         )
@@ -677,7 +713,9 @@ class OrganizationPersonService:
                 OrganizationPersonPassportClaimResponse(
                     label="Full name",
                     value=person.full_name,
-                    status="verified" if person.linked_user_id is not None else "candidate_provided",
+                    status="verified"
+                    if person.linked_user_id is not None
+                    else "candidate_provided",
                 )
             )
         if person.primary_email:
@@ -685,7 +723,9 @@ class OrganizationPersonService:
                 OrganizationPersonPassportClaimResponse(
                     label="Work email",
                     value=person.primary_email,
-                    status="verified" if person.linked_user_id is not None else "candidate_provided",
+                    status="verified"
+                    if person.linked_user_id is not None
+                    else "candidate_provided",
                 )
             )
         if vault.employments:
@@ -694,15 +734,21 @@ class OrganizationPersonService:
                 OrganizationPersonPassportClaimResponse(
                     label="Most recent employer",
                     value=latest_employment.employer_legal_name,
-                    status=self._passport_claim_status_from_verification(latest_employment.verification_status),
+                    status=self._passport_claim_status_from_verification(
+                        latest_employment.verification_status
+                    ),
                     source="employment",
                 )
             )
             claims.append(
                 OrganizationPersonPassportClaimResponse(
                     label="Employment tenure",
-                    value=self._format_employment_tenure(latest_employment.start_date, latest_employment.end_date),
-                    status=self._passport_claim_status_from_verification(latest_employment.verification_status),
+                    value=self._format_employment_tenure(
+                        latest_employment.start_date, latest_employment.end_date
+                    ),
+                    status=self._passport_claim_status_from_verification(
+                        latest_employment.verification_status
+                    ),
                     source="employment",
                 )
             )
@@ -729,7 +775,10 @@ class OrganizationPersonService:
         self,
         person: OrganizationPerson,
     ) -> OrganizationPersonVerificationSummaryResponse:
-        statuses = [self._map_verification_status(request.status) for request in person.verification_requests]
+        statuses = [
+            self._map_verification_status(request.status)
+            for request in person.verification_requests
+        ]
         latest_status = (
             self._derive_verification_status(person)
             if person.verification_requests
@@ -738,10 +787,18 @@ class OrganizationPersonService:
         return OrganizationPersonVerificationSummaryResponse(
             latest_status=latest_status,
             total_requests=len(person.verification_requests),
-            completed_requests=sum(1 for status in statuses if status == OrganizationPersonVerificationStatusSummary.COMPLETED),
-            active_requests=sum(1 for status in statuses if status in _ACTIVE_VERIFICATION_SUMMARIES),
+            completed_requests=sum(
+                1
+                for status in statuses
+                if status == OrganizationPersonVerificationStatusSummary.COMPLETED
+            ),
+            active_requests=sum(
+                1 for status in statuses if status in _ACTIVE_VERIFICATION_SUMMARIES
+            ),
             clarification_required_requests=sum(
-                1 for status in statuses if status == OrganizationPersonVerificationStatusSummary.CLARIFICATION_REQUIRED
+                1
+                for status in statuses
+                if status == OrganizationPersonVerificationStatusSummary.CLARIFICATION_REQUIRED
             ),
         )
 
@@ -761,7 +818,9 @@ class OrganizationPersonService:
                 status=self._map_verification_status(request.status).value,
                 requested_by=self._event_actor_name_from_user_id(request.requested_by_user_id),
                 requested_at=request.created_at,
-                request_type=request.request_type.value if isinstance(request.request_type, VerificationRequestType) else str(request.request_type),
+                request_type=request.request_type.value
+                if isinstance(request.request_type, VerificationRequestType)
+                else str(request.request_type),
                 request_public_id=request.public_id,
             )
             for request in requests
@@ -772,19 +831,27 @@ class OrganizationPersonService:
         person: OrganizationPerson,
     ) -> list[OrganizationPersonSharedEvidenceResponse]:
         items: list[OrganizationPersonSharedEvidenceResponse] = []
-        for request in sorted(person.verification_requests, key=lambda item: item.created_at, reverse=True):
+        for request in sorted(
+            person.verification_requests, key=lambda item: item.created_at, reverse=True
+        ):
             for evidence in request.evidence_items:
                 if evidence.document_id is None and evidence.employment_document_id is None:
                     continue
                 document = None
                 if evidence.employment_document_id is not None:
-                    document = await self._employment_documents.get_active_by_id(evidence.employment_document_id)
+                    document = await self._employment_documents.get_active_by_id(
+                        evidence.employment_document_id
+                    )
                 elif evidence.document_id is not None:
                     document = await self._user_documents.get_active_by_id(evidence.document_id)
 
                 download_url = None
                 download_url_expires_in_seconds = None
-                if document is not None and getattr(document, "object_key", None) and self._settings.s3_documents_bucket:
+                if (
+                    document is not None
+                    and getattr(document, "object_key", None)
+                    and self._settings.s3_documents_bucket
+                ):
                     download_url_expires_in_seconds = 300
                     download_url = await generate_presigned_get_url(
                         bucket=self._settings.s3_documents_bucket,
@@ -823,7 +890,9 @@ class OrganizationPersonService:
                 id=f"person:{person.public_id}:added",
                 kind="added",
                 label="Person added to workspace",
-                actor=person.added_by_user.full_name if person.added_by_user is not None and person.added_by_user.full_name else "System",
+                actor=person.added_by_user.full_name
+                if person.added_by_user is not None and person.added_by_user.full_name
+                else "System",
                 at=person.added_at,
                 source_type="organization_person",
                 source_public_id=str(person.public_id),
@@ -906,7 +975,9 @@ class OrganizationPersonService:
                     id=f"note:{note.public_id}",
                     kind="note",
                     label="Internal note added",
-                    actor=note.author_user.full_name if note.author_user is not None and note.author_user.full_name else "Team member",
+                    actor=note.author_user.full_name
+                    if note.author_user is not None and note.author_user.full_name
+                    else "Team member",
                     at=note.created_at,
                     source_type="organization_person_note",
                     source_public_id=str(note.public_id),
@@ -929,7 +1000,9 @@ class OrganizationPersonService:
         items.sort(key=lambda item: item.at, reverse=True)
         return items
 
-    def _to_note_response(self, note: OrganizationPersonNote, actor_user_id: UUID) -> OrganizationPersonNoteResponse:
+    def _to_note_response(
+        self, note: OrganizationPersonNote, actor_user_id: UUID
+    ) -> OrganizationPersonNoteResponse:
         return OrganizationPersonNoteResponse(
             id=note.public_id,
             public_id=note.public_id,
@@ -942,7 +1015,9 @@ class OrganizationPersonService:
             owned_by_current_user=note.author_user_id == actor_user_id,
         )
 
-    def _derive_person_relationship(self, person: OrganizationPerson) -> OrganizationPersonRelationship:
+    def _derive_person_relationship(
+        self, person: OrganizationPerson
+    ) -> OrganizationPersonRelationship:
         relationship = person.relationship
         if (
             relationship == OrganizationPersonRelationship.FUTURE_EMPLOYEE
@@ -957,30 +1032,43 @@ class OrganizationPersonService:
             )
         return relationship
 
-    def _derive_invitation_status(self, person: OrganizationPerson) -> OrganizationPersonInvitationStatusSummary:
+    def _derive_invitation_status(
+        self, person: OrganizationPerson
+    ) -> OrganizationPersonInvitationStatusSummary:
         if not person.trust_invitations:
             return OrganizationPersonInvitationStatusSummary.NOT_INVITED
         latest = max(person.trust_invitations, key=self._trust_invitation_last_activity)
-        mapped = _INVITATION_STATUS_MAP.get(latest.status, OrganizationPersonInvitationStatusSummary.NOT_INVITED)
+        mapped = _INVITATION_STATUS_MAP.get(
+            latest.status, OrganizationPersonInvitationStatusSummary.NOT_INVITED
+        )
         if latest.opened_at is not None and latest.status == TrustInvitationStatus.PENDING:
             return OrganizationPersonInvitationStatusSummary.OPENED
         return mapped
 
-    def _derive_verification_status(self, person: OrganizationPerson) -> OrganizationPersonVerificationStatusSummary:
+    def _derive_verification_status(
+        self, person: OrganizationPerson
+    ) -> OrganizationPersonVerificationStatusSummary:
         if not person.verification_requests:
             return OrganizationPersonVerificationStatusSummary.NOT_STARTED
         latest = max(person.verification_requests, key=self._verification_request_last_activity)
         return self._map_verification_status(latest.status)
 
-    def _derive_passport_status(self, person: OrganizationPerson) -> OrganizationPersonPassportStatusSummary:
+    def _derive_passport_status(
+        self, person: OrganizationPerson
+    ) -> OrganizationPersonPassportStatusSummary:
         access = self._latest_passport_access(person)
         if access is None:
             return OrganizationPersonPassportStatusSummary.NOT_SHARED
-        if access.revoked_at is not None or access.access_state == OrganizationPersonPassportAccessState.REVOKED:
+        if (
+            access.revoked_at is not None
+            or access.access_state == OrganizationPersonPassportAccessState.REVOKED
+        ):
             return OrganizationPersonPassportStatusSummary.ACCESS_REVOKED
         if access.expires_at is not None and access.expires_at <= datetime.now(tz=UTC):
             return OrganizationPersonPassportStatusSummary.EXPIRED
-        if access.expires_at is not None and access.expires_at <= datetime.now(tz=UTC) + timedelta(days=7):
+        if access.expires_at is not None and access.expires_at <= datetime.now(tz=UTC) + timedelta(
+            days=7
+        ):
             return OrganizationPersonPassportStatusSummary.EXPIRING_SOON
         return OrganizationPersonPassportStatusSummary.ACTIVE
 
@@ -995,24 +1083,38 @@ class OrganizationPersonService:
             return OrganizationPersonTrustState.REVOKED
         if verification_status == OrganizationPersonVerificationStatusSummary.COMPLETED:
             return OrganizationPersonTrustState.VERIFIED
-        if passport_status in {
-            OrganizationPersonPassportStatusSummary.ACTIVE,
-            OrganizationPersonPassportStatusSummary.EXPIRING_SOON,
-            OrganizationPersonPassportStatusSummary.EXPIRED,
-        } or invitation_status == OrganizationPersonInvitationStatusSummary.ACCEPTED:
+        if (
+            passport_status
+            in {
+                OrganizationPersonPassportStatusSummary.ACTIVE,
+                OrganizationPersonPassportStatusSummary.EXPIRING_SOON,
+                OrganizationPersonPassportStatusSummary.EXPIRED,
+            }
+            or invitation_status == OrganizationPersonInvitationStatusSummary.ACCEPTED
+        ):
             return OrganizationPersonTrustState.PARTIALLY_VERIFIED
-        if invitation_status in {
-            OrganizationPersonInvitationStatusSummary.DRAFT,
-            OrganizationPersonInvitationStatusSummary.SENT,
-            OrganizationPersonInvitationStatusSummary.OPENED,
-        } or verification_status in _ACTIVE_VERIFICATION_SUMMARIES:
+        if (
+            invitation_status
+            in {
+                OrganizationPersonInvitationStatusSummary.DRAFT,
+                OrganizationPersonInvitationStatusSummary.SENT,
+                OrganizationPersonInvitationStatusSummary.OPENED,
+            }
+            or verification_status in _ACTIVE_VERIFICATION_SUMMARIES
+        ):
             return OrganizationPersonTrustState.PENDING
         return OrganizationPersonTrustState.UNKNOWN
 
     def _person_last_activity_at(self, person: OrganizationPerson) -> datetime | None:
         timestamps = [person.last_activity_at, person.added_at]
-        timestamps.extend(self._trust_invitation_last_activity(invitation) for invitation in person.trust_invitations)
-        timestamps.extend(self._verification_request_last_activity(request) for request in person.verification_requests)
+        timestamps.extend(
+            self._trust_invitation_last_activity(invitation)
+            for invitation in person.trust_invitations
+        )
+        timestamps.extend(
+            self._verification_request_last_activity(request)
+            for request in person.verification_requests
+        )
         timestamps.extend(note.updated_at for note in person.notes)
         for access in person.passport_access_entries:
             timestamps.append(access.granted_at)
@@ -1047,7 +1149,9 @@ class OrganizationPersonService:
             candidates.extend(event.created_at for event in events)
         return max(value for value in candidates if value is not None)
 
-    def _latest_passport_access(self, person: OrganizationPerson) -> OrganizationPersonPassportAccess | None:
+    def _latest_passport_access(
+        self, person: OrganizationPerson
+    ) -> OrganizationPersonPassportAccess | None:
         if not person.passport_access_entries:
             return None
         return max(person.passport_access_entries, key=lambda item: item.granted_at)
@@ -1056,7 +1160,11 @@ class OrganizationPersonService:
         self,
         status: VerificationRequestStatus | str,
     ) -> OrganizationPersonVerificationStatusSummary:
-        resolved = status if isinstance(status, VerificationRequestStatus) else VerificationRequestStatus(status)
+        resolved = (
+            status
+            if isinstance(status, VerificationRequestStatus)
+            else VerificationRequestStatus(status)
+        )
         return _VERIFICATION_STATUS_MAP[resolved]
 
     def _merge_relationship(
@@ -1163,7 +1271,10 @@ class OrganizationPersonService:
     ) -> str:
         if event_type == "verification_request_created":
             return "request"
-        if "clarification" in event_type or new_status == VerificationRequestStatus.AWAITING_INFORMATION:
+        if (
+            "clarification" in event_type
+            or new_status == VerificationRequestStatus.AWAITING_INFORMATION
+        ):
             return "clarification-req"
         if new_status == VerificationRequestStatus.VERIFIED:
             return "completed"

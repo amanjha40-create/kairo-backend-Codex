@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.pagination import Page
 
@@ -144,6 +144,55 @@ class AdminUserActionCapabilities(BaseModel):
     restore: bool = False
     revoke_sessions: bool = False
     send_password_reset: bool = False
+    edit_profile: bool = False
+
+
+class AdminUserProfileUpdateRequest(BaseModel):
+    """Safe Candidate profile fields; authentication identities stay read-only."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    headline: str | None = Field(default=None, max_length=255)
+    current_role: str | None = Field(default=None, max_length=255)
+    industry: str | None = Field(default=None, max_length=255)
+    years_of_experience: int | None = Field(default=None, ge=0, le=80)
+    location: str | None = Field(default=None, max_length=255)
+    location_city: str | None = Field(default=None, max_length=128)
+    location_region: str | None = Field(default=None, max_length=128)
+    location_country: str | None = Field(default=None, min_length=2, max_length=2)
+    bio: str | None = Field(default=None, max_length=500)
+
+    @field_validator("location_country")
+    @classmethod
+    def normalize_country(cls, value: str | None) -> str | None:
+        return value.upper() if value else value
+
+    @field_validator(
+        "bio",
+        "headline",
+        "current_role",
+        "industry",
+        "location",
+        "location_city",
+        "location_region",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        return value or None
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        return value or None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "AdminUserProfileUpdateRequest":
+        if not self.model_fields_set:
+            raise ValueError("At least one profile field is required")
+        if "full_name" in self.model_fields_set and self.full_name is None:
+            raise ValueError("full_name cannot be empty")
+        return self
 
 
 class AdminUserNoteCreateRequest(BaseModel):
@@ -200,7 +249,13 @@ class AdminUserDetailResponse(BaseModel):
     masked_phone: str | None = None
     headline: str | None = None
     current_role: str | None = None
+    industry: str | None = None
+    years_of_experience: int | None = None
     location: str | None = None
+    location_city: str | None = None
+    location_region: str | None = None
+    location_country: str | None = None
+    bio: str | None = None
     created_at: datetime
     updated_at: datetime
     last_login_at: datetime | None = None

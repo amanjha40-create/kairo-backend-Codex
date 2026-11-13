@@ -13,6 +13,7 @@ from app.api.dependencies.services import (
     get_resume_review_service,
     get_resume_service,
     get_user_document_service,
+    get_verification_request_service,
 )
 from app.auth.deps import require_permission
 from app.core.permissions import Permission
@@ -73,10 +74,15 @@ from app.schemas.user_document import (
     UserDocumentUploadIntentRequest,
     UserDocumentUploadIntentResponse,
 )
+from app.schemas.verification_request import (
+    VerificationRequestEvidenceCreateRequest,
+    VerificationRequestEvidenceResponse,
+)
 from app.services.admin_operations_service import AdminOperationsService
 from app.services.resume_review_service import ResumeReviewService
 from app.services.resume_service import ResumeService
 from app.services.user_document_service import UserDocumentService
+from app.services.verification_request_service import VerificationRequestService
 
 router = APIRouter(prefix="/admin/operations", tags=["admin-operations"])
 activation_router = APIRouter(prefix="/candidate-activations", tags=["candidate-activation"])
@@ -360,7 +366,7 @@ async def list_admin_resumes(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     resumes: Annotated[ResumeService, Depends(get_resume_service)],
 ) -> Page[ResumeResponse]:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await resumes.list(candidate_id, params.offset or 0, params.limit or 20)
 
 
@@ -375,7 +381,7 @@ async def get_admin_resume_status(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     resumes: Annotated[ResumeService, Depends(get_resume_service)],
 ) -> ResumeProcessResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await resumes.status(candidate_id, resume_id)
 
 
@@ -391,7 +397,7 @@ async def create_admin_resume_upload_intent(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     resumes: Annotated[ResumeService, Depends(get_resume_service)],
 ) -> ResumeUploadIntentResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await resumes.create_upload_intent(candidate_id, payload)
 
 
@@ -407,7 +413,7 @@ async def complete_admin_resume_upload(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     resumes: Annotated[ResumeService, Depends(get_resume_service)],
 ) -> ResumeResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await resumes.complete_upload(candidate_id, resume_id, payload)
 
 
@@ -422,7 +428,7 @@ async def process_admin_resume(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     resumes: Annotated[ResumeService, Depends(get_resume_service)],
 ) -> ResumeProcessResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await resumes.process(candidate_id, resume_id)
 
 
@@ -437,7 +443,7 @@ async def get_admin_resume_parsed_result(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     resumes: Annotated[ResumeService, Depends(get_resume_service)],
 ) -> ResumeParsedResultResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await resumes.parsed_result(candidate_id, resume_id)
 
 
@@ -453,8 +459,38 @@ async def create_admin_resume_review(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
 ) -> ReviewSessionResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await reviews.create(candidate_id, resume_id)
+
+
+@router.get(
+    "/candidates/{candidate_id}/resumes/{resume_id}/review-session",
+    response_model=ReviewSessionResponse,
+)
+async def get_admin_resume_review(
+    candidate_id: UUID,
+    resume_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
+) -> ReviewSessionResponse:
+    await admin.candidate_identity(candidate_id)
+    return await reviews.get_by_resume(candidate_id, resume_id)
+
+
+@router.get(
+    "/candidates/{candidate_id}/resume-reviews/{review_id}",
+    response_model=ReviewSessionResponse,
+)
+async def get_admin_resume_review_by_id(
+    candidate_id: UUID,
+    review_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
+) -> ReviewSessionResponse:
+    await admin.candidate_identity(candidate_id)
+    return await reviews.get(candidate_id, review_id)
 
 
 @router.patch(
@@ -470,7 +506,7 @@ async def update_admin_resume_review_item(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
 ) -> ReviewItemResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await reviews.update_item(candidate_id, review_id, item_id, payload)
 
 
@@ -486,7 +522,7 @@ async def validate_admin_resume_review(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
 ) -> ReviewPlanResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await reviews.validate(candidate_id, review_id, payload)
 
 
@@ -503,7 +539,7 @@ async def import_admin_resume_review(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
 ) -> ImportBatchResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     batch = await reviews.import_review(
         candidate_id,
         review_id,
@@ -516,21 +552,36 @@ async def import_admin_resume_review(
     return batch
 
 
+@router.get(
+    "/candidates/{candidate_id}/resume-reviews/{review_id}/import-status",
+    response_model=ImportBatchResponse,
+)
+async def get_admin_resume_import_status(
+    candidate_id: UUID,
+    review_id: UUID,
+    _: Annotated[CurrentUser, _permission(Permission.MANAGE_ASSISTED_PROFILE)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    reviews: Annotated[ResumeReviewService, Depends(get_resume_review_service)],
+) -> ImportBatchResponse:
+    await admin.candidate_identity(candidate_id)
+    return await reviews.latest_import_status(candidate_id, review_id)
+
+
 @router.post(
     "/candidates/{candidate_id}/evidence/upload-intent",
     response_model=UserDocumentUploadIntentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_admin_evidence_upload_intent(
+async def create_admin_private_evidence_upload_intent(
     candidate_id: UUID,
     payload: UserDocumentUploadIntentRequest,
     _: Annotated[CurrentUser, _permission(Permission.MANAGE_COURT_CHECK)],
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
 ) -> UserDocumentUploadIntentResponse:
-    """Reuse the private user-document pipeline for managed-person evidence."""
+    """Upload a private Candidate document for assisted court/in-person operations."""
 
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     return await documents.create_upload_intent(candidate_id, payload)
 
 
@@ -538,7 +589,7 @@ async def create_admin_evidence_upload_intent(
     "/candidates/{candidate_id}/evidence/{document_id}/complete-upload",
     response_model=UserDocumentResponse,
 )
-async def complete_admin_evidence_upload(
+async def complete_admin_private_evidence_upload(
     candidate_id: UUID,
     document_id: UUID,
     payload: UserDocumentCompleteUploadRequest,
@@ -546,9 +597,63 @@ async def complete_admin_evidence_upload(
     admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
     documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
 ) -> UserDocumentResponse:
-    await admin.candidate_status(candidate_id)
+    await admin.candidate_identity(candidate_id)
     document = await documents.complete_upload(candidate_id, document_id, payload.checksum_sha256)
     return UserDocumentResponse.model_validate(document)
+
+
+@router.post(
+    "/candidates/{candidate_id}/verification-requests/{request_id}/evidence/upload-intent",
+    response_model=UserDocumentUploadIntentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_evidence_upload_intent(
+    candidate_id: UUID,
+    request_id: UUID,
+    payload: UserDocumentUploadIntentRequest,
+    _: Annotated[CurrentUser, _permission(Permission.REVIEW_VERIFICATION)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
+    verification_requests: Annotated[
+        VerificationRequestService, Depends(get_verification_request_service)
+    ],
+) -> UserDocumentUploadIntentResponse:
+    """Reuse the private user-document pipeline for managed-person evidence."""
+
+    await admin.candidate_identity(candidate_id)
+    await verification_requests.require_admin_evidence_target(candidate_id, request_id)
+    return await documents.create_upload_intent(candidate_id, payload)
+
+
+@router.post(
+    "/candidates/{candidate_id}/verification-requests/{request_id}/evidence/{document_id}/complete-upload",
+    response_model=VerificationRequestEvidenceResponse,
+)
+async def complete_admin_evidence_upload(
+    candidate_id: UUID,
+    request_id: UUID,
+    document_id: UUID,
+    payload: UserDocumentCompleteUploadRequest,
+    actor: Annotated[CurrentUser, _permission(Permission.REVIEW_VERIFICATION)],
+    admin: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
+    documents: Annotated[UserDocumentService, Depends(get_user_document_service)],
+    verification_requests: Annotated[
+        VerificationRequestService, Depends(get_verification_request_service)
+    ],
+) -> VerificationRequestEvidenceResponse:
+    await admin.candidate_identity(candidate_id)
+    document = await documents.complete_upload(candidate_id, document_id, payload.checksum_sha256)
+    return await verification_requests.add_evidence_for_admin(
+        actor_user_id=actor.id,
+        candidate_user_id=candidate_id,
+        verification_request_public_id=request_id,
+        payload=VerificationRequestEvidenceCreateRequest(
+            evidence_type="admin_supplied_document",
+            field_key="admin_supporting_evidence",
+            document_id=document.id,
+            value={"provenance": "admin_uploaded_on_behalf_of_candidate"},
+        ),
+    )
 
 
 @router.post(

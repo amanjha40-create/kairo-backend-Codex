@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -20,7 +22,11 @@ from app.schemas.verification_request import (
     VerificationRequestTimelineEventResponse,
     VerificationRequestTimelineResponse,
 )
-from app.services.verification_request_service import is_internal_admin_note_event, is_private_organization_event
+from app.services.verification_request_service import (
+    VerificationRequestService,
+    is_internal_admin_note_event,
+    is_private_organization_event,
+)
 from app.verification_requests.enums import (
     VerificationRequestEventSource,
     VerificationRequestStatus,
@@ -33,7 +39,9 @@ def test_internal_admin_note_events_are_private_to_admin_timeline() -> None:
         "verification_request_admin_note_added",
         {"visibility": "internal", "note_public_id": str(uuid4())},
     )
-    assert not is_internal_admin_note_event("admin_requested_corrections", {"visibility": "candidate"})
+    assert not is_internal_admin_note_event(
+        "admin_requested_corrections", {"visibility": "candidate"}
+    )
 
 
 def test_private_organization_events_are_hidden_from_subject_timeline() -> None:
@@ -46,6 +54,56 @@ def test_private_organization_events_are_hidden_from_subject_timeline() -> None:
         {},
     )
     assert not is_private_organization_event("verification_request_verified", {})
+
+
+def test_admin_supplied_evidence_is_never_exposed_by_candidate_consent_scope() -> None:
+    service = object.__new__(VerificationRequestService)
+    request = type(
+        "Request",
+        (),
+        {"consented_evidence_scope": ["employment_letter", "admin_supplied_document"]},
+    )()
+    candidate_evidence = type(
+        "Evidence",
+        (),
+        {"evidence_type": "employment_letter", "field_key": "employment_document"},
+    )()
+    admin_evidence = type(
+        "Evidence",
+        (),
+        {"evidence_type": "admin_supplied_document", "field_key": "admin_supporting_evidence"},
+    )()
+
+    filtered = service._filter_evidence_by_consent(
+        request,
+        [candidate_evidence, admin_evidence],
+    )
+
+    assert filtered == [candidate_evidence]
+
+
+@pytest.mark.asyncio
+async def test_admin_evidence_target_enforces_candidate_and_nonterminal_request() -> None:
+    candidate_id = uuid4()
+    service = object.__new__(VerificationRequestService)
+    service._requests = SimpleNamespace(
+        get_by_public_id=AsyncMock(
+            return_value=SimpleNamespace(
+                subject_user_id=candidate_id,
+                status=VerificationRequestStatus.PENDING_ADMIN_REVIEW,
+            )
+        )
+    )
+
+    target = await service.require_admin_evidence_target(candidate_id, uuid4())
+    assert target.subject_user_id == candidate_id
+
+    with pytest.raises(NotFoundError):
+        await service.require_admin_evidence_target(uuid4(), uuid4())
+
+    service._requests.get_by_public_id.return_value.status = VerificationRequestStatus.VERIFIED
+    with pytest.raises(ConflictError):
+        await service.require_admin_evidence_target(candidate_id, uuid4())
 
 
 def test_assign_reviewer_request_accepts_organization_member_public_id() -> None:
@@ -118,7 +176,14 @@ class FakeVerificationRequestService:
                     "request_type",
                     "status",
                 ),
-                allowed_sort_fields=("created_at", "updated_at", "subject_name", "subject_email", "request_type", "status"),
+                allowed_sort_fields=(
+                    "created_at",
+                    "updated_at",
+                    "subject_name",
+                    "subject_email",
+                    "request_type",
+                    "status",
+                ),
                 default_sort_by="created_at",
             )
         return items
@@ -159,7 +224,9 @@ class FakeVerificationRequestService:
     async def cancel(self, actor_user_id, verification_request_public_id, payload):  # noqa: ANN001
         return self._response(VerificationRequestStatus.CANCELLED)
 
-    async def get_timeline(self, actor_user_id, actor_email, verification_request_public_id, params=None):  # noqa: ANN001
+    async def get_timeline(
+        self, actor_user_id, actor_email, verification_request_public_id, params=None
+    ):  # noqa: ANN001
         return VerificationRequestTimelineResponse(
             verification_request_public_id=self._request_public_id,
             items=[
@@ -204,8 +271,12 @@ def _override_current_user_factory(
 
 @pytest.mark.asyncio
 async def test_create_verification_request_returns_pending_subject_acceptance() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="owner@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="owner@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     org_public_id = uuid4()
@@ -227,8 +298,12 @@ async def test_create_verification_request_returns_pending_subject_acceptance() 
 
 @pytest.mark.asyncio
 async def test_list_verification_requests_returns_items() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="member@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     org_public_id = uuid4()
@@ -242,8 +317,12 @@ async def test_list_verification_requests_returns_items() -> None:
 
 @pytest.mark.asyncio
 async def test_list_verification_requests_supports_paginated_mode() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="member@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     org_public_id = uuid4()
@@ -260,12 +339,18 @@ async def test_list_verification_requests_supports_paginated_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_non_member_cannot_list_verification_requests() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="outsider@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="outsider@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/v1/organizations/00000000-0000-0000-0000-00000000ffff/verification-requests")
+        response = await client.get(
+            "/api/v1/organizations/00000000-0000-0000-0000-00000000ffff/verification-requests"
+        )
 
     app.dependency_overrides.clear()
     assert response.status_code == 404
@@ -273,8 +358,12 @@ async def test_non_member_cannot_list_verification_requests() -> None:
 
 @pytest.mark.asyncio
 async def test_subject_can_read_request_detail() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="aman3@test.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="aman3@test.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -288,8 +377,12 @@ async def test_subject_can_read_request_detail() -> None:
 
 @pytest.mark.asyncio
 async def test_org_member_can_assign_verification_request_reviewer() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="member@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -305,9 +398,14 @@ async def test_org_member_can_assign_verification_request_reviewer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_org_member_can_assign_verification_request_reviewer_with_legacy_user_identifier() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+async def test_org_member_can_assign_verification_request_reviewer_with_legacy_user_identifier(
+) -> None:
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="member@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -323,8 +421,12 @@ async def test_org_member_can_assign_verification_request_reviewer_with_legacy_u
 
 @pytest.mark.asyncio
 async def test_assign_reviewer_rejects_conflicting_member_and_user_identifiers() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="member@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -344,8 +446,12 @@ async def test_assign_reviewer_rejects_conflicting_member_and_user_identifiers()
 
 @pytest.mark.asyncio
 async def test_org_member_can_update_verification_request_internal_note() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="member@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="member@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -361,8 +467,12 @@ async def test_org_member_can_update_verification_request_internal_note() -> Non
 
 @pytest.mark.asyncio
 async def test_subject_can_accept_request() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="aman3@test.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="aman3@test.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -376,12 +486,18 @@ async def test_subject_can_accept_request() -> None:
 
 @pytest.mark.asyncio
 async def test_duplicate_accept_is_rejected() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="aman3@test.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="aman3@test.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/verification-requests/00000000-0000-0000-0000-00000000eeee/accept")
+        response = await client.post(
+            "/api/v1/verification-requests/00000000-0000-0000-0000-00000000eeee/accept"
+        )
 
     app.dependency_overrides.clear()
     assert response.status_code == 409
@@ -390,8 +506,12 @@ async def test_duplicate_accept_is_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_organization_actor_cannot_use_subject_accept_route() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="owner@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="owner@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -404,8 +524,12 @@ async def test_organization_actor_cannot_use_subject_accept_route() -> None:
 
 @pytest.mark.asyncio
 async def test_verify_request_returns_verified_status() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="owner@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="owner@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -426,7 +550,9 @@ async def test_subject_cannot_verify_request() -> None:
         email="aman3@test.com",
         user_id=UUID("00000000-0000-0000-0000-000000000111"),
     )
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()
@@ -442,8 +568,12 @@ async def test_subject_cannot_verify_request() -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_workflow_transition_is_rejected() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="owner@example.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="owner@example.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -458,8 +588,12 @@ async def test_invalid_workflow_transition_is_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_subject_can_view_own_timeline() -> None:
-    app.dependency_overrides[get_current_user] = _override_current_user_factory(email="aman3@test.com")
-    app.dependency_overrides[get_verification_request_service] = lambda: FakeVerificationRequestService()
+    app.dependency_overrides[get_current_user] = _override_current_user_factory(
+        email="aman3@test.com"
+    )
+    app.dependency_overrides[get_verification_request_service] = lambda: (
+        FakeVerificationRequestService()
+    )
 
     transport = ASGITransport(app=app)
     request_public_id = uuid4()

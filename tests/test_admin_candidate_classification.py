@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from app.auth.deps import CurrentUser
 from app.config import get_settings
@@ -16,6 +17,7 @@ from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
 from app.models.user import User
 from app.organization.enums import OrganizationRole, OrganizationType
+from app.schemas.admin_directory import AdminUserProfileUpdateRequest
 from app.schemas.pagination import ListQueryParams
 from app.services.admin_directory_service import AdminDirectoryService
 
@@ -95,6 +97,10 @@ async def test_candidate_directory_excludes_hr_only_and_preserves_dual_role_user
         )
         assert hr_page.total == 0
         assert hr_page.items == []
+        normalized_page = await service.list_users(
+            ListQueryParams(search=f"  {candidate.email.upper()}  ", page=1, page_size=20)
+        )
+        assert [item.public_id for item in normalized_page.items] == [candidate.id]
 
         actor = CurrentUser(
             id=admin.id,
@@ -112,3 +118,19 @@ async def test_candidate_directory_excludes_hr_only_and_preserves_dual_role_user
         for user in (candidate, hr_only, dual_role, admin):
             await session.delete(user)
         await session.commit()
+
+
+def test_admin_profile_update_forbids_authentication_and_verified_fields() -> None:
+    with pytest.raises(ValidationError):
+        AdminUserProfileUpdateRequest.model_validate({"email": "changed@example.invalid"})
+    with pytest.raises(ValidationError):
+        AdminUserProfileUpdateRequest.model_validate({"email_verified": True})
+    with pytest.raises(ValidationError):
+        AdminUserProfileUpdateRequest(full_name=None)
+
+    payload = AdminUserProfileUpdateRequest(
+        full_name="Updated Candidate",
+        headline="Operations Lead",
+        location_country="in",
+    )
+    assert payload.location_country == "IN"

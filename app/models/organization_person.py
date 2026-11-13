@@ -75,7 +75,9 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
     )
 
-    public_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True)
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, default=uuid.uuid4, unique=True
+    )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -118,12 +120,14 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=OrganizationPersonInvitationStatusSummary.NOT_INVITED.value,
         index=True,
     )
-    verification_status_summary: Mapped[OrganizationPersonVerificationStatusSummary] = mapped_column(
-        organization_person_verification_status_summary_enum,
-        nullable=False,
-        default=OrganizationPersonVerificationStatusSummary.NOT_STARTED,
-        server_default=OrganizationPersonVerificationStatusSummary.NOT_STARTED.value,
-        index=True,
+    verification_status_summary: Mapped[OrganizationPersonVerificationStatusSummary] = (
+        mapped_column(
+            organization_person_verification_status_summary_enum,
+            nullable=False,
+            default=OrganizationPersonVerificationStatusSummary.NOT_STARTED,
+            server_default=OrganizationPersonVerificationStatusSummary.NOT_STARTED.value,
+            index=True,
+        )
     )
     passport_status_summary: Mapped[OrganizationPersonPassportStatusSummary] = mapped_column(
         organization_person_passport_status_summary_enum,
@@ -144,7 +148,9 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=text("now()"),
         index=True,
     )
-    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     resolution_state: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -173,6 +179,7 @@ class OrganizationPerson(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     department: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    division: Mapped[str | None] = mapped_column(String(255), nullable=True)
     joining_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     last_working_day: Mapped[date | None] = mapped_column(Date, nullable=True)
 

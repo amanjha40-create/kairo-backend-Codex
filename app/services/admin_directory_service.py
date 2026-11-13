@@ -66,6 +66,7 @@ from app.schemas.admin_directory import (
     AdminUserNoteResponse,
     AdminUserPage,
     AdminUserPassportSummary,
+    AdminUserProfileUpdateRequest,
     AdminUserRestoreRequest,
     AdminUserSessionResponse,
     AdminUserSuspendRequest,
@@ -334,7 +335,29 @@ class AdminDirectoryService:
             restore=can_manage_accounts and not deleted and suspended,
             revoke_sessions=can_manage_security and not deleted,
             send_password_reset=can_manage_security and not deleted and user.is_active,
+            edit_profile=has_permission(actor.role, Permission.MANAGE_USERS) and not deleted,
         )
+
+    async def update_user_profile(
+        self,
+        actor: CurrentUser,
+        user_public_id: UUID,
+        payload: AdminUserProfileUpdateRequest,
+    ) -> AdminUserDetailResponse:
+        user = await self._require_candidate(user_public_id, for_update=True)
+        from app.admin_operations.enums import ProfileProvenanceSource
+        from app.schemas.admin_operations import AdminProfileMutationRequest
+        from app.services.admin_operations_service import AdminOperationsService
+
+        await AdminOperationsService(self._session, self._settings).update_candidate_profile_record(
+            actor.id,
+            user,
+            AdminProfileMutationRequest(
+                **payload.model_dump(exclude_unset=True),
+                source=ProfileProvenanceSource.ADMIN_ENTERED,
+            ),
+        )
+        return await self.get_user_detail(actor, user_public_id)
 
     async def _record_account_event(
         self,
@@ -617,7 +640,13 @@ class AdminDirectoryService:
             masked_phone=None if deleted else mask_phone(user.phone),
             headline=None if deleted else user.headline,
             current_role=None if deleted else user.current_role,
+            industry=None if deleted else user.industry,
+            years_of_experience=None if deleted else user.years_of_experience,
             location=None if deleted else user.location,
+            location_city=None if deleted else user.location_city,
+            location_region=None if deleted else user.location_region,
+            location_country=None if deleted else user.location_country,
+            bio=None if deleted else user.bio,
             created_at=user.created_at,
             updated_at=user.updated_at,
             last_login_at=last_login_at,

@@ -81,11 +81,13 @@ async def test_partial_assignment_preserves_role_unless_explicitly_cleared(clear
         public_id=uuid4(),
         role_id=role.id,
         department="Old",
+        division="Legacy",
         joining_date=None,
         last_working_day=None,
     )
     service._locked_person = AsyncMock(return_value=person)
-    fields = {"department": "New"}
+    service._record_event = AsyncMock()
+    fields = {"department": "New", "division": "Platform"}
     if clear_role:
         fields["role_id"] = None
     result = await service.assign_role(
@@ -97,6 +99,44 @@ async def test_partial_assignment_preserves_role_unless_explicitly_cleared(clear
     assert person.role_id == (None if clear_role else role.id)
     assert result.role_id == (None if clear_role else role.public_id)
     assert result.department == "New"
+    assert result.division == "Platform"
+    service._record_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_employment_assignment_records_on_behalf_of_attribution():
+    service = HRV2Service.__new__(HRV2Service)
+    service._session = _async_session()
+    organization, _membership = _active_access()
+    service._admin_organization = AsyncMock(return_value=organization)
+    person = SimpleNamespace(
+        public_id=uuid4(),
+        role_id=None,
+        department=None,
+        division=None,
+        joining_date=None,
+        last_working_day=None,
+        employment_status="active",
+    )
+    service._locked_person = AsyncMock(return_value=person)
+    service._record_event = AsyncMock()
+
+    result = await service.assign_role(
+        uuid4(),
+        organization.public_id,
+        person.public_id,
+        OrganizationRoleAssignmentRequest(
+            department="Engineering",
+            division="Platform",
+        ),
+        admin_override=True,
+    )
+
+    assert result.department == "Engineering"
+    assert result.division == "Platform"
+    metadata = service._record_event.await_args.args[-1]
+    assert metadata["acting_on_behalf_of"] == str(organization.public_id)
+    assert metadata["fields"] == ["department", "division"]
 
 
 class _ScalarResult:
@@ -553,7 +593,9 @@ async def test_report_finality_trust_score_and_not_ordered_are_backend_derived()
     )
     service._people = SimpleNamespace(get_by_public_id=AsyncMock(return_value=person))
     service._report_requests = AsyncMock(return_value=[request])
-    service._session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [])))
+    service._session = SimpleNamespace(
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: []))
+    )
     service._court_items = AsyncMock(return_value=([], []))
     service._latest_trust_score = AsyncMock(return_value=SimpleNamespace(overall_score=88))
     service._identity_items = AsyncMock(return_value=[])
@@ -597,7 +639,9 @@ async def test_report_interim_open_items_and_cross_org_denial() -> None:
 def _team_invitation():
     now = datetime.now(tz=UTC)
     inviter = SimpleNamespace(email="owner@example.com", full_name="Owner User")
-    organization = SimpleNamespace(id=uuid4(), public_id=uuid4(), name="Kairo Labs", suspended_at=None)
+    organization = SimpleNamespace(
+        id=uuid4(), public_id=uuid4(), name="Kairo Labs", suspended_at=None
+    )
     return SimpleNamespace(
         id=uuid4(),
         public_id=uuid4(),

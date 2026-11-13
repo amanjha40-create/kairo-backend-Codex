@@ -362,11 +362,16 @@ class HRV2Service:
         org_public_id: UUID,
         person_public_id: UUID,
         payload: OrganizationRoleAssignmentRequest,
+        *,
+        admin_override: bool = False,
     ) -> OrganizationRoleAssignmentResponse:
-        organization, membership = await self._organizations.require_org_member(
-            actor_user_id, org_public_id
-        )
-        self._assert_active_access(organization, membership)
+        if admin_override:
+            organization = await self._admin_organization(org_public_id)
+        else:
+            organization, membership = await self._organizations.require_org_member(
+                actor_user_id, org_public_id
+            )
+            self._assert_active_access(organization, membership)
         person = await self._locked_person(organization.id, person_public_id)
         if (
             OrganizationPersonEmploymentStatus(getattr(person, "employment_status", "active"))
@@ -397,14 +402,29 @@ class HRV2Service:
             role = await self._session.get(OrganizationJobRole, person.role_id)
         if "department" in payload.model_fields_set:
             person.department = payload.department
+        if "division" in payload.model_fields_set:
+            person.division = payload.division
         if "joining_date" in payload.model_fields_set:
             person.joining_date = payload.joining_date
+        changed_fields = sorted(payload.model_fields_set)
+        await self._record_event(
+            organization.id,
+            actor_user_id,
+            "person_employment_profile_updated",
+            "organization_person",
+            person.public_id,
+            {
+                "fields": changed_fields,
+                "acting_on_behalf_of": str(organization.public_id) if admin_override else None,
+            },
+        )
         await self._session.commit()
         return OrganizationRoleAssignmentResponse(
             person_public_id=person.public_id,
             role_id=role.public_id if role is not None else None,
             role=role.name if role is not None else None,
             department=person.department,
+            division=person.division,
             joining_date=person.joining_date,
         )
 
@@ -1032,6 +1052,7 @@ class HRV2Service:
         return {
             "role_id": str(role.public_id) if role is not None else None,
             "department": person.department,
+            "division": person.division,
             "joining_date": person.joining_date.isoformat() if person.joining_date else None,
             "last_working_day": person.last_working_day.isoformat()
             if person.last_working_day
