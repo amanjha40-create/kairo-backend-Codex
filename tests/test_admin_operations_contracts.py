@@ -94,7 +94,9 @@ def _opaque_token(call: dict[str, object], key: str) -> str:
     assert isinstance(data, dict)
     url = data[key]
     assert isinstance(url, str)
-    return parse_qs(urlparse(url).query)["token"][0]
+    parsed = urlparse(url)
+    params = parse_qs(parsed.fragment or parsed.query)
+    return params["token"][0]
 
 
 async def _user(*, role: Role = Role.USER, email_prefix: str = "user") -> User:
@@ -349,6 +351,10 @@ async def test_candidate_create_activation_resend_and_claim_lifecycle() -> None:
 
         await service.send_candidate_activation(admin.id, created.candidate_id, resend=False)
         first_raw = _opaque_token(email.calls[-1], "activation_url")
+        first_url = email.calls[-1]["template_data"]["activation_url"]
+        assert isinstance(first_url, str)
+        assert urlparse(first_url).query == ""
+        assert urlparse(first_url).fragment.startswith("token=")
         first = await session.scalar(
             select(CandidateActivationToken).where(
                 CandidateActivationToken.user_id == created.candidate_id,
@@ -518,6 +524,8 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
         assert pending.person_id == person.person_id
 
         token = _opaque_token(email.calls[0], "activation_url")
+        validated = await service.validate_candidate_activation(token)
+        assert validated.organization_name == organization.name
         await service.claim_candidate_account(
             CandidateClaimRequest(
                 token=token,
@@ -536,6 +544,45 @@ async def test_client_person_is_created_before_candidate_activation() -> None:
             item.candidate_id != activation.candidate_id
             for item in await service.list_pending_candidate_invitations()
         )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_candidate_activation_rejects_an_authenticated_different_account() -> None:
+    email = _FakeEmailDelivery()
+    settings = get_settings()
+    async with async_session_factory() as session:
+        admin = await _user(role=Role.ADMIN, email_prefix="admin-activation-mismatch")
+        other_candidate = await _user(email_prefix="other-candidate")
+        session.add_all([admin, other_candidate])
+        await session.commit()
+        await session.refresh(admin)
+        await session.refresh(other_candidate)
+        service = AdminOperationsService(session, settings, email_delivery=email)
+        candidate = await service.create_candidate(
+            admin.id,
+            AdminCreateCandidateRequest(
+                full_name="Invitation Recipient",
+                email=f"invitation-recipient-{uuid4()}@example.com",
+                idempotency_key=uuid4(),
+            ),
+        )
+        await service.send_candidate_activation(admin.id, candidate.candidate_id, resend=False)
+        token = _opaque_token(email.calls[-1], "activation_url")
+
+        with pytest.raises(ForbiddenError) as mismatch:
+            await service.claim_candidate_account(
+                CandidateClaimRequest(
+                    token=token,
+                    password="Candidate-owned-password-2026!",
+                    confirm_password="Candidate-owned-password-2026!",
+                ),
+                authenticated_user_id=other_candidate.id,
+            )
+
+        assert mismatch.value.code == "forbidden"
+        validated = await service.validate_candidate_activation(token)
+        assert validated.claim_status == CandidateClaimStatus.ACTIVATION_PENDING
 
 
 @pytest.mark.integration

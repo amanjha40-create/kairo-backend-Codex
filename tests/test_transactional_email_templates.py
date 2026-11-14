@@ -292,6 +292,7 @@ def test_candidate_activation_names_the_server_resolved_client() -> None:
         )
     )
 
-    assert content.subject == "Godress Pharma Pvt. Ltd. invited you to KairoID"
-    assert "Godress Pharma Pvt. Ltd. invited you" in content.text_body
+    assert content.subject == "Godress Pharma Pvt. Ltd. has invited you to join KairoID"
+    assert "Godress Pharma Pvt. Ltd. has invited you to join KairoID" in content.text_body
+    assert "KairoID is facilitating this invitation on their behalf" in content.text_body
     assert "Godress Pharma Pvt. Ltd." in content.html_body

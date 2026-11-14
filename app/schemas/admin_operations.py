@@ -122,6 +122,7 @@ class CandidateActivationValidationResponse(BaseModel):
     claim_status: CandidateClaimStatus
     full_name: str | None
     email_masked: str
+    organization_name: str | None = None
     expires_at: datetime
     password_required: bool = True
     email_verification_via_activation: bool = True

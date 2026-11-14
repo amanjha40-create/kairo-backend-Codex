@@ -30,15 +30,16 @@ def render_candidate_account_activation(
     )
     safe_expiry = html_escape(context.expires_at_iso)
     invitation_copy = (
-        f"<strong>{safe_organization}</strong> invited you to claim a Candidate "
-        "profile on KairoID. "
+        f"<strong>{safe_organization} has invited you to join KairoID.</strong> "
+        "KairoID is facilitating this invitation on their behalf. "
         if safe_organization
-        else "a KairoID profile was prepared for you. "
+        else "A KairoID Candidate profile was prepared for you. "
     )
     text_invitation_copy = (
-        f"{context.organization_name} invited you to claim a Candidate profile on KairoID. "
+        f"{context.organization_name} has invited you to join KairoID. "
+        "KairoID is facilitating this invitation on their behalf. "
         if context.organization_name
-        else "A KairoID profile was prepared for you. "
+        else "A KairoID Candidate profile was prepared for you. "
     )
     html_body = render_html(
         title="Claim your KairoID account",
@@ -65,7 +66,7 @@ def render_candidate_account_activation(
     )
     return TransactionalEmailContent(
         subject=(
-            f"{context.organization_name} invited you to KairoID"
+            f"{context.organization_name} has invited you to join KairoID"
             if context.organization_name
             else "KairoID — claim your account"
         ),
