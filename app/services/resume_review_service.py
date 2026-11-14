@@ -78,6 +78,27 @@ SUPPORTED_IMPORT_TYPES = {
     "project",
     "skill",
 }
+
+SOURCE_REVIEW_WARNINGS = {
+    "professional_candidacy_not_earned",
+    "professional_candidacy_requires_review",
+}
+
+
+def source_review_warnings(raw: dict[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            warning
+            for warning in raw.get("warnings", [])
+            if warning in SOURCE_REVIEW_WARNINGS
+        )
+    )
+
+
+def is_professional_candidacy(warnings: list[str]) -> bool:
+    return "professional_candidacy_not_earned" in warnings
+
+
 SUGGESTION_ONLY_TYPES = {"profile"}
 
 
@@ -147,10 +168,16 @@ class ResumeReviewService:
         await self.session.flush()
         for ordinal, (claim_type, raw) in enumerate(self._claims(validated)):
             payload, draft_issues = self._draft_review_payload(claim_type, raw)
+            source_issues = source_review_warnings(raw)
+            draft_issues = [*draft_issues, *source_issues]
+            draft_issues = list(dict.fromkeys(draft_issues))
             assessment = await self.duplicates.assess(user_id, claim_type, payload)
             source_claim_id = stable_claim_id(parsed.id, claim_type, ordinal, payload)
             exact = next((candidate for candidate in assessment.candidates if candidate["classification"] == "exact_match"), None)
-            supported = claim_type in SUPPORTED_IMPORT_TYPES
+            supported = (
+                claim_type in SUPPORTED_IMPORT_TYPES
+                and not is_professional_candidacy(source_issues)
+            )
             selected = (
                 supported
                 and not draft_issues
@@ -185,7 +212,11 @@ class ResumeReviewService:
                 duplicate_status=assessment.status,
                 duplicate_candidates=assessment.candidates,
                 conflict_warnings=[*assessment.warnings, *draft_issues],
-                import_action="link_existing" if exact else ("create_new" if supported and assessment.status == "no_match" else "skip"),
+                import_action=(
+                    "link_existing"
+                    if exact and supported
+                    else ("create_new" if supported and assessment.status == "no_match" else "skip")
+                ),
                 target_record_id=UUID(exact["record_id"]) if exact else None,
                 source_reference=raw.get("source_text_reference"),
                 confidence=raw.get("confidence"),
@@ -231,6 +262,9 @@ class ResumeReviewService:
         self._check_version(item.version, payload.expected_version)
         strict_review = explicit_resume_review_capable()
         import_first = import_first_resume_capable()
+        source_issues = source_review_warnings(
+            {"warnings": list(getattr(item, "conflict_warnings", None) or [])}
+        )
         excluding = payload.selected is False or payload.import_action == ResumeImportAction.SKIP
         if excluding and payload.edited_payload is None:
             item.selected = False
@@ -256,6 +290,21 @@ class ResumeReviewService:
                 },
             )
             return self._item_response(item)
+        attempts_candidacy_import = (
+            payload.selected is True
+            or payload.edited_payload is not None
+            or payload.import_action
+            in {
+                ResumeImportAction.CREATE_NEW,
+                ResumeImportAction.LINK_EXISTING,
+                ResumeImportAction.UPDATE_EXISTING,
+            }
+        )
+        if is_professional_candidacy(source_issues) and attempts_candidacy_import:
+            raise ValidationAppError(
+                "Professional candidacy is not an earned certification and cannot be imported",
+                code="professional_candidacy_not_earned",
+            )
         edit_payload = dict(payload.edited_payload if payload.edited_payload is not None else item.edited_payload)
         if item.claim_type == "education":
             edit_payload = education_identity(edit_payload, item.edited_payload)
@@ -287,7 +336,9 @@ class ResumeReviewService:
         item.edited_payload = normalized
         item.duplicate_status = assessment.status
         item.duplicate_candidates = assessment.candidates
-        item.conflict_warnings = assessment.warnings
+        item.conflict_warnings = list(
+            dict.fromkeys([*assessment.warnings, *source_issues])
+        )
         if payload.selected is not None:
             item.selected = payload.selected
         if payload.import_action is not None:
@@ -490,6 +541,10 @@ class ResumeReviewService:
             if item.claim_type == "employment":
                 await self._refresh_employment_match(item)
             review_status = getattr(item, "review_status", "confirmed")
+            source_issues = source_review_warnings(
+                {"warnings": list(item.conflict_warnings or [])}
+            )
+            candidacy_held = is_professional_candidacy(source_issues)
             resolved = review_status in {"confirmed", "excluded", "edited"} or (
                 item.claim_type not in SUPPORTED_IMPORT_TYPES and item.import_action == "skip"
             )
@@ -523,6 +578,8 @@ class ResumeReviewService:
             # them instead of leaving them excluded from the import action.
             if item.claim_type not in SUPPORTED_IMPORT_TYPES and item.import_action != "skip":
                 blockers.append("unsupported_import_target")
+            if candidacy_held and item.import_action != "skip":
+                blockers.append("professional_candidacy_not_earned")
             verified_protected = False
             if item.import_action in {"link_existing", "update_existing"} and not item.target_record_id:
                 blockers.append("target_record_required")
@@ -542,7 +599,11 @@ class ResumeReviewService:
                 item_id=item.id,
                 claim_type=item.claim_type,
                 action=item.import_action,
-                target_model=item.claim_type if item.claim_type in SUPPORTED_IMPORT_TYPES else None,
+                target_model=(
+                    item.claim_type
+                    if item.claim_type in SUPPORTED_IMPORT_TYPES and not candidacy_held
+                    else None
+                ),
                 duplicate_status=item.duplicate_status,
                 target_record_id=item.target_record_id,
                 fields_to_create=sorted(key for key, value in item.edited_payload.items() if key not in {"claim_type", "location"} and value is not None),
@@ -576,6 +637,15 @@ class ResumeReviewService:
             raise ValidationAppError(
                 "Resume profile details must be changed through Profile",
                 code="resume_profile_suggestion_only",
+            )
+        if is_professional_candidacy(
+            source_review_warnings(
+                {"warnings": list(getattr(item, "conflict_warnings", None) or [])}
+            )
+        ) and item.import_action != "skip":
+            raise ValidationAppError(
+                "Professional candidacy is not an earned certification and cannot be imported",
+                code="professional_candidacy_not_earned",
             )
         prior = await self.session.scalar(select(ResumeRecordProvenance).where(
             ResumeRecordProvenance.review_item_id == item.id,

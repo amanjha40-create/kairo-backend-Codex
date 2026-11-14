@@ -622,6 +622,18 @@ class Settings(BaseSettings):
     bedrock_timeout_seconds: int = Field(
         default=60, ge=5, le=300, validation_alias=AliasChoices("BEDROCK_TIMEOUT_SECONDS")
     )
+    resume_model_max_output_tokens: int = Field(
+        default=10_000,
+        ge=1_000,
+        le=10_000,
+        validation_alias=AliasChoices("RESUME_MODEL_MAX_OUTPUT_TOKENS"),
+    )
+    resume_model_max_input_tokens: int | None = Field(
+        default=None,
+        ge=1_000,
+        le=100_000,
+        validation_alias=AliasChoices("RESUME_MODEL_MAX_INPUT_TOKENS"),
+    )
     textract_timeout_seconds: int = Field(
         default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS")
     )
