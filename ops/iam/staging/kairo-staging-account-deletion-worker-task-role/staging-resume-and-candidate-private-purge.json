@@ -85,7 +85,9 @@
       "Action": "bedrock:CountTokens",
       "Resource": [
         "arn:aws:bedrock:us-east-1:285515885083:inference-profile/us.amazon.nova-2-lite-v1:0",
-        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0"
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0"
       ],
       "Condition": {
         "StringEquals": {
