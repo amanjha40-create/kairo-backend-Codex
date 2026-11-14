@@ -14,6 +14,7 @@ from app.resumes.extraction import (
     reconcile_pdf_employment_dates,
 )
 from app.resumes.providers import TextractDocumentExtractor, extract_pdf_embedded_text
+from app.resumes.schemas import ParsedResumeResult
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "resume_golden"
 
@@ -452,3 +453,57 @@ def test_multiple_employment_dates_attach_to_their_unique_claims() -> None:
     assert historical["start_date_display"] == "2019-03"
     assert historical["end_date_display"] == "2021-12"
     assert historical.get("is_current") is not True
+
+
+def test_redacted_quality_fixture_preserves_source_truth_field_by_field() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/resume_extraction_quality.json").read_text()
+    )
+    normalized = normalize_extracted_payload(fixture["model_payload"], fixture["text"])
+    result = reconcile_pdf_employment_dates(normalized, fixture["text"], fixture["text"])
+
+    assert [item["name"] for item in result["skills"]] == fixture["expected"]["skills"]
+    assert [
+        [item["start_date_display"], item["end_date_display"]]
+        for item in result["employments"]
+    ] == fixture["expected"]["employment_dates"]
+    assert all(item["start_date_precision"] == "month" for item in result["employments"])
+    assert all(item["end_date_precision"] == "month" for item in result["employments"])
+    assert len(result["education"]) == fixture["expected"]["education_count"]
+    candidacy = result["certifications"][0]
+    assert candidacy["title"] == fixture["expected"]["candidacy_title"]
+    assert candidacy["issuing_organization"] is None
+    assert candidacy["issued_date"] is None
+    assert candidacy["selected_for_import"] is False
+    assert "professional_candidacy_not_earned" in candidacy["warnings"]
+    assert "professional_candidacy_requires_review" in candidacy["warnings"]
+    ParsedResumeResult.model_validate(result)
+
+
+def test_order_recovery_stops_when_source_sequence_is_not_complete() -> None:
+    payload = _employment_payload(
+        {"company_name": "Ungrounded A", "role_title": "Associate"},
+        {"company_name": "Northwind Labs", "role_title": "Engineer"},
+    )
+    text = "EXPERIENCE\nNorthwind Labs\nEngineer\nJan 2022 - Present"
+
+    result = reconcile_pdf_employment_dates(payload, text, text)
+
+    assert result["employments"][0]["start_date_display"] is None
+    assert result["employments"][1]["start_date_display"] == "2022-01"
+
+
+def test_candidacy_with_earned_wording_remains_an_earned_claim() -> None:
+    payload = {
+        "certifications": [
+            {
+                "title": "Qualified Financial Analyst",
+                "issued_date": "2024-01-01",
+                "confidence": 0.96,
+            }
+        ]
+    }
+    result = normalize_extracted_payload(payload, "CERTIFICATIONS\nQualified Financial Analyst")
+
+    assert result["certifications"][0]["issued_date"] == "2024-01-01"
+    assert "professional_candidacy_not_earned" not in result["certifications"][0]["warnings"]

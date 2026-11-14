@@ -1,0 +1,76 @@
+{
+  "text": "SKILLS\nFinancial Analysis & Reporting\nPitch Decks & Research Briefs\nInvestor Relations & Outreach\nProject & Process Management\nCross-Functional Coordination\nData Accuracy & Internal Reporting\nStakeholder Engagement\nVenture Capital, M&A, Private Markets Research\nPROFESSIONAL EXPERIENCE\nNorthwind Forum\nInvestor Relations Associate\nJan 2025 - Jun 2025\nCyntra Techlabs\nInvestor Relations Associate\nApr 2023 - Jan 2024\nMorningstar Research\nResearch Associate\nJun 2022 - Apr 2023\nBaker Street Advisory\nConsultant\nDec 2020 - Jun 2022\nEDUCATION\nCFA Level 1 Candidate\nWestbrook University\nBachelor of Science\n2018 - 2021",
+  "model_payload": {
+    "employments": [
+      {
+        "company_name": "Northwind Analytics",
+        "role_title": "Investor Relations Associate",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "confidence": 0.96
+      },
+      {
+        "company_name": "Cyntra Holdings",
+        "role_title": "Investor Relations Associate",
+        "start_date": "2022-01-01",
+        "end_date": "2022-12-31",
+        "confidence": 0.96
+      },
+      {
+        "company_name": "Morningstar Research",
+        "role_title": "Research Associate",
+        "confidence": 0.96
+      },
+      {
+        "company_name": "Baker Street Advisory",
+        "role_title": "Consultant",
+        "confidence": 0.96
+      }
+    ],
+    "education": [
+      {
+        "institution_name": "Inferred Professional Institute",
+        "degree": "CFA Level 1 Candidate",
+        "confidence": 0.96
+      },
+      {
+        "institution_name": "Westbrook University",
+        "degree": "Bachelor of Science",
+        "start_date": "2018",
+        "end_date": "2021",
+        "confidence": 0.96
+      }
+    ],
+    "skills": [
+      {"name": "Financial Analysis & Reporting", "confidence": 0.96},
+      {"name": "Pitch Decks & Research Briefs", "confidence": 0.96},
+      {"name": "Investor Relations & Outreach", "confidence": 0.96},
+      {"name": "Project & Process Management", "confidence": 0.96},
+      {"name": "Cross-Functional Coordination", "confidence": 0.96},
+      {"name": "Data Accuracy & Internal Reporting", "confidence": 0.96},
+      {"name": "Stakeholder Engagement", "confidence": 0.96},
+      {"name": "CRM", "confidence": 0.96},
+      {"name": "KYC", "confidence": 0.96}
+    ]
+  },
+  "expected": {
+    "skills": [
+      "Financial Analysis & Reporting",
+      "Pitch Decks & Research Briefs",
+      "Investor Relations & Outreach",
+      "Project & Process Management",
+      "Cross-Functional Coordination",
+      "Data Accuracy & Internal Reporting",
+      "Stakeholder Engagement",
+      "Venture Capital, M&A, Private Markets Research"
+    ],
+    "employment_dates": [
+      ["2025-01", "2025-06"],
+      ["2023-04", "2024-01"],
+      ["2022-06", "2023-04"],
+      ["2020-12", "2022-06"]
+    ],
+    "education_count": 1,
+    "candidacy_title": "CFA Level 1 Candidate"
+  }
+}

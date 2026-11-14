@@ -33,7 +33,7 @@ from app.resumes.review_schemas import (
     review_claim_adapter,
 )
 from app.services.resume_duplicate_service import ResumeDuplicateService, classify_match
-from app.services.resume_review_service import ResumeReviewService
+from app.services.resume_review_service import ResumeReviewService, source_review_warnings
 
 
 @contextmanager
@@ -225,6 +225,21 @@ def test_import_confirmation_and_idempotency_key_are_mandatory() -> None:
         ReviewImportRequest(expected_version=1, idempotency_key="short", confirmed=True)
     with pytest.raises(ValidationError):
         ReviewImportRequest(expected_version=1, idempotency_key="candidate-confirmation", confirmed=False)
+
+
+def test_professional_candidacy_warnings_hold_import_for_review() -> None:
+    assert source_review_warnings(
+        {
+            "warnings": [
+                "professional_candidacy_not_earned",
+                "professional_candidacy_requires_review",
+                "unrelated_non_blocking_warning",
+            ]
+        }
+    ) == [
+        "professional_candidacy_not_earned",
+        "professional_candidacy_requires_review",
+    ]
 
 
 def test_item_update_rejects_extra_mutation_controls() -> None:

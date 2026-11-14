@@ -78,6 +78,21 @@ SUPPORTED_IMPORT_TYPES = {
     "project",
     "skill",
 }
+
+SOURCE_REVIEW_WARNINGS = {
+    "professional_candidacy_not_earned",
+    "professional_candidacy_requires_review",
+}
+
+
+def source_review_warnings(raw: dict[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            warning
+            for warning in raw.get("warnings", [])
+            if warning in SOURCE_REVIEW_WARNINGS
+        )
+    )
 SUGGESTION_ONLY_TYPES = {"profile"}
 
 
@@ -147,6 +162,8 @@ class ResumeReviewService:
         await self.session.flush()
         for ordinal, (claim_type, raw) in enumerate(self._claims(validated)):
             payload, draft_issues = self._draft_review_payload(claim_type, raw)
+            draft_issues = [*draft_issues, *source_review_warnings(raw)]
+            draft_issues = list(dict.fromkeys(draft_issues))
             assessment = await self.duplicates.assess(user_id, claim_type, payload)
             source_claim_id = stable_claim_id(parsed.id, claim_type, ordinal, payload)
             exact = next((candidate for candidate in assessment.candidates if candidate["classification"] == "exact_match"), None)

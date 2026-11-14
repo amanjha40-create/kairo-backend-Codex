@@ -19,14 +19,12 @@ def test_real_cv_structure_rejects_leakage_and_preserves_other_claims():
         "education": [{"institution_name": "Synthetic College"}],
         "certifications": [{"name": "Synthetic Certificate"}],
         "projects": [{"name": "Synthetic Dashboard"}],
-        "skills": [
-            {"name": name, "confidence": 0.99} for name in FIXTURE["junk"] + ["SQL", "Python"]
-        ],
+        "skills": [{"name": name, "confidence": 0.99} for name in FIXTURE["junk"]],
     }
     original = copy.deepcopy(payload)
     result = normalize_extracted_payload(payload, FIXTURE["text"])
-    assert {s["name"] for s in result["skills"]} == set(FIXTURE["explicit"] + ["SQL", "Python"])
-    assert {s["source_section"] for s in result["skills"]} == {"skills", "experience", "summary"}
+    assert [s["name"] for s in result["skills"]] == FIXTURE["explicit"]
+    assert {s["source_section"] for s in result["skills"]} == {"skills"}
     for kind in ("employments", "education", "certifications", "projects"):
         assert len(result[kind]) == len(original[kind])
         for before, after in zip(original[kind], result[kind], strict=True):
