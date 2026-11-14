@@ -8,6 +8,7 @@ from app.exceptions import ConflictError, NotFoundError
 from app.models.skill import Skill
 from app.repositories.skill import SkillRepository
 from app.schemas.skill import SkillCreateRequest
+from app.services.skill_lifecycle import reserve_skill_name, soft_delete_skill
 
 
 class SkillService:
@@ -19,18 +20,24 @@ class SkillService:
         return await self._repo.list_for_user(user_id)
 
     async def create(self, user_id: UUID, payload: SkillCreateRequest) -> Skill:
-        normalized = payload.name.casefold()
-        if await self._repo.get_by_normalized_name(user_id, normalized):
+        name, normalized, existing = await reserve_skill_name(
+            self._session, user_id, payload.name
+        )
+        if existing is not None:
             raise ConflictError("This skill has already been added")
-        item = Skill(user_id=user_id, name=payload.name, normalized_name=normalized, verification_status="self_declared")
+        item = Skill(
+            user_id=user_id,
+            name=name,
+            normalized_name=normalized,
+            verification_status="self_declared",
+        )
         self._session.add(item)
         await self._session.commit()
         await self._session.refresh(item)
         return item
 
     async def delete(self, user_id: UUID, skill_id: UUID) -> None:
-        item = await self._repo.get_owned(skill_id, user_id)
+        item = await soft_delete_skill(self._session, user_id, skill_id)
         if item is None:
             raise NotFoundError("Skill not found")
-        await self._repo.soft_delete(item)
         await self._session.commit()

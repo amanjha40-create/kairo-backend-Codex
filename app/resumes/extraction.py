@@ -630,11 +630,28 @@ def _employment_source_date_blocks(extracted_text: str) -> list[dict[str, Any]]:
             # section heading. Keep the date's own row central and use only a tight
             # window for exact employer/role anchors; never recover by list order.
             same_row_identity = f"{line[:match.start()]} {line[match.end():]}".strip()
-            context_lines = (
-                [line]
-                if re.search(r"[A-Za-z]{3}", same_row_identity)
-                else lines[max(0, index - 2) : index + 1]
-            )
+            if re.search(r"[A-Za-z]{3}", same_row_identity):
+                context_lines = [line]
+            else:
+                # Textract can emit the date column immediately before the employer
+                # column. Prefer the conventional preceding employer block; only
+                # look forward when a section boundary proves there is no preceding
+                # record. Never combine both sides across a record boundary.
+                neighbours: dict[int, list[str]] = {-1: [], 1: []}
+                for direction in (-1, 1):
+                    for offset in range(1, 4):
+                        candidate_index = index + (direction * offset)
+                        if candidate_index < 0 or candidate_index >= len(lines):
+                            break
+                        candidate = lines[candidate_index]
+                        if _DATE_RANGE.search(candidate) or section_heading(candidate):
+                            break
+                        if candidate:
+                            if direction < 0:
+                                neighbours[direction].insert(0, candidate)
+                            else:
+                                neighbours[direction].append(candidate)
+                context_lines = [line, *(neighbours[-1] or neighbours[1])]
             context = " ".join(item for item in context_lines if item)
             blocks.append(
                 {
@@ -787,6 +804,31 @@ _EDUCATION_INSTITUTION_YEAR = re.compile(
 )
 
 
+def _education_model_pair_is_source_grounded(
+    claim: dict[str, Any], extracted_text: str
+) -> bool:
+    """Require a model source reference plus unique source values for a pairing."""
+    degree = claim.get("degree")
+    institution = claim.get("institution_name")
+    source_reference = claim.get("source_text_reference")
+    values = (degree, institution, source_reference)
+    if not all(isinstance(value, str) and value.strip() for value in values):
+        return False
+    degree_key = _ocr_comparison_text(degree)
+    institution_key = _ocr_comparison_text(institution)
+    reference_key = _ocr_comparison_text(source_reference)
+    if degree_key not in reference_key or institution_key not in reference_key:
+        return False
+    source_lines = [
+        _ocr_comparison_text(line)
+        for line in extracted_text.splitlines()
+        if line.strip()
+    ]
+    degree_matches = sum(degree_key in line for line in source_lines)
+    institution_matches = sum(institution_key in line for line in source_lines)
+    return degree_matches == 1 and institution_matches == 1
+
+
 def _education_source_assignments(
     claims: list[dict[str, Any]], extracted_text: str
 ) -> dict[int, str]:
@@ -834,7 +876,7 @@ def _education_source_assignments(
 def reconcile_pdf_education_blocks(
     payload: dict[str, Any], textract_text: str, embedded_text: str
 ) -> dict[str, Any]:
-    """Replace model pairings only with exact qualification-local source evidence."""
+    """Preserve proven pairs and never overwrite them from flattened list position."""
     value = dict(payload)
     dict_claims = [claim for claim in value.get("education") or [] if isinstance(claim, dict)]
     primary_assignments = _education_source_assignments(dict_claims, textract_text)
@@ -849,6 +891,9 @@ def reconcile_pdf_education_blocks(
         warnings = list(item.get("warnings") or [])
         primary = primary_assignments.get(dict_index)
         supplemental = supplemental_assignments.get(dict_index)
+        model_pair_grounded = _education_model_pair_is_source_grounded(
+            item, textract_text
+        ) or _education_model_pair_is_source_grounded(item, embedded_text)
         dict_index += 1
         if primary and supplemental and _ocr_comparison_text(primary) != _ocr_comparison_text(
             supplemental
@@ -860,14 +905,20 @@ def reconcile_pdf_education_blocks(
                     "education_source_association_uncertain",
                 ]
             )
+        elif model_pair_grounded:
+            warnings.append("education_model_pair_preserved_from_source_reference")
         else:
             grounded = primary or supplemental
             if grounded:
-                if _ocr_comparison_text(str(item.get("institution_name") or "")) != (
-                    _ocr_comparison_text(grounded)
-                ):
+                current = _ocr_comparison_text(str(item.get("institution_name") or ""))
+                recovered = _ocr_comparison_text(grounded)
+                if current and current != recovered:
                     warnings.append("education_institution_recovered_from_source_block")
-                item["institution_name"] = grounded
+                    item["institution_name"] = grounded
+                else:
+                    if not current:
+                        warnings.append("education_institution_recovered_from_source_block")
+                    item["institution_name"] = grounded
             else:
                 item["institution_name"] = None
                 warnings.extend(

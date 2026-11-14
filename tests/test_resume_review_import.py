@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -111,6 +112,47 @@ async def test_skill_duplicate_matching_links_existing_normalized_name() -> None
     )
     assert result.status == "exact_match"
     assert result.candidates[0]["record_id"] == str(existing_id)
+
+
+@pytest.mark.asyncio
+async def test_skill_import_concurrent_active_record_links_with_provenance(monkeypatch) -> None:
+    user_id = uuid4()
+    record = SimpleNamespace(id=uuid4())
+    item = SimpleNamespace(
+        id=uuid4(),
+        claim_type="skill",
+        edited_payload={"claim_type": "skill", "name": "Python"},
+        original_payload={"claim_type": "skill", "name": "Python"},
+        import_action="create_new",
+        review_status="confirmed",
+        imported_record_type=None,
+        imported_record_id=None,
+        duplicate_candidates=[],
+    )
+    review = SimpleNamespace(id=uuid4(), resume_document_id=uuid4(), parsed_result_id=uuid4())
+    batch = SimpleNamespace(id=uuid4())
+    session = SimpleNamespace(scalar=AsyncMock(return_value=None), flush=AsyncMock())
+    service = ResumeReviewService(session)
+    service._add_provenance = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.resume_review_service.reserve_skill_name",
+        AsyncMock(return_value=("Python", "python", record)),
+    )
+
+    outcome = await service._import_item(
+        user_id,
+        review,
+        batch,
+        item,
+        datetime.now(UTC),
+        confirmed_by_user_id=user_id,
+        confirmation_source="candidate_confirmed",
+        provenance_source="resume",
+    )
+
+    assert outcome == ("linked", "skill", record.id, ["already_in_career"])
+    assert item.imported_record_id == record.id
+    service._add_provenance.assert_awaited_once()
 
 
 @pytest.mark.asyncio

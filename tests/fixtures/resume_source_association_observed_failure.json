@@ -1,0 +1,67 @@
+{
+  "text": "SUMMARY\nJan 2025 - Jun 2025\nEmployer Alpha\nInvestor Relations Associate\nSKILLS\nExplicit Skill One\nExplicit Skill Two\nEDUCATION\nQualification One\nInstitute Beta - 2016\nQualification Two\nInstitute Alpha - 2021\nQualification Three\nInstitute Gamma - 2014\nApr 2023 - Jan 2024Employer Beta | Investor Relations Associate\nJun 2022 - Apr 2023Employer Gamma | Research Associate\nDec 2020 - Jun 2022Employer Delta | Financial Consultant\nProfessional Level 1 Candidate",
+  "model_payload": {
+    "employments": [
+      {
+        "company_name": "Employer Alpha",
+        "role_title": "Investor Relations Associate",
+        "start_date": "2025-01",
+        "end_date": "2025-06",
+        "source_text_reference": "Employer Alpha Investor Relations Associate Jan 2025 Jun 2025"
+      },
+      {
+        "company_name": "Employer Beta",
+        "role_title": "Investor Relations Associate",
+        "start_date": "2023-04",
+        "end_date": "2024-01"
+      },
+      {
+        "company_name": "Employer Gamma",
+        "role_title": "Research Associate",
+        "start_date": "2022-06",
+        "end_date": "2023-04"
+      },
+      {
+        "company_name": "Employer Delta",
+        "role_title": "Financial Consultant",
+        "start_date": "2020-12",
+        "end_date": "2022-06"
+      }
+    ],
+    "education": [
+      {
+        "institution_name": "Institute Alpha",
+        "degree": "Qualification One",
+        "source_text_reference": "Qualification One at Institute Alpha"
+      },
+      {
+        "institution_name": "Institute Beta",
+        "degree": "Qualification Two",
+        "source_text_reference": "Qualification Two at Institute Beta"
+      },
+      {
+        "institution_name": "Institute Gamma",
+        "degree": "Qualification Three",
+        "source_text_reference": "Qualification Three at Institute Gamma"
+      }
+    ],
+    "skills": [
+      {"name": "Explicit Skill One", "source_section": "skills"},
+      {"name": "Explicit Skill Two", "source_section": "skills"}
+    ],
+    "certifications": [
+      {
+        "title": "Professional Level 1 Candidate",
+        "source_text_reference": "Professional Level 1 Candidate"
+      }
+    ]
+  },
+  "expected": {
+    "employment_a_dates": ["2025-01", "2025-06", false],
+    "education_by_degree": {
+      "Qualification One": "Institute Alpha",
+      "Qualification Two": "Institute Beta",
+      "Qualification Three": "Institute Gamma"
+    }
+  }
+}

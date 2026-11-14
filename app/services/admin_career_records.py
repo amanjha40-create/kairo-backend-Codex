@@ -17,6 +17,7 @@ from app.schemas.gig_platform import GigPlatformResponse
 from app.schemas.portfolio import PortfolioItemResponse
 from app.schemas.project import ProjectResponse
 from app.schemas.skill import SkillResponse
+from app.services.skill_lifecycle import reserve_skill_name
 
 MODELS = {
     "portfolio": PortfolioItem,
@@ -66,14 +67,15 @@ async def write(
     if kind == "portfolio" and "tags" in stored:
         stored["tags"] = ",".join(t.strip() for t in (stored["tags"] or []) if t.strip()) or None
     if kind == "skill":
-        normalized = changes["name"].casefold()
-        duplicate = select(Skill.id).where(
-            Skill.user_id == user_id, Skill.normalized_name == normalized
+        name, normalized, existing = await reserve_skill_name(
+            session,
+            user_id,
+            changes["name"],
+            exclude_skill_id=record.id if record is not None else None,
         )
-        if record is not None:
-            duplicate = duplicate.where(Skill.id != record.id)
-        if await session.scalar(duplicate) is not None:
+        if existing is not None:
             raise ConflictError("This skill has already been added")
+        stored["name"] = name
         stored["normalized_name"] = normalized
     if record is None:
         record = MODELS[kind](user_id=user_id, **stored)

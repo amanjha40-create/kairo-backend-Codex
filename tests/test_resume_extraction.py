@@ -511,6 +511,62 @@ def test_actual_layout_regression_keeps_source_blocks_when_model_order_is_wrong(
     assert "professional_candidacy_not_earned" in candidacy["warnings"]
 
 
+def test_observed_replay_layout_preserves_date_and_model_source_pairs() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures/resume_source_association_observed_failure.json"
+        ).read_text()
+    )
+    normalized = normalize_extracted_payload(fixture["model_payload"], fixture["text"])
+    result = reconcile_pdf_source_associations(normalized, fixture["text"], fixture["text"])
+
+    employment_a = next(
+        item for item in result["employments"] if item["company_name"] == "Employer Alpha"
+    )
+    assert [
+        employment_a["start_date_display"],
+        employment_a["end_date_display"],
+        employment_a["is_current"],
+    ] == fixture["expected"]["employment_a_dates"]
+    assert "employment_source_association_uncertain" not in employment_a["warnings"]
+
+    assert {
+        item["degree"]: item["institution_name"] for item in result["education"]
+    } == fixture["expected"]["education_by_degree"]
+    assert all(
+        "education_model_pair_preserved_from_source_reference" in item["warnings"]
+        for item in result["education"]
+    )
+    assert [item["name"] for item in result["skills"]] == [
+        "Explicit Skill One",
+        "Explicit Skill Two",
+    ]
+    candidacy = result["certifications"][0]
+    assert candidacy["selected_for_import"] is False
+    assert "professional_candidacy_not_earned" in candidacy["warnings"]
+
+
+def test_conflicting_positional_education_recovery_is_held_not_reassigned() -> None:
+    payload = {
+        "education": [
+            {
+                "degree": "Qualification One",
+                "institution_name": "Institute Alpha",
+                "source_text_reference": "Qualification One",
+            }
+        ]
+    }
+    primary = "EDUCATION\nQualification One\nInstitute Beta - 2021\nInstitute Alpha"
+    supplemental = "EDUCATION\nQualification One\nInstitute Gamma - 2021\nInstitute Alpha"
+
+    result = reconcile_pdf_education_blocks(payload, primary, supplemental)
+
+    education = result["education"][0]
+    assert education["institution_name"] is None
+    assert "education_source_association_uncertain" in education["warnings"]
+
+
 def test_repeated_role_title_never_overrides_missing_employer_anchor() -> None:
     payload = _employment_payload(
         {

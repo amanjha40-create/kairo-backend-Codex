@@ -65,6 +65,7 @@ from app.resumes.review_validation import required_claim_blockers
 from app.resumes.schemas import ParsedResumeResult
 from app.resumes.skill_quality import confident_for_selection
 from app.services.resume_duplicate_service import ResumeDuplicateService
+from app.services.skill_lifecycle import reserve_skill_name
 
 logger = logging.getLogger(__name__)
 SUPPORTED_IMPORT_TYPES = {
@@ -712,8 +713,24 @@ class ResumeReviewService:
                 raise ValidationAppError("Verified or active records cannot be overwritten", code="protected_record")
             self._apply_update(record, item.claim_type, typed_payload)
         else:
-            record = await self._create_record(user_id, item.claim_type, typed_payload)
-            self.session.add(record)
+            if item.claim_type == "skill":
+                name, normalized, existing = await reserve_skill_name(
+                    self.session, user_id, typed_payload["name"]
+                )
+                if existing is not None:
+                    record = existing
+                    action = "link_existing"
+                else:
+                    record = Skill(
+                        user_id=user_id,
+                        name=name,
+                        normalized_name=normalized,
+                        verification_status="self_declared",
+                    )
+                    self.session.add(record)
+            else:
+                record = await self._create_record(user_id, item.claim_type, typed_payload)
+                self.session.add(record)
         await self.session.flush()
         await self._add_provenance(
             user_id,
@@ -728,6 +745,8 @@ class ResumeReviewService:
             provenance_source=provenance_source,
         )
         item.review_status, item.imported_record_type, item.imported_record_id = "imported", item.claim_type, record.id
+        if action == "link_existing":
+            return "linked", item.claim_type, record.id, ["already_in_career"]
         warnings = self._mapping_warnings(item.claim_type, item.edited_payload)
         warnings.extend(self._completion_warnings(item.claim_type, item.edited_payload))
         return "imported", item.claim_type, record.id, warnings
