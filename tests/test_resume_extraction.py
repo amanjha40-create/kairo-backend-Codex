@@ -17,6 +17,7 @@ from app.resumes.extraction import (
 )
 from app.resumes.providers import TextractDocumentExtractor, extract_pdf_embedded_text
 from app.resumes.schemas import ParsedResumeResult
+from app.resumes.stage_diagnostics import PrivacySafeResumeStageDiagnostics
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "resume_golden"
 
@@ -545,6 +546,79 @@ def test_observed_replay_layout_preserves_date_and_model_source_pairs() -> None:
     candidacy = result["certifications"][0]
     assert candidacy["selected_for_import"] is False
     assert "professional_candidacy_not_earned" in candidacy["warnings"]
+
+
+def test_observed_two_of_three_education_is_recovered_as_held_source_claim() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures/resume_education_observed_two_of_three.json"
+        ).read_text()
+    )
+    normalized = normalize_extracted_payload(fixture["model_payload"], fixture["text"])
+    assert len(normalized["education"]) == 2
+
+    result = reconcile_pdf_source_associations(normalized, fixture["text"], fixture["text"])
+
+    assert {
+        item["degree"]: item["institution_name"] for item in result["education"]
+    } == fixture["expected"]["education_by_degree"]
+    recovered = next(
+        item
+        for item in result["education"]
+        if item["degree"] == fixture["expected"]["recovered_degree"]
+    )
+    assert recovered["selected_for_import"] is False
+    assert "education_recovered_from_source_block" in recovered["warnings"]
+    assert "education_source_model_omission" in recovered["warnings"]
+    assert "education_source_association_uncertain" in recovered["warnings"]
+    ParsedResumeResult.model_validate(result)
+
+
+def test_education_recovery_does_not_fabricate_unpaired_source_text() -> None:
+    result = reconcile_pdf_education_blocks(
+        {"education": []},
+        "EDUCATION\nLearning programme\nInstitute Alpha\nProfessional Level 1 Candidate",
+        "",
+    )
+
+    assert result["education"] == []
+
+
+def test_stage_diagnostics_export_only_redacted_counts_fingerprints_and_reasons() -> None:
+    diagnostics = PrivacySafeResumeStageDiagnostics()
+    diagnostics.record(
+        "model_output",
+        {
+            "education": [
+                {
+                    "degree": "Sensitive Degree",
+                    "institution_name": "Sensitive Institution",
+                }
+            ]
+        },
+    )
+    diagnostics.record(
+        "import_payload",
+        {
+            "education": [
+                {
+                    "degree": "Sensitive Degree",
+                    "institution_name": "Sensitive Institution",
+                    "warnings": ["education_source_association_uncertain", "private prose"],
+                }
+            ]
+        },
+    )
+
+    exported = diagnostics.export()
+    serialized = json.dumps(exported)
+    assert exported["stages"][0]["counts"]["education"] == 1
+    assert "education_source_association_uncertain" in serialized
+    assert "other_warning" in serialized
+    assert "Sensitive Degree" not in serialized
+    assert "Sensitive Institution" not in serialized
+    assert "private prose" not in serialized
 
 
 def test_conflicting_positional_education_recovery_is_held_not_reassigned() -> None:

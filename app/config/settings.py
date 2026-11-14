@@ -640,6 +640,11 @@ class Settings(BaseSettings):
         le=1_000_000,
         validation_alias=AliasChoices("RESUME_MODEL_MAX_REQUEST_BYTES"),
     )
+    resume_stage_diagnostics_enabled: bool = Field(
+        default=False,
+        description="Emit privacy-safe, run-local Resume stage diagnostics",
+        validation_alias=AliasChoices("RESUME_STAGE_DIAGNOSTICS_ENABLED"),
+    )
     textract_timeout_seconds: int = Field(
         default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS")
     )
@@ -1016,6 +1021,10 @@ class Settings(BaseSettings):
         runtime_database_url = self.runtime_database_url
 
         if self.app_env == AppEnvironment.PRODUCTION:
+            if self.resume_stage_diagnostics_enabled:
+                raise ValueError(
+                    "RESUME_STAGE_DIAGNOSTICS_ENABLED is forbidden in APP_ENV=production."
+                )
             if len(self.jwt_secret_key) < 48:
                 msg = "JWT_SECRET_KEY must be at least 48 characters in APP_ENV=production."
                 raise ValueError(msg)

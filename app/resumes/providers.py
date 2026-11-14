@@ -23,6 +23,7 @@ from app.resumes.extraction import (
 )
 from app.resumes.schemas import ParsedResumeResult
 from app.resumes.skill_sections import section_heading
+from app.resumes.stage_diagnostics import PrivacySafeResumeStageDiagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +304,11 @@ def _log_model_usage(payload: dict[str, Any], *, provider: str, model_id: str) -
         )
 
 
-def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> ParsedResumeResult:
+def _parse_model_json(
+    payload: dict[str, Any],
+    extracted_text: str = "",
+    diagnostics: PrivacySafeResumeStageDiagnostics | None = None,
+) -> ParsedResumeResult:
     stop_reason = payload.get("stopReason")
     if stop_reason == "max_tokens":
         raise ResumeModelOutputTruncated("Resume model output reached its token limit")
@@ -315,9 +320,16 @@ def _parse_model_json(payload: dict[str, Any], extracted_text: str = "") -> Pars
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`").removeprefix("json").strip()
-    return ParsedResumeResult.model_validate(
-        normalize_extracted_payload(json.loads(cleaned), extracted_text)
-    )
+    model_payload = json.loads(cleaned)
+    if diagnostics is not None:
+        diagnostics.record("model_output", model_payload)
+    normalized = normalize_extracted_payload(model_payload, extracted_text)
+    if diagnostics is not None:
+        diagnostics.record("normalization", normalized)
+    validated = ParsedResumeResult.model_validate(normalized)
+    if diagnostics is not None:
+        diagnostics.record("validation", validated.model_dump(mode="json"))
+    return validated
 
 
 class NovaResumeParser(ResumeParser):
@@ -334,6 +346,11 @@ class NovaResumeParser(ResumeParser):
             "output_token_limit": self._output_token_limit,
             "stop_reason": "unknown",
         }
+        self._stage_diagnostics = (
+            PrivacySafeResumeStageDiagnostics()
+            if getattr(settings, "resume_stage_diagnostics_enabled", False)
+            else None
+        )
 
     async def parse(self, extracted_text: str) -> ParsedResumeResult:
         _validate_parser_input(self._settings, extracted_text)
@@ -447,7 +464,7 @@ class NovaResumeParser(ResumeParser):
             provider="nova",
             model_id=self._settings.bedrock_model_id,
         )
-        result = _parse_model_json(payload, sanitized_text)
+        result = _parse_model_json(payload, sanitized_text, self._stage_diagnostics)
         if isinstance(extracted_text, _PdfExtractedText):
             result = ParsedResumeResult.model_validate(
                 reconcile_pdf_source_associations(
@@ -456,6 +473,15 @@ class NovaResumeParser(ResumeParser):
                     extracted_text.embedded_text,
                 )
             )
+            if self._stage_diagnostics is not None:
+                self._stage_diagnostics.record(
+                    "source_association", result.model_dump(mode="json")
+                )
+        if self._stage_diagnostics is not None:
+            self._stage_diagnostics.record(
+                "import_payload", result.model_dump(mode="json")
+            )
+            self.safe_metadata["stage_diagnostics"] = self._stage_diagnostics.export()
         if removed_directive:
             result.warnings.append("untrusted_instruction_text_removed")
         return result

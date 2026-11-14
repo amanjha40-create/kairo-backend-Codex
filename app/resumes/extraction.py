@@ -802,6 +802,123 @@ def reconcile_pdf_employment_dates(
 _EDUCATION_INSTITUTION_YEAR = re.compile(
     r"^(?P<institution>.+?)\s*(?:[-\u2013\u2014|]\s*)?(?:19|20)\d{2}\s*$"
 )
+_EDUCATION_QUALIFICATION_HINT = re.compile(
+    r"\b(?:bachelor(?:'s)?|master(?:'s)?|doctorate|ph\.?d\.?|mba|bba|bcom|b\.com|"
+    r"bsc|b\.sc|msc|m\.sc|btech|b\.tech|mtech|m\.tech|diploma|"
+    r"high\s+school|higher\s+secondary|secondary|hsc|ssc|class\s+(?:x|xii|10|12))\b",
+    re.IGNORECASE,
+)
+
+
+def _source_education_blocks(extracted_text: str) -> list[dict[str, str]]:
+    """Recover only explicit qualification + institution/year source-local blocks."""
+    lines = [" ".join(line.split()) for line in extracted_text.splitlines() if line.strip()]
+    blocks: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for institution_index, line in enumerate(lines):
+        institution_match = _EDUCATION_INSTITUTION_YEAR.fullmatch(line)
+        if institution_match is None:
+            continue
+        institution = institution_match.group("institution").strip(" -\u2013\u2014|")
+        year_match = re.search(r"\b((?:19|20)\d{2})\b", line)
+        if not institution or year_match is None:
+            continue
+        for qualification_index in range(institution_index - 1, max(-1, institution_index - 4), -1):
+            qualification = lines[qualification_index]
+            if section_heading(qualification):
+                break
+            if _PROFESSIONAL_CANDIDACY.search(qualification) or _DATE_RANGE.search(qualification):
+                continue
+            if not _EDUCATION_QUALIFICATION_HINT.search(qualification):
+                continue
+            identity = (
+                _ocr_comparison_text(qualification),
+                _ocr_comparison_text(institution),
+                year_match.group(1),
+            )
+            if identity in seen:
+                break
+            seen.add(identity)
+            blocks.append(
+                {
+                    "degree": qualification,
+                    "institution_name": institution,
+                    "completion_year": year_match.group(1),
+                    "source_text_reference": f"{qualification} | {line}",
+                }
+            )
+            break
+    return blocks
+
+
+def _recover_missing_source_education(
+    payload: dict[str, Any], textract_text: str, embedded_text: str
+) -> dict[str, Any]:
+    """Keep explicit source records visible when structured model output omits them."""
+    value = dict(payload)
+    education = [
+        dict(item) if isinstance(item, dict) else item
+        for item in value.get("education") or []
+    ]
+    existing_pairs = {
+        (
+            _ocr_comparison_text(str(item.get("degree"))),
+            _ocr_comparison_text(str(item.get("institution_name"))),
+        )
+        for item in education
+        if isinstance(item, dict) and item.get("degree") and item.get("institution_name")
+    }
+    unassigned_degrees = {
+        _ocr_comparison_text(str(item.get("degree")))
+        for item in education
+        if isinstance(item, dict) and item.get("degree") and not item.get("institution_name")
+    }
+    candidates = [
+        *_source_education_blocks(textract_text),
+        *_source_education_blocks(embedded_text),
+    ]
+    recovered_keys: set[tuple[str, str, str]] = set()
+    for candidate in candidates:
+        degree_key = _ocr_comparison_text(candidate["degree"])
+        identity = (
+            degree_key,
+            _ocr_comparison_text(candidate["institution_name"]),
+            candidate["completion_year"],
+        )
+        pair = (degree_key, _ocr_comparison_text(candidate["institution_name"]))
+        if pair in existing_pairs or degree_key in unassigned_degrees or identity in recovered_keys:
+            continue
+        recovered_keys.add(identity)
+        existing_pairs.add(pair)
+        education.append(
+            {
+                "institution_name": candidate["institution_name"],
+                "degree": candidate["degree"],
+                "field_of_study": None,
+                "education_level": None,
+                "grade": None,
+                "start_date": None,
+                "end_date": None,
+                "start_date_display": None,
+                "end_date_display": candidate["completion_year"],
+                "start_date_precision": None,
+                "end_date_precision": "year",
+                "is_current": False,
+                "source_text_reference": candidate["source_text_reference"],
+                "confidence": None,
+                "warnings": [
+                    "education_recovered_from_source_block",
+                    "education_source_model_omission",
+                    "education_source_association_uncertain",
+                ],
+                "selected_for_import": False,
+            }
+        )
+        result_warnings = list(value.get("warnings") or [])
+        result_warnings.append("education_recovered_from_source_block")
+        value["warnings"] = list(dict.fromkeys(result_warnings))
+    value["education"] = education
+    return value
 
 
 def _education_model_pair_is_source_grounded(
@@ -930,7 +1047,7 @@ def reconcile_pdf_education_blocks(
         item["warnings"] = list(dict.fromkeys(warnings))
         claims.append(item)
     value["education"] = claims
-    return value
+    return _recover_missing_source_education(value, textract_text, embedded_text)
 
 
 def reconcile_pdf_source_associations(

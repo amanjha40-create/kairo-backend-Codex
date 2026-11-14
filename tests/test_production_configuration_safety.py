@@ -150,6 +150,7 @@ def test_structured_runtime_database_configuration_wins_over_legacy_url() -> Non
         ({"cors_origins": ["https://app.kairoid.com"]}, "ADMIN_PORTAL_BASE_URL"),
         ({"aws_endpoint_url": "http://localstack:4566"}, "AWS_ENDPOINT_URL"),
         ({"controlled_testing": True}, "CONTROLLED_TESTING"),
+        ({"resume_stage_diagnostics_enabled": True}, "RESUME_STAGE_DIAGNOSTICS_ENABLED"),
         (
             {"phone_otp_backend": "staging_fixed", "staging_phone_otp_code": "123456"},
             "Staging fixed OTP",

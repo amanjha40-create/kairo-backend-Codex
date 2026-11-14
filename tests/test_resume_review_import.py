@@ -285,6 +285,22 @@ def test_professional_candidacy_warnings_hold_import_for_review() -> None:
     ]
 
 
+def test_recovered_education_warnings_are_durable_review_holds() -> None:
+    assert source_review_warnings(
+        {
+            "warnings": [
+                "education_recovered_from_source_block",
+                "education_source_model_omission",
+                "education_source_association_uncertain",
+            ]
+        }
+    ) == [
+        "education_recovered_from_source_block",
+        "education_source_model_omission",
+        "education_source_association_uncertain",
+    ]
+
+
 @pytest.mark.parametrize(
     "warning",
     [
@@ -372,6 +388,72 @@ async def test_professional_candidacy_rejects_generic_import_confirmation() -> N
         )
 
     assert exc_info.value.code == "professional_candidacy_not_earned"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "review_status,item_status",
+    [
+        ("reviewing", "excluded"),
+        ("ready_to_import", "excluded"),
+        ("partially_imported", "excluded"),
+        ("imported", "skipped"),
+    ],
+)
+async def test_excluded_candidacy_restores_to_unresolved_review(
+    monkeypatch: pytest.MonkeyPatch,
+    review_status: str,
+    item_status: str,
+) -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), status=review_status, version=3)
+    item = SimpleNamespace(
+        id=uuid4(),
+        claim_type="certification",
+        review_status=item_status,
+        selected=False,
+        import_action="skip",
+        target_record_id=None,
+        conflict_warnings=[
+            "professional_candidacy_not_earned",
+            "professional_candidacy_requires_review",
+        ],
+        version=2,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.scalars = [review, item]
+
+        async def scalar(self, _statement: object) -> SimpleNamespace:
+            return self.scalars.pop(0)
+
+        async def commit(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        ResumeReviewService,
+        "_item_response",
+        staticmethod(lambda value: value),
+    )
+
+    restored = await ResumeReviewService(FakeSession()).update_item(
+        review.user_id,
+        review.id,
+        item.id,
+        ReviewItemUpdateRequest(
+            expected_version=item.version,
+            confirmed=False,
+            selected=False,
+            import_action="skip",
+        ),
+    )
+
+    assert restored.review_status == "deselected"
+    assert restored.selected is False
+    assert restored.import_action == "skip"
+    assert review.status == (
+        "partially_imported" if review_status == "imported" else "reviewing"
+    )
 
 
 def test_item_update_rejects_extra_mutation_controls() -> None:

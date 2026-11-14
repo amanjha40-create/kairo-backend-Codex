@@ -74,6 +74,63 @@ async def test_nova_has_bounded_larger_budget_and_does_not_block_event_loop(monk
 
 
 @pytest.mark.asyncio
+async def test_opt_in_stage_diagnostics_persist_no_resume_values(monkeypatch):
+    private_degree = "Sensitive Synthetic Degree"
+    private_institution = "Sensitive Synthetic Institution"
+    response = io.BytesIO(
+        json.dumps(
+            {
+                "stopReason": "end_turn",
+                "output": {
+                    "message": {
+                        "content": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "education": [
+                                            {
+                                                "degree": private_degree,
+                                                "institution_name": private_institution,
+                                            }
+                                        ]
+                                    }
+                                )
+                            }
+                        ]
+                    }
+                },
+            }
+        ).encode()
+    )
+
+    class Client:
+        def invoke_model(self, **kwargs):
+            return {"body": response}
+
+    monkeypatch.setattr("app.resumes.providers._bedrock_client", lambda settings: Client())
+    parser = NovaResumeParser(
+        SimpleNamespace(
+            bedrock_model_id="us.amazon.nova-2-lite-v1:0",
+            resume_stage_diagnostics_enabled=True,
+        )
+    )
+
+    await parser.parse("Synthetic private resume text")
+
+    diagnostics = parser.safe_metadata["stage_diagnostics"]
+    serialized = json.dumps(diagnostics)
+    assert [stage["stage"] for stage in diagnostics["stages"]] == [
+        "model_output",
+        "normalization",
+        "validation",
+        "import_payload",
+    ]
+    assert private_degree not in serialized
+    assert private_institution not in serialized
+    assert "Synthetic private resume text" not in serialized
+
+
+@pytest.mark.asyncio
 async def test_truncation_does_not_automatically_repeat_provider_call(monkeypatch, caplog):
     calls = []
 

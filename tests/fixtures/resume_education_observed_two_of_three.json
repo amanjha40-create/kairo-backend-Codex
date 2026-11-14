@@ -1,0 +1,31 @@
+{
+  "text": "EDUCATION\nBachelor of Business Administration\nInstitute Alpha - 2021\nHSC\nInstitute Beta - 2016\nSSC\nInstitute Gamma - 2014\nPROFESSIONAL DEVELOPMENT\nProfessional Level 1 Candidate",
+  "model_payload": {
+    "education": [
+      {
+        "degree": "Bachelor of Business Administration",
+        "institution_name": "Institute Alpha",
+        "confidence": 0.96
+      },
+      {
+        "degree": "HSC",
+        "institution_name": "Institute Beta",
+        "confidence": 0.96
+      }
+    ],
+    "certifications": [
+      {
+        "title": "Professional Level 1 Candidate",
+        "confidence": 0.94
+      }
+    ]
+  },
+  "expected": {
+    "education_by_degree": {
+      "Bachelor of Business Administration": "Institute Alpha",
+      "HSC": "Institute Beta",
+      "SSC": "Institute Gamma"
+    },
+    "recovered_degree": "SSC"
+  }
+}

@@ -81,6 +81,8 @@ SUPPORTED_IMPORT_TYPES = {
 }
 
 SOURCE_REVIEW_WARNINGS = {
+    "education_recovered_from_source_block",
+    "education_source_model_omission",
     "education_source_association_uncertain",
     "employment_source_association_uncertain",
     "professional_candidacy_not_earned",
@@ -250,12 +252,22 @@ class ResumeReviewService:
 
     async def update_item(self, user_id: UUID, review_id: UUID, item_id: UUID, payload: ReviewItemUpdateRequest) -> ReviewItemResponse:
         review = await self._owned_review(user_id, review_id, for_update=True)
-        self._ensure_mutable(review)
         item = await self.session.scalar(select(ResumeReviewItem).where(ResumeReviewItem.id == item_id, ResumeReviewItem.review_session_id == review_id, ResumeReviewItem.user_id == user_id))
         if not item:
             raise NotFoundError("Resume review item not found")
         if item.review_status == "imported":
             raise ConflictError("Imported Resume records cannot be changed by recovery")
+        restoring_excluded = (
+            item.review_status in {"excluded", "skipped"}
+            and payload.confirmed is False
+            and payload.selected is False
+            and payload.import_action == ResumeImportAction.SKIP
+            and payload.edited_payload is None
+        )
+        if review.status == ResumeReviewStatus.IMPORTED.value and not restoring_excluded:
+            raise ConflictError("Resume review is no longer editable")
+        if review.status != ResumeReviewStatus.IMPORTED.value:
+            self._ensure_mutable(review)
         if item.claim_type == "employment" and payload.import_action == ResumeImportAction.UPDATE_EXISTING:
             raise ValidationAppError("Keep existing employment unchanged or add a distinct role", code="employment_merge_not_supported")
         if payload.confirm_distinct_role and (
@@ -279,7 +291,12 @@ class ResumeReviewService:
                 else "deselected"
             )
             item.version += 1
-            review.status = ResumeReviewStatus.REVIEWING.value
+            review.status = (
+                ResumeReviewStatus.PARTIALLY_IMPORTED.value
+                if restoring_excluded
+                and review.status == ResumeReviewStatus.IMPORTED.value
+                else ResumeReviewStatus.REVIEWING.value
+            )
             review.version += 1
             await self.session.commit()
             logger.info(
