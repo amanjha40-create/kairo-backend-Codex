@@ -17,7 +17,11 @@ from app.resumes.extraction import (
 )
 from app.resumes.providers import TextractDocumentExtractor, extract_pdf_embedded_text
 from app.resumes.schemas import ParsedResumeResult
-from app.resumes.stage_diagnostics import PrivacySafeResumeStageDiagnostics
+from app.resumes.stage_diagnostics import (
+    PrivacySafeResumeStageDiagnostics,
+    append_lifecycle_diagnostic_stage,
+    import_payload_fingerprints,
+)
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "resume_golden"
 
@@ -619,6 +623,59 @@ def test_stage_diagnostics_export_only_redacted_counts_fingerprints_and_reasons(
     assert "Sensitive Degree" not in serialized
     assert "Sensitive Institution" not in serialized
     assert "private prose" not in serialized
+
+
+def test_lifecycle_diagnostics_link_redacted_fingerprints_to_import_outcomes() -> None:
+    diagnostics = PrivacySafeResumeStageDiagnostics()
+    diagnostics.record(
+        "import_payload",
+        {"education": [{"degree": "Sensitive", "institution_name": "Private"}]},
+    )
+    parser_metadata = {"stage_diagnostics": diagnostics.export()}
+    fingerprints = import_payload_fingerprints(parser_metadata)
+
+    updated = append_lifecycle_diagnostic_stage(
+        parser_metadata,
+        "import",
+        [
+            {
+                "source_claim_id": "a" * 64,
+                "fingerprint": fingerprints["education"][0],
+                "category": "education",
+                "outcome": "skipped",
+                "reasons": ["unusable_record", "Education at Private Institute"],
+            }
+        ],
+    )
+
+    serialized = json.dumps(updated)
+    lifecycle = updated["stage_diagnostics"]["lifecycle_stages"][0]
+    assert lifecycle["counts"] == {"skipped": 1}
+    assert lifecycle["items"][0]["reasons"] == ["other_reason", "unusable_record"]
+    assert lifecycle["items"][0]["fingerprint"] == fingerprints["education"][0]
+    assert "Sensitive" not in serialized
+    assert "Private Institute" not in serialized
+
+
+def test_lifecycle_diagnostics_reject_non_opaque_fingerprints_and_labels() -> None:
+    updated = append_lifecycle_diagnostic_stage(
+        {"stage_diagnostics": {}},
+        "review",
+        [
+            {
+                "source_claim_id": "b" * 64,
+                "fingerprint": "raw institution name",
+                "category": "education/private",
+                "outcome": "held because of private text",
+                "reasons": [],
+            }
+        ],
+    )
+
+    item = updated["stage_diagnostics"]["lifecycle_stages"][0]["items"][0]
+    assert item["fingerprint"] == "unavailable"
+    assert item["category"] == "other_category"
+    assert item["outcome"] == "other_outcome"
 
 
 def test_conflicting_positional_education_recovery_is_held_not_reassigned() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from collections import Counter
 from typing import Any
@@ -30,6 +31,84 @@ SAFE_REASON_CODES = {
     "professional_candidacy_reclassified_for_review",
     "professional_candidacy_requires_review",
 }
+
+CLAIM_CATEGORY_KEYS = {
+    "employment": "employments",
+    "education": "education",
+    "internship": "internships",
+    "freelance": "freelance",
+    "gig_platform": "gig_platforms",
+    "certification": "certifications",
+    "project": "projects",
+    "skill": "skills",
+    "portfolio": "portfolio_links",
+}
+
+SAFE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{20}$")
+
+
+def _safe_code(value: Any, fallback: str) -> str:
+    if isinstance(value, str) and SAFE_CODE_PATTERN.fullmatch(value):
+        return value
+    return fallback
+
+
+def import_payload_fingerprints(parser_metadata: dict[str, Any]) -> dict[str, list[str]]:
+    diagnostics = parser_metadata.get("stage_diagnostics") or {}
+    stages = diagnostics.get("stages") or []
+    final_stage = next(
+        (stage for stage in reversed(stages) if stage.get("stage") == "import_payload"),
+        None,
+    )
+    if not isinstance(final_stage, dict):
+        return {}
+    items = final_stage.get("items") or {}
+    return {
+        claim_type: [
+            str(item.get("fingerprint"))
+            for item in items.get(category, [])
+            if isinstance(item, dict) and item.get("fingerprint")
+        ]
+        for claim_type, category in CLAIM_CATEGORY_KEYS.items()
+    }
+
+
+def append_lifecycle_diagnostic_stage(
+    parser_metadata: dict[str, Any],
+    stage: str,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return copied metadata with a PII-free review/import lifecycle stage."""
+    metadata = dict(parser_metadata)
+    diagnostics = dict(metadata.get("stage_diagnostics") or {})
+    lifecycle = list(diagnostics.get("lifecycle_stages") or [])
+    safe_items: list[dict[str, Any]] = []
+    for item in items:
+        raw_reasons = item.get("reasons") or []
+        reasons = sorted({_safe_code(reason, "other_reason") for reason in raw_reasons})
+        fingerprint = str(item.get("fingerprint") or "")
+        safe_items.append(
+            {
+                "source_claim_id": str(item["source_claim_id"]),
+                "fingerprint": (
+                    fingerprint if FINGERPRINT_PATTERN.fullmatch(fingerprint) else "unavailable"
+                ),
+                "category": _safe_code(item.get("category"), "other_category"),
+                "outcome": _safe_code(item.get("outcome"), "other_outcome"),
+                "reasons": reasons or ["none"],
+            }
+        )
+    lifecycle.append(
+        {
+            "stage": stage,
+            "counts": dict(sorted(Counter(item["outcome"] for item in safe_items).items())),
+            "items": safe_items,
+        }
+    )
+    diagnostics["lifecycle_stages"] = lifecycle
+    metadata["stage_diagnostics"] = diagnostics
+    return metadata
 
 
 class PrivacySafeResumeStageDiagnostics:

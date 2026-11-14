@@ -64,6 +64,10 @@ from app.resumes.review_schemas import (
 from app.resumes.review_validation import required_claim_blockers
 from app.resumes.schemas import ParsedResumeResult
 from app.resumes.skill_quality import confident_for_selection
+from app.resumes.stage_diagnostics import (
+    append_lifecycle_diagnostic_stage,
+    import_payload_fingerprints,
+)
 from app.services.resume_duplicate_service import ResumeDuplicateService
 from app.services.skill_lifecycle import reserve_skill_name
 
@@ -171,6 +175,11 @@ class ResumeReviewService:
         )
         self.session.add(review)
         await self.session.flush()
+        diagnostic_fingerprints = import_payload_fingerprints(
+            getattr(parsed, "parser_metadata", None) or {}
+        )
+        diagnostic_indexes: dict[str, int] = {}
+        diagnostic_items: list[dict[str, Any]] = []
         for ordinal, (claim_type, raw) in enumerate(self._claims(validated)):
             payload, draft_issues = self._draft_review_payload(claim_type, raw)
             source_issues = source_review_warnings(raw)
@@ -227,6 +236,34 @@ class ResumeReviewService:
                 confidence=raw.get("confidence"),
             )
             self.session.add(item)
+            if diagnostic_fingerprints:
+                diagnostic_index = diagnostic_indexes.get(claim_type, 0)
+                fingerprints = diagnostic_fingerprints.get(claim_type, [])
+                fingerprint = (
+                    fingerprints[diagnostic_index]
+                    if diagnostic_index < len(fingerprints)
+                    else "unavailable"
+                )
+                diagnostic_indexes[claim_type] = diagnostic_index + 1
+                diagnostic_items.append(
+                    {
+                        "source_claim_id": source_claim_id,
+                        "fingerprint": fingerprint,
+                        "category": claim_type,
+                        "outcome": "selected" if selected else "held",
+                        "reasons": [
+                            *draft_issues,
+                            *(assessment.warnings or []),
+                            *([] if supported else ["unsupported_import_target"]),
+                        ],
+                    }
+                )
+        if diagnostic_items:
+            parsed.parser_metadata = append_lifecycle_diagnostic_stage(
+                parsed.parser_metadata,
+                "review",
+                diagnostic_items,
+            )
         await self.session.commit()
         logger.info("resume_review_created", extra={"resume_id": str(resume_id), "review_session_id": str(review.id), "user_id": str(user_id)})
         return await self._session_response(review)
@@ -516,6 +553,7 @@ class ResumeReviewService:
         )
         review.confirmed_at = now
         review.version += 1
+        await self._record_import_diagnostics(review, batch)
         await self.session.commit()
         logger.info("resume_import_completed", extra={"review_session_id": str(review.id), "import_batch_id": str(batch.id), "user_id": str(user_id), "status": batch.status})
         return await self._batch_response(batch)
@@ -639,6 +677,71 @@ class ResumeReviewService:
             ready=import_first or not any(item.blockers for item in plans),
             version=review.version,
             items=plans,
+        )
+
+    async def _record_import_diagnostics(
+        self,
+        review: ResumeReviewSession,
+        batch: ResumeImportBatch,
+    ) -> None:
+        parsed = await self.session.get(ResumeParsedResult, review.parsed_result_id)
+        if not parsed or not (parsed.parser_metadata or {}).get("stage_diagnostics"):
+            return
+        review_stage = next(
+            (
+                stage
+                for stage in reversed(
+                    parsed.parser_metadata["stage_diagnostics"].get("lifecycle_stages", [])
+                )
+                if stage.get("stage") == "review"
+            ),
+            None,
+        )
+        if not review_stage:
+            return
+        review_items = {
+            item["source_claim_id"]: item for item in review_stage.get("items", [])
+        }
+        items = (
+            await self.session.scalars(
+                select(ResumeReviewItem).where(
+                    ResumeReviewItem.review_session_id == review.id
+                )
+            )
+        ).all()
+        results = (
+            await self.session.scalars(
+                select(ResumeImportResult).where(
+                    ResumeImportResult.import_batch_id == batch.id
+                )
+            )
+        ).all()
+        result_by_item = {str(result.review_item_id): result for result in results}
+        diagnostic_items: list[dict[str, Any]] = []
+        for item in items:
+            prior = review_items.get(str(item.source_claim_id), {})
+            result = result_by_item.get(str(item.id))
+            diagnostic_items.append(
+                {
+                    "source_claim_id": item.source_claim_id,
+                    "fingerprint": prior.get("fingerprint", "unavailable"),
+                    "category": item.claim_type,
+                    "outcome": result.outcome if result else item.review_status,
+                    "reasons": [
+                        *(list(result.warnings or []) if result else []),
+                        *(
+                            [result.sanitized_error_code]
+                            if result and result.sanitized_error_code
+                            else []
+                        ),
+                        *(list(item.conflict_warnings or []) if not result else []),
+                    ],
+                }
+            )
+        parsed.parser_metadata = append_lifecycle_diagnostic_stage(
+            parsed.parser_metadata,
+            "import",
+            diagnostic_items,
         )
 
     async def _import_item(

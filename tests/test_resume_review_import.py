@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
@@ -81,6 +82,73 @@ def test_stable_claim_ids_and_payload_hashes_are_deterministic() -> None:
     assert stable_claim_id(parsed_id, "skill", 0, payload) == stable_claim_id(parsed_id, "skill", 0, payload)
     assert stable_claim_id(parsed_id, "skill", 0, payload) != stable_claim_id(parsed_id, "skill", 1, payload)
     assert payload_hash({"b": 2, "a": 1}) == payload_hash({"a": 1, "b": 2})
+
+
+@pytest.mark.asyncio
+async def test_import_diagnostics_record_canonical_outcome_without_private_values() -> None:
+    review_id = uuid4()
+    batch_id = uuid4()
+    item_id = uuid4()
+    source_claim_id = "a" * 64
+    parsed = SimpleNamespace(
+        parser_metadata={
+            "stage_diagnostics": {
+                "lifecycle_stages": [
+                    {
+                        "stage": "review",
+                        "counts": {"selected": 1},
+                        "items": [
+                            {
+                                "source_claim_id": source_claim_id,
+                                "fingerprint": "b" * 20,
+                                "category": "education",
+                                "outcome": "selected",
+                                "reasons": ["none"],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    review_item = SimpleNamespace(
+        id=item_id,
+        source_claim_id=source_claim_id,
+        claim_type="education",
+        review_status="imported",
+        conflict_warnings=[],
+    )
+    import_result = SimpleNamespace(
+        review_item_id=item_id,
+        outcome="linked",
+        warnings=["already_in_career", "Sensitive Institution"],
+        sanitized_error_code=None,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.scalar_calls = 0
+
+        async def get(self, _model: object, _identifier: object) -> SimpleNamespace:
+            return parsed
+
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            self.scalar_calls += 1
+            values = [review_item] if self.scalar_calls == 1 else [import_result]
+            return SimpleNamespace(all=lambda: values)
+
+    service = ResumeReviewService(FakeSession())
+    await service._record_import_diagnostics(
+        SimpleNamespace(id=review_id, parsed_result_id=uuid4()),
+        SimpleNamespace(id=batch_id),
+    )
+
+    serialized = json.dumps(parsed.parser_metadata)
+    import_stage = parsed.parser_metadata["stage_diagnostics"]["lifecycle_stages"][-1]
+    assert import_stage["counts"] == {"linked": 1}
+    assert import_stage["items"][0]["fingerprint"] == "b" * 20
+    assert import_stage["items"][0]["reasons"] == ["already_in_career", "other_reason"]
+    assert "Sensitive Institution" not in serialized
 
 
 def test_normalization_is_deterministic_and_unicode_safe() -> None:
