@@ -1,0 +1,72 @@
+{
+  "text": "SUMMARY\nJan 2025 - Jun 2025Employer Alpha | Investor Relations Associate\nSKILLS\nFinancial Analysis\nStakeholder Engagement\nEDUCATION PERSONAL INFORMATION\nPROFESSIONAL EXPERIENCE\nCFA Level 1 Candidate\nBachelor of Business Administration\nInstitute Alpha - 2021\nHSC\nInstitute Beta - 2016\nSSC\nInstitute Gamma - 2014\nApr 2023 - Jan 2024Employer Beta | Investor Relations Associate\nJun 2022 - Apr 2023Employer Gamma | Research Associate\nDec 2020 - Jun 2022Employer Delta | Financial Consultant",
+  "model_payload": {
+    "employments": [
+      {
+        "company_name": "Employer Gamma",
+        "role_title": "Research Associate",
+        "start_date": "2025-01",
+        "end_date": null,
+        "is_current": true,
+        "confidence": 0.96
+      },
+      {
+        "company_name": "Employer Alpha",
+        "role_title": "Investor Relations Associate",
+        "start_date": "2023-04",
+        "end_date": "2024-01",
+        "confidence": 0.96
+      },
+      {
+        "company_name": "Employer Delta",
+        "role_title": "Financial Consultant",
+        "start_date": null,
+        "end_date": null,
+        "is_current": true,
+        "confidence": 0.96
+      },
+      {
+        "company_name": "Employer Beta",
+        "role_title": "Investor Relations Associate",
+        "start_date": "2022-06",
+        "end_date": "2023-04",
+        "confidence": 0.96
+      }
+    ],
+    "education": [
+      {
+        "institution_name": "Institute Beta",
+        "degree": "Bachelor of Business Administration",
+        "confidence": 0.96
+      },
+      {
+        "institution_name": "Institute Gamma",
+        "degree": "HSC",
+        "confidence": 0.96
+      },
+      {
+        "institution_name": "Institute Gamma",
+        "degree": "SSC",
+        "confidence": 0.96
+      }
+    ],
+    "skills": [
+      {"name": "Financial Analysis", "confidence": 0.96},
+      {"name": "Stakeholder Engagement", "confidence": 0.96}
+    ]
+  },
+  "expected": {
+    "employment_by_company": {
+      "Employer Alpha": ["2025-01", "2025-06", false],
+      "Employer Beta": ["2023-04", "2024-01", false],
+      "Employer Gamma": ["2022-06", "2023-04", false],
+      "Employer Delta": ["2020-12", "2022-06", false]
+    },
+    "education_by_degree": {
+      "Bachelor of Business Administration": "Institute Alpha",
+      "HSC": "Institute Beta",
+      "SSC": "Institute Gamma"
+    },
+    "candidacy_title": "CFA Level 1 Candidate"
+  }
+}

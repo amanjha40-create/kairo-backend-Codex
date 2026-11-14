@@ -80,6 +80,8 @@ SUPPORTED_IMPORT_TYPES = {
 }
 
 SOURCE_REVIEW_WARNINGS = {
+    "education_source_association_uncertain",
+    "employment_source_association_uncertain",
     "professional_candidacy_not_earned",
     "professional_candidacy_requires_review",
 }

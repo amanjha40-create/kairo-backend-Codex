@@ -3,14 +3,14 @@
   "model_payload": {
     "employments": [
       {
-        "company_name": "Northwind Analytics",
+        "company_name": "Northwind Forum",
         "role_title": "Investor Relations Associate",
         "start_date": "2024-01-01",
         "end_date": "2024-12-31",
         "confidence": 0.96
       },
       {
-        "company_name": "Cyntra Holdings",
+        "company_name": "Cyntra Techlabs",
         "role_title": "Investor Relations Associate",
         "start_date": "2022-01-01",
         "end_date": "2022-12-31",

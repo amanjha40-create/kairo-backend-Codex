@@ -114,13 +114,14 @@ _PROFESSIONAL_CANDIDACY = re.compile(
     r"exam\s+progress)\b",
     re.IGNORECASE,
 )
+_PROFESSIONAL_CREDENTIAL_CONTEXT = re.compile(
+    r"\b(?:CFA|FRM|ACCA|CMA|CPA|CIMA|CIPM|chartered|professional|level\s+\d+)\b",
+    re.IGNORECASE,
+)
 _EARNED_CREDENTIAL = re.compile(
     r"\b(?:awarded|certified|completed|passed|qualified)\b",
     re.IGNORECASE,
 )
-_EMPLOYMENT_ANCHOR_STOPWORDS = {
-    "and", "company", "co", "corporation", "inc", "limited", "llp", "ltd", "private", "pvt",
-}
 
 
 def parse_resume_date(value: Any) -> tuple[date | None, str | None, DatePrecision | None, bool]:
@@ -390,16 +391,51 @@ def _source_grounded(value: Any, extracted_text: str) -> bool:
 
 
 def _professional_candidacy_title(claim: dict[str, Any], extracted_text: str) -> str | None:
+    source_titles = {
+        _ocr_comparison_text(title): title
+        for title in _source_professional_candidacies(extracted_text)
+    }
     for field in ("degree", "field_of_study", "title", "source_text_reference"):
         value = claim.get(field)
         if (
             isinstance(value, str)
             and _PROFESSIONAL_CANDIDACY.search(value)
             and not _EARNED_CREDENTIAL.search(value)
-            and _source_grounded(value, extracted_text)
         ):
-            return " ".join(value.split())
+            normalized = _ocr_comparison_text(value)
+            if _source_grounded(value, extracted_text):
+                return " ".join(value.split())
+            if normalized in source_titles:
+                return source_titles[normalized]
     return None
+
+
+def _source_professional_candidacies(extracted_text: str) -> list[str]:
+    """Return explicit non-earned credential progress, including split OCR lines."""
+    lines = [" ".join(line.split()) for line in extracted_text.splitlines() if line.strip()]
+
+    def qualifies(candidate: str) -> bool:
+        return bool(
+            _PROFESSIONAL_CANDIDACY.search(candidate)
+            and not _EARNED_CREDENTIAL.search(candidate)
+            and _PROFESSIONAL_CREDENTIAL_CONTEXT.search(candidate)
+        )
+
+    candidates = list(lines)
+    candidates.extend(
+        f"{left} {right}"
+        for left, right in zip(lines, lines[1:], strict=False)
+        if not qualifies(left) and not qualifies(right)
+    )
+    titles: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = _ocr_comparison_text(candidate)
+        if not qualifies(candidate) or normalized in seen:
+            continue
+        seen.add(normalized)
+        titles.append(candidate)
+    return titles
 
 
 def reconcile_professional_candidacies(
@@ -450,6 +486,32 @@ def reconcile_professional_candidacies(
                 }
             )
             existing_titles.add(key)
+
+    for title in _source_professional_candidacies(extracted_text):
+        key = _ocr_comparison_text(title)
+        if key in existing_titles:
+            continue
+        certifications.append(
+            {
+                "title": title,
+                "issuing_organization": None,
+                "issued_date": None,
+                "expiry_date": None,
+                "credential_id": None,
+                "credential_url": None,
+                "source_text_reference": title,
+                "confidence": 0.90,
+                "warnings": [
+                    "professional_candidacy_not_earned",
+                    "professional_candidacy_requires_review",
+                ],
+                "selected_for_import": False,
+            }
+        )
+        existing_titles.add(key)
+        value.setdefault("warnings", []).append(
+            "professional_candidacy_recovered_from_source"
+        )
 
     for certification in certifications:
         if not isinstance(certification, dict):
@@ -561,45 +623,46 @@ def _nearby_lines(claim: dict[str, Any], lines: list[str]) -> list[str]:
 
 def _employment_source_date_blocks(extracted_text: str) -> list[dict[str, Any]]:
     lines = [line.strip() for line in extracted_text.splitlines()]
-    has_experience_heading = any(section_heading(line) == "experience" for line in lines)
-    section = "other"
     blocks: list[dict[str, Any]] = []
     for index, line in enumerate(lines):
-        heading = section_heading(line)
-        if heading:
-            section = heading
-            continue
-        if has_experience_heading and section != "experience":
-            continue
         for match in _DATE_RANGE.finditer(line):
-            context = " ".join(item for item in lines[max(0, index - 2) : index + 1] if item)
-            blocks.append({"match": match, "context": context, "line_index": index})
+            # Multi-column PDFs can flatten the first dated row before its visual
+            # section heading. Keep the date's own row central and use only a tight
+            # window for exact employer/role anchors; never recover by list order.
+            same_row_identity = f"{line[:match.start()]} {line[match.end():]}".strip()
+            context_lines = (
+                [line]
+                if re.search(r"[A-Za-z]{3}", same_row_identity)
+                else lines[max(0, index - 2) : index + 1]
+            )
+            context = " ".join(item for item in context_lines if item)
+            blocks.append(
+                {
+                    "match": match,
+                    "context": context,
+                    "line": line,
+                    "line_index": index,
+                }
+            )
     return blocks
-
-
-def _employment_anchor_values(claim: dict[str, Any]) -> list[str]:
-    values: list[str] = []
-    for field in ("company_name", "role_title", "source_text_reference"):
-        value = claim.get(field)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        normalized = _ocr_comparison_text(value)
-        tokens = [
-            token
-            for token in re.findall(r"[a-z0-9]+", normalized)
-            if token not in _EMPLOYMENT_ANCHOR_STOPWORDS
-        ]
-        if tokens:
-            values.append(" ".join(tokens))
-    return values
 
 
 def _employment_anchor_score(claim: dict[str, Any], context: str) -> int:
     normalized_context = _ocr_comparison_text(context)
     score = 0
-    for index, anchor in enumerate(_employment_anchor_values(claim)):
-        if anchor in normalized_context:
-            score = max(score, 3 if index == 0 else 2 if index == 1 else 4)
+    company = claim.get("company_name")
+    role = claim.get("role_title")
+    source_reference = claim.get("source_text_reference")
+    if isinstance(company, str) and _ocr_comparison_text(company) in normalized_context:
+        score += 8
+    if isinstance(role, str) and _ocr_comparison_text(role) in normalized_context:
+        score += 3
+    if (
+        isinstance(source_reference, str)
+        and len(_ocr_comparison_text(source_reference)) >= 8
+        and _ocr_comparison_text(source_reference) in normalized_context
+    ):
+        score += 10
     return score
 
 
@@ -619,22 +682,15 @@ def _employment_date_assignments(
     ]
     for claim_index, row in enumerate(scores):
         best = max(row, default=0)
-        if best == 0 or row.count(best) != 1:
+        # A role title alone is not an identity anchor: repeated titles are common.
+        if best < 8 or row.count(best) != 1:
             continue
         block_index = row.index(best)
         competing = [other[block_index] for other in scores]
-        if competing.count(best) != 1 or block_index in used_blocks:
+        if best != max(competing) or competing.count(best) != 1 or block_index in used_blocks:
             continue
         assignments[claim_index] = block_index
         used_blocks.add(block_index)
-
-    # PDF columns often flatten employer/role text separately from the date column.
-    # Complete ordered recovery is safe only when every claim has one source range,
-    # at least one exact anchor proves the sequence, and anchored pairs do not cross.
-    if len(claims) == len(blocks) and assignments:
-        anchored_pairs = sorted(assignments.items())
-        if all(claim_index == block_index for claim_index, block_index in anchored_pairs):
-            assignments = {index: index for index in range(len(claims))}
 
     return {
         claim_index: _employment_date_evidence_from_match(blocks[block_index]["match"])
@@ -676,8 +732,8 @@ def _apply_employment_date_evidence(
     claim[field] = exact
     claim[f"{field}_display"] = display
     claim[f"{field}_precision"] = precision
-    if field == "end_date" and current:
-        claim["is_current"] = True
+    if field == "end_date":
+        claim["is_current"] = current if evidence is not None else None
 
 
 def reconcile_pdf_employment_dates(
@@ -699,12 +755,14 @@ def reconcile_pdf_employment_dates(
         primary = primary_assignments.get(dict_index, {})
         supplemental = supplemental_assignments.get(dict_index, {})
         dict_index += 1
+        association_uncertain = not primary and not supplemental
         for evidence_name, field in (("start", "start_date"), ("end", "end_date")):
             primary_value = primary.get(evidence_name)
             supplemental_value = supplemental.get(evidence_name)
             if primary_value and supplemental_value and primary_value != supplemental_value:
                 _apply_employment_date_evidence(item, field, None)
                 warnings.append(f"conflicting_{field}_pdf_evidence")
+                association_uncertain = True
                 continue
             chosen = primary_value or supplemental_value
             _apply_employment_date_evidence(item, field, chosen)
@@ -716,10 +774,119 @@ def reconcile_pdf_employment_dates(
                 warnings.append(f"{field}_recovered_from_textract_evidence")
             else:
                 warnings.append(f"{field}_removed_without_explicit_pdf_evidence")
+        if association_uncertain:
+            warnings.append("employment_source_association_uncertain")
         item["warnings"] = list(dict.fromkeys(warnings))
         claims.append(item)
     value["employments"] = claims
     return value
+
+
+_EDUCATION_INSTITUTION_YEAR = re.compile(
+    r"^(?P<institution>.+?)\s*(?:[-\u2013\u2014|]\s*)?(?:19|20)\d{2}\s*$"
+)
+
+
+def _education_source_assignments(
+    claims: list[dict[str, Any]], extracted_text: str
+) -> dict[int, str]:
+    """Pair qualifications with institutions inside exact source-local blocks."""
+    lines = [" ".join(line.split()) for line in extracted_text.splitlines() if line.strip()]
+    degree_keys = {
+        _ocr_comparison_text(str(claim.get("degree")))
+        for claim in claims
+        if claim.get("degree")
+    }
+    degree_indices = {
+        index for index, line in enumerate(lines) if _ocr_comparison_text(line) in degree_keys
+    }
+    assignments: dict[int, str] = {}
+    used_line_indices: set[int] = set()
+    for claim_index, claim in enumerate(claims):
+        degree = claim.get("degree")
+        if not isinstance(degree, str) or not degree.strip():
+            continue
+        degree_key = _ocr_comparison_text(degree)
+        matches = [
+            index for index, line in enumerate(lines) if _ocr_comparison_text(line) == degree_key
+        ]
+        if len(matches) != 1:
+            continue
+        degree_index = matches[0]
+        for line_index in range(degree_index + 1, min(len(lines), degree_index + 4)):
+            if line_index in degree_indices:
+                break
+            line = lines[line_index]
+            if section_heading(line) or _PROFESSIONAL_CANDIDACY.search(line):
+                break
+            match = _EDUCATION_INSTITUTION_YEAR.fullmatch(line)
+            if match is None or line_index in used_line_indices:
+                continue
+            institution = match.group("institution").strip(" -\u2013\u2014|")
+            if not institution or _DATE_RANGE.search(institution):
+                continue
+            assignments[claim_index] = institution
+            used_line_indices.add(line_index)
+            break
+    return assignments
+
+
+def reconcile_pdf_education_blocks(
+    payload: dict[str, Any], textract_text: str, embedded_text: str
+) -> dict[str, Any]:
+    """Replace model pairings only with exact qualification-local source evidence."""
+    value = dict(payload)
+    dict_claims = [claim for claim in value.get("education") or [] if isinstance(claim, dict)]
+    primary_assignments = _education_source_assignments(dict_claims, textract_text)
+    supplemental_assignments = _education_source_assignments(dict_claims, embedded_text)
+    claims: list[Any] = []
+    dict_index = 0
+    for claim in value.get("education") or []:
+        if not isinstance(claim, dict):
+            claims.append(claim)
+            continue
+        item = dict(claim)
+        warnings = list(item.get("warnings") or [])
+        primary = primary_assignments.get(dict_index)
+        supplemental = supplemental_assignments.get(dict_index)
+        dict_index += 1
+        if primary and supplemental and _ocr_comparison_text(primary) != _ocr_comparison_text(
+            supplemental
+        ):
+            item["institution_name"] = None
+            warnings.extend(
+                [
+                    "conflicting_education_source_blocks",
+                    "education_source_association_uncertain",
+                ]
+            )
+        else:
+            grounded = primary or supplemental
+            if grounded:
+                if _ocr_comparison_text(str(item.get("institution_name") or "")) != (
+                    _ocr_comparison_text(grounded)
+                ):
+                    warnings.append("education_institution_recovered_from_source_block")
+                item["institution_name"] = grounded
+            else:
+                item["institution_name"] = None
+                warnings.extend(
+                    [
+                        "education_institution_removed_without_source_block_evidence",
+                        "education_source_association_uncertain",
+                    ]
+                )
+        item["warnings"] = list(dict.fromkeys(warnings))
+        claims.append(item)
+    value["education"] = claims
+    return value
+
+
+def reconcile_pdf_source_associations(
+    payload: dict[str, Any], textract_text: str, embedded_text: str
+) -> dict[str, Any]:
+    value = reconcile_pdf_employment_dates(payload, textract_text, embedded_text)
+    return reconcile_pdf_education_blocks(value, textract_text, embedded_text)
 
 
 def _location_hint(lines: list[str]) -> tuple[dict[str, Any] | None, str | None]:

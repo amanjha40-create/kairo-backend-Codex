@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import threading
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -232,3 +233,52 @@ async def test_nova_does_not_mask_other_count_tokens_errors(monkeypatch):
         await parser.parse("Synthetic resume")
 
     assert error.value.response["Error"]["Code"] == "AccessDeniedException"
+
+
+@pytest.mark.asyncio
+async def test_nova_does_not_mask_unrelated_validation_error(monkeypatch):
+    class Client:
+        def count_tokens(self, **kwargs):
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ValidationException",
+                        "Message": "The request body is invalid.",
+                    }
+                },
+                "CountTokens",
+            )
+
+    monkeypatch.setattr("app.resumes.providers._bedrock_client", lambda settings: Client())
+    parser = NovaResumeParser(
+        SimpleNamespace(
+            bedrock_model_id="us.amazon.nova-2-lite-v1:0",
+            resume_model_max_input_tokens=12_000,
+            resume_model_max_request_bytes=20_500,
+            resume_model_max_output_tokens=4_200,
+        )
+    )
+
+    with pytest.raises(ClientError) as error:
+        await parser.parse("Synthetic resume")
+
+    assert error.value.response["Error"]["Message"] == "The request body is invalid."
+
+
+def test_staging_replay_limits_bound_combined_provider_cost() -> None:
+    # 2026-11-14 standard in-region prices. One UTF-8 token cannot exceed the
+    # request byte count, so treating every byte as one input token is conservative.
+    request_byte_limit = Decimal("20500")
+    output_token_limit = Decimal("4200")
+    nova_input_per_thousand = Decimal("0.00033")
+    nova_output_per_thousand = Decimal("0.00275")
+    textract_one_page = Decimal("0.0015")
+
+    maximum_cost = (
+        request_byte_limit / Decimal("1000") * nova_input_per_thousand
+        + output_token_limit / Decimal("1000") * nova_output_per_thousand
+        + textract_one_page
+    )
+
+    assert maximum_cost == Decimal("0.019815")
+    assert maximum_cost <= Decimal("0.02")

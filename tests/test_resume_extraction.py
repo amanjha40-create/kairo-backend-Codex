@@ -11,7 +11,9 @@ from app.resumes.extraction import (
     enrich_explicit_skills,
     normalize_extracted_payload,
     parse_resume_date,
+    reconcile_pdf_education_blocks,
     reconcile_pdf_employment_dates,
+    reconcile_pdf_source_associations,
 )
 from app.resumes.providers import TextractDocumentExtractor, extract_pdf_embedded_text
 from app.resumes.schemas import ParsedResumeResult
@@ -478,6 +480,148 @@ def test_redacted_quality_fixture_preserves_source_truth_field_by_field() -> Non
     assert "professional_candidacy_not_earned" in candidacy["warnings"]
     assert "professional_candidacy_requires_review" in candidacy["warnings"]
     ParsedResumeResult.model_validate(result)
+
+
+def test_actual_layout_regression_keeps_source_blocks_when_model_order_is_wrong() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/resume_source_association_quality.json").read_text()
+    )
+    normalized = normalize_extracted_payload(fixture["model_payload"], fixture["text"])
+    result = reconcile_pdf_source_associations(normalized, fixture["text"], fixture["text"])
+
+    employment_by_company = {
+        item["company_name"]: [
+            item["start_date_display"],
+            item["end_date_display"],
+            item["is_current"],
+        ]
+        for item in result["employments"]
+    }
+    assert employment_by_company == fixture["expected"]["employment_by_company"]
+    assert {
+        item["degree"]: item["institution_name"] for item in result["education"]
+    } == fixture["expected"]["education_by_degree"]
+    candidacy = next(
+        item
+        for item in result["certifications"]
+        if item["title"] == fixture["expected"]["candidacy_title"]
+    )
+    assert candidacy["issued_date"] is None
+    assert candidacy["selected_for_import"] is False
+    assert "professional_candidacy_not_earned" in candidacy["warnings"]
+
+
+def test_repeated_role_title_never_overrides_missing_employer_anchor() -> None:
+    payload = _employment_payload(
+        {
+            "company_name": "Unsupported Employer",
+            "role_title": "Investor Relations Associate",
+            "start_date": "2024-01",
+            "is_current": True,
+        },
+        {
+            "company_name": "Employer Beta",
+            "role_title": "Investor Relations Associate",
+        },
+    )
+    text = (
+        "EXPERIENCE\n"
+        "Jan 2025 - Jun 2025Employer Alpha | Investor Relations Associate\n"
+        "Apr 2023 - Jan 2024Employer Beta | Investor Relations Associate"
+    )
+
+    result = reconcile_pdf_employment_dates(payload, text, text)
+
+    unsupported, grounded = result["employments"]
+    assert unsupported["start_date_display"] is None
+    assert unsupported["end_date_display"] is None
+    assert unsupported["is_current"] is None
+    assert "employment_source_association_uncertain" in unsupported["warnings"]
+    assert grounded["start_date_display"] == "2023-04"
+    assert grounded["end_date_display"] == "2024-01"
+    assert grounded["is_current"] is False
+
+
+def test_lost_end_date_never_turns_a_historical_role_into_current() -> None:
+    payload = _employment_payload(
+        {
+            "company_name": "Employer Alpha",
+            "role_title": "Analyst",
+            "start_date": "2022-01",
+            "is_current": True,
+        }
+    )
+
+    result = reconcile_pdf_employment_dates(
+        payload,
+        "EXPERIENCE\nEmployer Alpha | Analyst\nJan 2022",
+        "",
+    )
+
+    employment = result["employments"][0]
+    assert employment["start_date_display"] is None
+    assert employment["end_date_display"] is None
+    assert employment["is_current"] is None
+    assert "employment_source_association_uncertain" in employment["warnings"]
+
+
+def test_conflicting_education_blocks_are_held_instead_of_cross_assigned() -> None:
+    payload = {
+        "education": [
+            {
+                "degree": "Bachelor of Science",
+                "institution_name": "Model Institution",
+            }
+        ]
+    }
+
+    result = reconcile_pdf_education_blocks(
+        payload,
+        "EDUCATION\nBachelor of Science\nInstitute Alpha - 2021",
+        "EDUCATION\nBachelor of Science\nInstitute Beta - 2021",
+    )
+
+    education = result["education"][0]
+    assert education["institution_name"] is None
+    assert "education_source_association_uncertain" in education["warnings"]
+    assert "conflicting_education_source_blocks" in education["warnings"]
+
+
+def test_split_source_candidacy_is_recovered_as_non_earned_attention_item() -> None:
+    result = normalize_extracted_payload(
+        {"education": [], "certifications": []},
+        "EDUCATION\nCFA Level 1\nCandidate",
+    )
+
+    assert len(result["certifications"]) == 1
+    candidacy = result["certifications"][0]
+    assert candidacy["title"] == "CFA Level 1 Candidate"
+    assert candidacy["issued_date"] is None
+    assert candidacy["selected_for_import"] is False
+    assert "professional_candidacy_not_earned" in candidacy["warnings"]
+
+
+def test_split_source_candidacy_displaces_model_education_claim() -> None:
+    result = normalize_extracted_payload(
+        {
+            "education": [
+                {
+                    "degree": "CFA Level 1 Candidate",
+                    "institution_name": "Professional Body",
+                    "confidence": 0.95,
+                }
+            ],
+            "certifications": [],
+        },
+        "EDUCATION\nCFA Level 1\nCandidate",
+    )
+
+    assert result["education"] == []
+    candidacy = result["certifications"][0]
+    assert candidacy["title"] == "CFA Level 1 Candidate"
+    assert candidacy["issued_date"] is None
+    assert candidacy["selected_for_import"] is False
+    assert "professional_candidacy_not_earned" in candidacy["warnings"]
 
 
 def test_order_recovery_stops_when_source_sequence_is_not_complete() -> None:

@@ -243,6 +243,19 @@ def test_professional_candidacy_warnings_hold_import_for_review() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "warning",
+    [
+        "employment_source_association_uncertain",
+        "education_source_association_uncertain",
+    ],
+)
+def test_uncertain_source_associations_are_durable_review_holds(warning: str) -> None:
+    assert source_review_warnings(
+        {"warnings": [warning, "unrelated_non_blocking_warning"]}
+    ) == [warning]
+
+
 @pytest.mark.asyncio
 async def test_professional_candidacy_is_held_without_an_import_target() -> None:
     review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)

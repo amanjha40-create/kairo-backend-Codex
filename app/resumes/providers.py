@@ -19,7 +19,7 @@ from pypdf import PdfReader
 from app.config import Settings
 from app.resumes.extraction import (
     normalize_extracted_payload,
-    reconcile_pdf_employment_dates,
+    reconcile_pdf_source_associations,
 )
 from app.resumes.schemas import ParsedResumeResult
 from app.resumes.skill_sections import section_heading
@@ -450,7 +450,7 @@ class NovaResumeParser(ResumeParser):
         result = _parse_model_json(payload, sanitized_text)
         if isinstance(extracted_text, _PdfExtractedText):
             result = ParsedResumeResult.model_validate(
-                reconcile_pdf_employment_dates(
+                reconcile_pdf_source_associations(
                     result.model_dump(mode="json"),
                     sanitized_text,
                     extracted_text.embedded_text,
@@ -506,7 +506,7 @@ class BedrockResumeParser(ResumeParser):
         )
         if isinstance(extracted_text, _PdfExtractedText):
             result = ParsedResumeResult.model_validate(
-                reconcile_pdf_employment_dates(
+                reconcile_pdf_source_associations(
                     result.model_dump(mode="json"),
                     sanitized_text,
                     extracted_text.embedded_text,
