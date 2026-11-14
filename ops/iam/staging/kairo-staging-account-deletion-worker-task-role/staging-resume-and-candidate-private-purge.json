@@ -1,0 +1,109 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListOnlyCandidateOwnedVersions",
+      "Effect": "Allow",
+      "Action": "s3:ListBucketVersions",
+      "Resource": "arn:aws:s3:::kairo-285515885083-staging-documents",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "resumes/*",
+            "staging/employment-verification/certifications/*",
+            "staging/employment-verification/document-share-packs/*",
+            "staging/employment-verification/education-documents/*",
+            "staging/employment-verification/organizations/*/logo/*",
+            "staging/employment-verification/portfolio/*",
+            "staging/employment-verification/user-documents/*",
+            "staging/employment-verification/users/*/avatar.jpeg",
+            "staging/employment-verification/users/*/avatar.jpg",
+            "staging/employment-verification/users/*/avatar.png",
+            "staging/employment-verification/users/*/avatar.webp",
+            "staging/employment-verification/users/*/employments/*",
+            "staging/employment-verification/users/*/freelance/*",
+            "staging/employment-verification/users/*/internships/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DeleteOnlyCandidatePrivateVersions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::kairo-285515885083-staging-documents/resumes/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/certifications/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/document-share-packs/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/education-documents/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/organizations/*/logo/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/portfolio/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/user-documents/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/avatar.jpeg",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/avatar.jpg",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/avatar.png",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/avatar.webp",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/employments/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/freelance/*",
+        "arn:aws:s3:::kairo-285515885083-staging-documents/staging/employment-verification/users/*/internships/*"
+      ]
+    },
+    {
+      "Sid": "ReadOnlyResumeInputs",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::kairo-285515885083-staging-documents/resumes/*"
+    },
+    {
+      "Sid": "ExistingStagingResumeQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ChangeMessageVisibility",
+        "sqs:DeleteMessage",
+        "sqs:ReceiveMessage",
+        "sqs:SendMessage"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:285515885083:kairo-staging-resume-jobs"
+    },
+    {
+      "Sid": "ExistingNovaInferenceResources",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:us-east-1:285515885083:inference-profile/us.amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0"
+      ]
+    },
+    {
+      "Sid": "CountTokensForApprovedNovaModel",
+      "Effect": "Allow",
+      "Action": "bedrock:CountTokens",
+      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ApprovedRegionalTextractException",
+      "Effect": "Allow",
+      "Action": [
+        "textract:DetectDocumentText",
+        "textract:StartDocumentTextDetection",
+        "textract:GetDocumentTextDetection"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}
