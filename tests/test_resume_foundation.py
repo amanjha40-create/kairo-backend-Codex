@@ -101,7 +101,13 @@ async def test_textract_uses_async_s3_flow_for_staged_pdf_processing() -> None:
     settings = SimpleNamespace(aws_region="us-east-1", textract_timeout_seconds=30)
     extractor = TextractDocumentExtractor(settings)
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr("app.resumes.providers.boto3.client", lambda *args, **kwargs: client)
+    client_options: dict[str, object] = {}
+
+    def build_client(*args: object, **kwargs: object) -> Client:
+        client_options.update(kwargs)
+        return client
+
+    monkeypatch.setattr("app.resumes.providers.boto3.client", build_client)
     try:
         text = await extractor.extract(
             b"%PDF-1.7 synthetic",
@@ -113,6 +119,7 @@ async def test_textract_uses_async_s3_flow_for_staged_pdf_processing() -> None:
         monkeypatch.undo()
 
     assert text == "Synthetic resume"
+    assert client_options["config"].retries["total_max_attempts"] == 1
     assert client.calls[0] == (
         "start",
         {

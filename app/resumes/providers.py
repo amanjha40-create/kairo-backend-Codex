@@ -127,7 +127,11 @@ class TextractDocumentExtractor(DocumentExtractor):
             content,
             max_characters=getattr(self._settings, "resume_max_extracted_characters", 120_000),
         )
-        client = boto3.client("textract", region_name=self._settings.aws_region)
+        client = boto3.client(
+            "textract",
+            region_name=self._settings.aws_region,
+            config=Config(retries={"total_max_attempts": 1, "mode": "standard"}),
+        )
         if storage_bucket and storage_key:
             primary_text = await asyncio.to_thread(
                 self._extract_from_s3, client, storage_bucket, storage_key
@@ -320,8 +324,12 @@ class NovaResumeParser(ResumeParser):
         if not settings.bedrock_model_id:
             raise ValueError("BEDROCK_MODEL_ID is required")
         self._settings = settings
+        self._output_token_limit = getattr(
+            settings, "resume_model_max_output_tokens", NOVA_RESUME_MAX_OUTPUT_TOKENS
+        )
+        self._input_token_limit = getattr(settings, "resume_model_max_input_tokens", None)
         self.safe_metadata: dict[str, Any] = {
-            "output_token_limit": NOVA_RESUME_MAX_OUTPUT_TOKENS,
+            "output_token_limit": self._output_token_limit,
             "stop_reason": "unknown",
         }
 
@@ -357,25 +365,39 @@ class NovaResumeParser(ResumeParser):
             "candidate review rather than discarding them.\nJSON Schema:\n"
             f"{schema}"
         )
+        request_body = json.dumps(
+            {
+                "schemaVersion": "messages-v1",
+                "system": [{"text": system_prompt}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"text": f"<resume_data>\n{sanitized_text}\n</resume_data>"}],
+                    }
+                ],
+                "inferenceConfig": {
+                    "maxTokens": self._output_token_limit,
+                    "temperature": 0,
+                },
+            }
+        )
         client = _bedrock_client(self._settings)
+        if self._input_token_limit is not None:
+            token_count = await asyncio.to_thread(
+                client.count_tokens,
+                modelId=self._settings.bedrock_model_id,
+                input={"invokeModel": {"body": request_body.encode()}},
+            )
+            input_tokens = token_count.get("inputTokens")
+            if not isinstance(input_tokens, int) or input_tokens < 0:
+                raise RuntimeError("Bedrock did not return a valid input token count")
+            self.safe_metadata["inputTokens"] = input_tokens
+            if input_tokens > self._input_token_limit:
+                raise ValueError("Resume model input exceeds the configured token limit")
         response = await asyncio.to_thread(
             client.invoke_model,
             modelId=self._settings.bedrock_model_id,
-            body=json.dumps(
-                {
-                    "schemaVersion": "messages-v1",
-                    "system": [{"text": system_prompt}],
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"text": f"<resume_data>\n{sanitized_text}\n</resume_data>"}
-                            ],
-                        }
-                    ],
-                    "inferenceConfig": {"maxTokens": NOVA_RESUME_MAX_OUTPUT_TOKENS, "temperature": 0},
-                }
-            ),
+            body=request_body,
             contentType="application/json",
             accept="application/json",
         )

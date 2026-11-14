@@ -91,3 +91,34 @@ async def test_truncation_does_not_automatically_repeat_provider_call(monkeypatc
     assert event.provider == "nova"
     assert event.stop_reason == "max_tokens"
     assert event.output_token_limit == 10_000
+
+
+@pytest.mark.asyncio
+async def test_nova_enforces_configured_token_bounds_before_inference(monkeypatch):
+    calls: list[str] = []
+
+    class Client:
+        def count_tokens(self, **kwargs):
+            calls.append("count")
+            assert kwargs["modelId"] == "us.amazon.nova-2-lite-v1:0"
+            return {"inputTokens": 12_001}
+
+        def invoke_model(self, **kwargs):
+            calls.append("invoke")
+            raise AssertionError("Inference must not run above the configured input limit")
+
+    monkeypatch.setattr("app.resumes.providers._bedrock_client", lambda settings: Client())
+    parser = NovaResumeParser(
+        SimpleNamespace(
+            bedrock_model_id="us.amazon.nova-2-lite-v1:0",
+            resume_model_max_input_tokens=12_000,
+            resume_model_max_output_tokens=5_000,
+        )
+    )
+
+    with pytest.raises(ValueError, match="configured token limit"):
+        await parser.parse("Synthetic resume")
+
+    assert calls == ["count"]
+    assert parser.safe_metadata["inputTokens"] == 12_001
+    assert parser.safe_metadata["output_token_limit"] == 5_000
