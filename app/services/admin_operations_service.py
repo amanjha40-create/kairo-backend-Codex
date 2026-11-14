@@ -484,7 +484,9 @@ class AdminOperationsService:
         await self._session.commit()
 
         base = (self._settings.candidate_portal_base_url or "https://app.kairoid.com").rstrip("/")
-        activation_url = f"{base}/activate-account?token={quote(raw_token, safe='')}"
+        # Keep the opaque credential in the URL fragment so browsers do not send it
+        # in HTTP requests, referrers, analytics, or store-navigation URLs.
+        activation_url = f"{base}/activate-account#token={quote(raw_token, safe='')}"
         organization_name = None
         if organization_id is not None:
             organization = await self._session.get(Organization, organization_id)
@@ -587,16 +589,25 @@ class AdminOperationsService:
         self, raw_token: str
     ) -> CandidateActivationValidationResponse:
         token, user = await self._resolve_activation(raw_token)
+        organization = (
+            await self._session.get(Organization, token.organization_id)
+            if token.organization_id is not None
+            else None
+        )
         return CandidateActivationValidationResponse(
             candidate_id=user.id,
             claim_status=CandidateClaimStatus(user.claim_status),
             full_name=user.full_name,
             email_masked=mask_email(user.email),
+            organization_name=organization.name if organization is not None else None,
             expires_at=token.expires_at,
         )
 
     async def claim_candidate_account(
-        self, payload: CandidateClaimRequest
+        self,
+        payload: CandidateClaimRequest,
+        *,
+        authenticated_user_id: UUID | None = None,
     ) -> CandidateClaimResponse:
         token_hash = hash_refresh_token(payload.token)
         token = await self._session.scalar(
@@ -611,6 +622,10 @@ class AdminOperationsService:
         )
         if user is None or user.deleted_at is not None:
             raise NotFoundError("Candidate activation not found")
+        if authenticated_user_id is not None and authenticated_user_id != user.id:
+            raise ForbiddenError(
+                "Sign out before accepting an invitation for another account"
+            )
         now = datetime.now(tz=UTC)
         self._assert_activation_actionable(token, user, now)
         user.password_hash = hash_password(payload.password)

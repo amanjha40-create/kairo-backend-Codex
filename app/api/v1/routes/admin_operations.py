@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
 
-from app.api.dependencies.auth import CurrentUser, get_current_user
+from app.api.dependencies.auth import CurrentUser, get_current_user, get_optional_current_user
 from app.api.dependencies.services import (
     get_admin_operations_service,
     get_education_service,
@@ -274,9 +274,13 @@ async def validate_candidate_activation(
 @activation_router.post("/claim", response_model=CandidateClaimResponse)
 async def claim_candidate_account(
     payload: CandidateClaimRequest,
+    maybe_user: Annotated[CurrentUser | None, Depends(get_optional_current_user)],
     service: Annotated[AdminOperationsService, Depends(get_admin_operations_service)],
 ) -> CandidateClaimResponse:
-    return await service.claim_candidate_account(payload)
+    return await service.claim_candidate_account(
+        payload,
+        authenticated_user_id=maybe_user.id if maybe_user is not None else None,
+    )
 
 
 @router.patch("/candidates/{candidate_id}/profile", response_model=AdminProfileMutationResponse)
