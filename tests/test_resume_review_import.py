@@ -13,6 +13,7 @@ from app.employment.client_compatibility import (
     bind_client_metadata,
     reset_client_metadata,
 )
+from app.exceptions import ValidationAppError
 from app.resumes.client_compatibility import (
     EXPLICIT_RESUME_REVIEW_CAPABILITY,
     IMPORT_FIRST_RESUME_CAPABILITY,
@@ -240,6 +241,82 @@ def test_professional_candidacy_warnings_hold_import_for_review() -> None:
         "professional_candidacy_not_earned",
         "professional_candidacy_requires_review",
     ]
+
+
+@pytest.mark.asyncio
+async def test_professional_candidacy_is_held_without_an_import_target() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), version=1)
+    item = SimpleNamespace(
+        id=uuid4(),
+        selected=False,
+        review_status="deselected",
+        import_action="skip",
+        claim_type="certification",
+        edited_payload={
+            "claim_type": "certification",
+            "title": "Professional candidacy",
+            "issuing_organization": "Professional body",
+        },
+        duplicate_status="no_match",
+        target_record_id=None,
+        conflict_warnings=[
+            "professional_candidacy_not_earned",
+            "professional_candidacy_requires_review",
+        ],
+    )
+
+    class FakeSession:
+        async def scalars(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(all=lambda: [item])
+
+    with import_first_client():
+        plan = await ResumeReviewService(FakeSession())._build_plan(review)
+
+    assert plan.ready is True
+    assert plan.items[0].action == "skip"
+    assert plan.items[0].target_model is None
+    assert plan.items[0].blockers == ["held_for_review"]
+    assert "professional_candidacy_not_earned" in plan.items[0].warnings
+
+
+@pytest.mark.asyncio
+async def test_professional_candidacy_rejects_generic_import_confirmation() -> None:
+    review = SimpleNamespace(id=uuid4(), user_id=uuid4(), status="reviewing", version=3)
+    item = SimpleNamespace(
+        id=uuid4(),
+        claim_type="certification",
+        review_status="deselected",
+        selected=False,
+        import_action="skip",
+        target_record_id=None,
+        conflict_warnings=[
+            "professional_candidacy_not_earned",
+            "professional_candidacy_requires_review",
+        ],
+        version=2,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.scalars = [review, item]
+
+        async def scalar(self, _statement: object) -> SimpleNamespace:
+            return self.scalars.pop(0)
+
+    with pytest.raises(ValidationAppError) as exc_info:
+        await ResumeReviewService(FakeSession()).update_item(
+            review.user_id,
+            review.id,
+            item.id,
+            ReviewItemUpdateRequest(
+                expected_version=item.version,
+                confirmed=True,
+                selected=True,
+                import_action="create_new",
+            ),
+        )
+
+    assert exc_info.value.code == "professional_candidacy_not_earned"
 
 
 def test_item_update_rejects_extra_mutation_controls() -> None:
