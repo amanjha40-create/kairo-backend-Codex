@@ -5,6 +5,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 
 from app.resumes.providers import (
     NOVA_RESUME_MAX_OUTPUT_TOKENS,
@@ -122,3 +123,112 @@ async def test_nova_enforces_configured_token_bounds_before_inference(monkeypatc
     assert calls == ["count"]
     assert parser.safe_metadata["inputTokens"] == 12_001
     assert parser.safe_metadata["output_token_limit"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_nova_uses_bounded_request_when_count_tokens_is_unsupported(monkeypatch):
+    calls: list[str] = []
+    response = io.BytesIO(
+        json.dumps(
+            {
+                "stopReason": "end_turn",
+                "output": {"message": {"content": [{"text": '{"schema_version":"1"}'}]}},
+            }
+        ).encode()
+    )
+
+    class Client:
+        def count_tokens(self, **kwargs):
+            calls.append("count")
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ValidationException",
+                        "Message": "The provided model doesn't support counting tokens.",
+                    }
+                },
+                "CountTokens",
+            )
+
+        def invoke_model(self, **kwargs):
+            calls.append("invoke")
+            return {"body": response}
+
+    monkeypatch.setattr("app.resumes.providers._bedrock_client", lambda settings: Client())
+    parser = NovaResumeParser(
+        SimpleNamespace(
+            bedrock_model_id="us.amazon.nova-2-lite-v1:0",
+            resume_model_max_input_tokens=12_000,
+            resume_model_max_request_bytes=25_000,
+            resume_model_max_output_tokens=4_400,
+        )
+    )
+
+    result = await parser.parse("Synthetic resume")
+
+    assert result.schema_version == "1"
+    assert calls == ["count", "invoke"]
+    assert parser.safe_metadata["input_limit_mode"] == "request_bytes"
+    assert 0 < parser.safe_metadata["requestBytes"] <= 25_000
+
+
+@pytest.mark.asyncio
+async def test_nova_rejects_oversized_request_when_count_tokens_is_unsupported(monkeypatch):
+    calls: list[str] = []
+
+    class Client:
+        def count_tokens(self, **kwargs):
+            calls.append("count")
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ValidationException",
+                        "Message": "The provided model doesn't support counting tokens.",
+                    }
+                },
+                "CountTokens",
+            )
+
+        def invoke_model(self, **kwargs):
+            calls.append("invoke")
+            raise AssertionError("Inference must not run above the configured byte limit")
+
+    monkeypatch.setattr("app.resumes.providers._bedrock_client", lambda settings: Client())
+    parser = NovaResumeParser(
+        SimpleNamespace(
+            bedrock_model_id="us.amazon.nova-2-lite-v1:0",
+            resume_model_max_input_tokens=12_000,
+            resume_model_max_request_bytes=10_000,
+            resume_model_max_output_tokens=4_400,
+        )
+    )
+
+    with pytest.raises(ValueError, match="configured byte limit"):
+        await parser.parse("Synthetic resume")
+
+    assert calls == ["count"]
+
+
+@pytest.mark.asyncio
+async def test_nova_does_not_mask_other_count_tokens_errors(monkeypatch):
+    class Client:
+        def count_tokens(self, **kwargs):
+            raise ClientError(
+                {"Error": {"Code": "AccessDeniedException", "Message": "denied"}},
+                "CountTokens",
+            )
+
+    monkeypatch.setattr("app.resumes.providers._bedrock_client", lambda settings: Client())
+    parser = NovaResumeParser(
+        SimpleNamespace(
+            bedrock_model_id="us.amazon.nova-2-lite-v1:0",
+            resume_model_max_input_tokens=12_000,
+            resume_model_max_request_bytes=25_000,
+            resume_model_max_output_tokens=4_400,
+        )
+    )
+
+    with pytest.raises(ClientError) as error:
+        await parser.parse("Synthetic resume")
+
+    assert error.value.response["Error"]["Code"] == "AccessDeniedException"

@@ -634,6 +634,12 @@ class Settings(BaseSettings):
         le=100_000,
         validation_alias=AliasChoices("RESUME_MODEL_MAX_INPUT_TOKENS"),
     )
+    resume_model_max_request_bytes: int | None = Field(
+        default=None,
+        ge=10_000,
+        le=1_000_000,
+        validation_alias=AliasChoices("RESUME_MODEL_MAX_REQUEST_BYTES"),
+    )
     textract_timeout_seconds: int = Field(
         default=180, ge=30, le=600, validation_alias=AliasChoices("TEXTRACT_TIMEOUT_SECONDS")
     )

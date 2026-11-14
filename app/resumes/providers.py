@@ -13,6 +13,7 @@ from xml.etree import ElementTree
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from pypdf import PdfReader
 
 from app.config import Settings
@@ -328,6 +329,7 @@ class NovaResumeParser(ResumeParser):
             settings, "resume_model_max_output_tokens", NOVA_RESUME_MAX_OUTPUT_TOKENS
         )
         self._input_token_limit = getattr(settings, "resume_model_max_input_tokens", None)
+        self._request_byte_limit = getattr(settings, "resume_model_max_request_bytes", None)
         self.safe_metadata: dict[str, Any] = {
             "output_token_limit": self._output_token_limit,
             "stop_reason": "unknown",
@@ -382,18 +384,36 @@ class NovaResumeParser(ResumeParser):
             }
         )
         client = _bedrock_client(self._settings)
+        request_bytes = request_body.encode()
         if self._input_token_limit is not None:
-            token_count = await asyncio.to_thread(
-                client.count_tokens,
-                modelId=self._settings.bedrock_model_id,
-                input={"invokeModel": {"body": request_body.encode()}},
-            )
-            input_tokens = token_count.get("inputTokens")
-            if not isinstance(input_tokens, int) or input_tokens < 0:
-                raise RuntimeError("Bedrock did not return a valid input token count")
-            self.safe_metadata["inputTokens"] = input_tokens
-            if input_tokens > self._input_token_limit:
-                raise ValueError("Resume model input exceeds the configured token limit")
+            try:
+                token_count = await asyncio.to_thread(
+                    client.count_tokens,
+                    modelId=self._settings.bedrock_model_id,
+                    input={"invokeModel": {"body": request_bytes}},
+                )
+            except ClientError as exc:
+                error = exc.response.get("Error", {})
+                unsupported = (
+                    error.get("Code") == "ValidationException"
+                    and "doesn't support counting tokens" in str(error.get("Message", "")).lower()
+                )
+                if not unsupported or self._request_byte_limit is None:
+                    raise
+                if len(request_bytes) > self._request_byte_limit:
+                    raise ValueError(
+                        "Resume model request exceeds the configured byte limit"
+                    ) from exc
+                self.safe_metadata["requestBytes"] = len(request_bytes)
+                self.safe_metadata["input_limit_mode"] = "request_bytes"
+            else:
+                input_tokens = token_count.get("inputTokens")
+                if not isinstance(input_tokens, int) or input_tokens < 0:
+                    raise RuntimeError("Bedrock did not return a valid input token count")
+                self.safe_metadata["inputTokens"] = input_tokens
+                self.safe_metadata["input_limit_mode"] = "tokens"
+                if input_tokens > self._input_token_limit:
+                    raise ValueError("Resume model input exceeds the configured token limit")
         response = await asyncio.to_thread(
             client.invoke_model,
             modelId=self._settings.bedrock_model_id,
