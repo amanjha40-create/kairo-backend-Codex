@@ -88,12 +88,7 @@
         "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
         "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0",
         "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      }
+      ]
     },
     {
       "Sid": "ApprovedRegionalTextractException",
